@@ -4,11 +4,18 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tui_textarea::TextArea;
-use tui_scrollview::ScrollViewState;
+use tokio::sync::mpsc;
 use crate::api::ApiClient;
 use crate::git_ops::GitOperations;
+use crate::conversation::ConversationManager;
 
 use crate::chat::{ChatMessage, MessageType};
+
+#[derive(Debug, Clone)]
+pub enum AiResponse {
+    Success { response: String, usage: Option<crate::api::Usage> },
+    Error(String),
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppState {
@@ -18,6 +25,7 @@ pub enum AppState {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum MenuType {
     Main,
     Commands,
@@ -36,6 +44,7 @@ pub enum MenuType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum MenuOption {
     // Main menu
     Commands,
@@ -79,7 +88,7 @@ pub enum MenuOption {
     EditApiKey,
     EditTheme,
 
-    
+
     // Common
     Back,
     Close,
@@ -137,7 +146,14 @@ pub struct App {
     pub git_ops: GitOperations,
     pub menu_selected: usize,
     pub editing_field: Option<EditableField>,
-    pub scroll_state: ScrollViewState,
+    pub is_ai_thinking: bool,
+    pub thinking_frames: Vec<&'static str>,
+    pub thinking_frame_index: usize,
+    pub ai_response_rx: Option<mpsc::UnboundedReceiver<AiResponse>>,
+    pub conversation_manager: ConversationManager,
+    pub chat_scroll_offset: u16,
+    pub auto_scroll: bool,
+    pub show_input: bool,  // Control input area visibility
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -166,11 +182,33 @@ impl App {
                 .title(" Input ")
         );
 
+        // Modern minimal thinking animation frames
+        let thinking_frames = vec![
+            "◜",
+            "◝",
+            "◞",
+            "◟",
+        ];
+
+        // Initialize conversation manager
+        let mut conversation_manager = ConversationManager::new()?;
+
+        // Start a new conversation with timestamp as title
+        let conversation_title = format!("Chat {}", Local::now().format("%Y-%m-%d %H:%M:%S"));
+        conversation_manager.start_new_conversation(conversation_title)?;
+
+        // Create initial welcome message with ARULA logo
+        let welcome_message = ChatMessage {
+            timestamp: Local::now(),
+            message_type: MessageType::System,
+            content: crate::art::generate_arula_logo(),
+        };
+
         Ok(Self {
             state: AppState::Chat,
             textarea,
             input_mode: true,
-            messages: Vec::new(),
+            messages: vec![welcome_message],
             config: Config::load(),
             start_time: SystemTime::now(),
             session_id,
@@ -179,7 +217,14 @@ impl App {
             git_ops: GitOperations::new(),
             menu_selected: 0,
             editing_field: None,
-            scroll_state: ScrollViewState::default(),
+            is_ai_thinking: false,
+            thinking_frames,
+            thinking_frame_index: 0,
+            ai_response_rx: None,
+            conversation_manager,
+            chat_scroll_offset: 0,
+            auto_scroll: true, // Start with auto-scroll enabled
+            show_input: true,  // Show input by default
         })
     }
 
@@ -540,7 +585,7 @@ Command Reference:\n\
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.menu_selected < menu_len - 1 {
+                if menu_len > 0 && self.menu_selected < menu_len - 1 {
                     self.menu_selected += 1;
                 }
             }
@@ -917,6 +962,7 @@ Command Reference:\n\
     
     
     // Context submenu functions
+    #[allow(dead_code)]
     fn show_session_info(&mut self) {
         let uptime = self.start_time.elapsed().unwrap_or_default().as_secs();
         let uptime_hrs = uptime / 3600;
@@ -1070,6 +1116,7 @@ Architecture: {}",
         }
     }
 
+    #[allow(dead_code)]
     pub async fn test_api_connection(&mut self) -> bool {
         if let Some(client) = self.api_client.clone() {
             match client.test_connection().await {
@@ -1091,70 +1138,119 @@ Architecture: {}",
         }
     }
 
-    pub async fn handle_ai_command(&mut self, command: String) -> Result<()> {
+    pub fn handle_ai_command(&mut self, command: String) {
         let api_client = self.api_client.clone();
 
         if let Some(client) = api_client {
             self.add_message(MessageType::User, &command);
 
-            // Show thinking message
-            self.add_message(MessageType::Arula, "🤔 Thinking...");
+            // Set thinking state - this will trigger the loading animation
+            self.is_ai_thinking = true;
 
-            // Build conversation history from recent messages (last 10 messages)
-            let conversation_history: Vec<crate::api::ChatMessage> = self.messages
-                .iter()
-                .rev()
-                .take(20) // Take last 20 messages to have enough context
-                .filter_map(|msg| {
+            // Get persistent memory from ARULA.md
+            let persistent_memory = self.conversation_manager.get_memory()
+                .unwrap_or_else(|_| String::from("# ARULA Memory\nNo persistent memory available."));
+
+            // Build conversation history from current conversation
+            let conversation_history: Vec<crate::api::ChatMessage> = if let Some(conv) = self.conversation_manager.get_current_conversation() {
+                // Add system message with persistent memory
+                let mut history = vec![
+                    crate::api::ChatMessage {
+                        role: "system".to_string(),
+                        content: format!("# Persistent Memory\n{}\n\n# Current Conversation\nYou are ARULA, an Autonomous AI CLI assistant. Use the persistent memory above to remember important context across sessions.", persistent_memory),
+                    }
+                ];
+
+                // Add conversation messages (all of them, not just last 20)
+                for msg in &conv.messages {
                     match msg.message_type {
-                        MessageType::User => Some(crate::api::ChatMessage {
-                            role: "user".to_string(),
-                            content: msg.content.clone(),
-                        }),
-                        MessageType::Arula => Some(crate::api::ChatMessage {
-                            role: "assistant".to_string(),
-                            content: msg.content.clone(),
-                        }),
-                        _ => None,
-                    }
-                })
-                .rev() // Reverse back to chronological order
-                .collect();
-
-            match client.send_message(&command, Some(conversation_history)).await {
-                Ok(response) => {
-                    // Remove thinking message and add actual response
-                    self.messages.pop(); // Remove "Thinking..."
-
-                    if response.success {
-                        self.add_message(MessageType::Arula, &response.response);
-
-                        // Add token usage info if available
-                        if let Some(usage) = response.usage {
-                            self.add_message(
-                                MessageType::Info,
-                                &format!("📊 Tokens: {} prompt + {} completion = {} total",
-                                    usage.prompt_tokens,
-                                    usage.completion_tokens,
-                                    usage.total_tokens
-                                )
-                            );
+                        MessageType::User => {
+                            history.push(crate::api::ChatMessage {
+                                role: "user".to_string(),
+                                content: msg.content.clone(),
+                            });
                         }
-                    } else {
-                        let error_msg = response.error.unwrap_or_else(|| "Unknown error".to_string());
-                        self.add_message(MessageType::Error, &format!("❌ Error: {}", error_msg));
+                        MessageType::Arula => {
+                            history.push(crate::api::ChatMessage {
+                                role: "assistant".to_string(),
+                                content: msg.content.clone(),
+                            });
+                        }
+                        _ => {} // Skip system messages
                     }
                 }
-                Err(e) => {
-                    self.messages.pop(); // Remove "Thinking..."
-                    self.add_message(MessageType::Error, &format!("❌ API Error: {}", e));
-                }
-            }
+
+                history
+            } else {
+                // Fallback if no conversation
+                vec![
+                    crate::api::ChatMessage {
+                        role: "system".to_string(),
+                        content: format!("# Persistent Memory\n{}\n\nYou are ARULA, an Autonomous AI CLI assistant.", persistent_memory),
+                    }
+                ]
+            };
+
+            // Create channel for async response
+            let (tx, rx) = mpsc::unbounded_channel();
+            self.ai_response_rx = Some(rx);
+
+            // Spawn async task that won't block the UI
+            tokio::spawn(async move {
+                let response = match client.send_message(&command, Some(conversation_history)).await {
+                    Ok(api_response) => {
+                        if api_response.success {
+                            AiResponse::Success {
+                                response: api_response.response,
+                                usage: api_response.usage,
+                            }
+                        } else {
+                            let error_msg = api_response.error.unwrap_or_else(|| "Unknown error".to_string());
+                            AiResponse::Error(error_msg)
+                        }
+                    }
+                    Err(e) => AiResponse::Error(format!("API Error: {}", e)),
+                };
+
+                // Send response through channel (ignore if receiver is dropped)
+                let _ = tx.send(response);
+            });
         } else {
             self.add_message(MessageType::Error, "❌ AI not configured. Please configure AI settings in the menu.");
         }
+    }
 
-        Ok(())
+    pub fn check_ai_response(&mut self) {
+        // Check if we have a response receiver
+        if let Some(rx) = &mut self.ai_response_rx {
+            // Try to receive response without blocking
+            match rx.try_recv() {
+                Ok(response) => {
+                    // Stop thinking animation
+                    self.is_ai_thinking = false;
+                    self.ai_response_rx = None;
+
+                    match response {
+                        AiResponse::Success { response, usage: _ } => {
+                            self.add_message(MessageType::Arula, &response);
+                            // Token usage info hidden for cleaner UI
+                        }
+                        AiResponse::Error(error_msg) => {
+                            self.add_message(MessageType::Error, &format!("❌ {}", error_msg));
+                        }
+                    }
+                }
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    // No response yet, keep waiting
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    // Channel closed unexpectedly
+                    self.is_ai_thinking = false;
+                    self.ai_response_rx = None;
+                    self.add_message(MessageType::Error, "❌ AI request failed unexpectedly");
+                }
+            }
+        }
     }
 
   
@@ -1190,30 +1286,36 @@ Architecture: {}",
                 // ESC is handled in main.rs, don't pass to textarea
             }
             KeyCode::PageUp => {
-                // Scroll chat up (multiple times for bigger scroll)
-                for _ in 0..5 {
-                    self.scroll_state.scroll_up();
-                }
+                // Scroll chat up - disable auto-scroll
+                self.chat_scroll_offset = self.chat_scroll_offset.saturating_sub(5);
+                self.auto_scroll = false;
             }
             KeyCode::PageDown => {
-                // Scroll chat down (multiple times for bigger scroll)
-                for _ in 0..5 {
-                    self.scroll_state.scroll_down();
+                // Scroll chat down
+                if !self.auto_scroll {
+                    self.chat_scroll_offset = self.chat_scroll_offset.saturating_add(5);
                 }
+                // Will check if at bottom during render
             }
             KeyCode::Up => {
-                // If Ctrl is held, scroll up instead of navigating textarea
+                // If Ctrl is held, scroll chat up
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.scroll_state.scroll_up();
+                    self.chat_scroll_offset = self.chat_scroll_offset.saturating_sub(1);
+                    self.auto_scroll = false;
                 } else {
+                    // Let textarea handle arrow keys for multi-line input
                     self.textarea.input(key);
                 }
             }
             KeyCode::Down => {
-                // If Ctrl is held, scroll down instead of navigating textarea
+                // If Ctrl is held, scroll chat down
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.scroll_state.scroll_down();
+                    if !self.auto_scroll {
+                        self.chat_scroll_offset = self.chat_scroll_offset.saturating_add(1);
+                    }
+                    // Will check if at bottom during render
                 } else {
+                    // Let textarea handle arrow keys for multi-line input
                     self.textarea.input(key);
                 }
             }
@@ -1234,10 +1336,8 @@ Architecture: {}",
                 self.handle_builtin_command(&command).await;
             }
             _ => {
-                // Forward everything else to AI
-                if let Err(e) = self.handle_ai_command(command).await {
-                    self.add_message(MessageType::Error, &format!("Failed to process command: {}", e));
-                }
+                // Forward everything else to AI (non-blocking)
+                self.handle_ai_command(command);
             }
         }
     }
@@ -1526,15 +1626,40 @@ Type 'help' to see available commands, or try:
     pub fn add_message(&mut self, message_type: MessageType, content: &str) {
         let message = ChatMessage {
             timestamp: Local::now(),
-            message_type,
+            message_type: message_type.clone(),
             content: content.to_string(),
         };
 
-        self.messages.push(message);
+        self.messages.push(message.clone());
 
-        // Keep only last 50 messages
+        // Save to conversation history
+        let _ = self.conversation_manager.add_message_to_current(message);
+
+        // Auto-save conversation periodically
+        let _ = self.conversation_manager.save_current_conversation();
+
+        // When new message arrives, re-enable auto-scroll
+        self.auto_scroll = true;
+        self.chat_scroll_offset = 0;
+
+        // Keep only last 50 messages in UI
         if self.messages.len() > 50 {
             self.messages.remove(0);
+        }
+    }
+
+    pub fn check_if_at_bottom(&mut self, total_lines: usize, visible_lines: usize) {
+        // Calculate the maximum scroll offset (bottom position)
+        let max_scroll = if total_lines > visible_lines {
+            (total_lines - visible_lines) as u16
+        } else {
+            0
+        };
+
+        // If we're at or past the bottom, re-enable auto-scroll
+        if self.chat_scroll_offset >= max_scroll {
+            self.auto_scroll = true;
+            self.chat_scroll_offset = 0; // Reset offset when auto-scrolling
         }
     }
 
@@ -1593,7 +1718,7 @@ Type 'help' to see available commands, or try:
             }
             "status" => {
                 // Try to open repository first
-                if let Err(_) = self.git_ops.open_repository(".") {
+                if self.git_ops.open_repository(".").is_err() {
                     self.add_message(
                         MessageType::Error,
                         "❌ Not a git repository. Use '/git init' to initialize."
@@ -1618,7 +1743,7 @@ Type 'help' to see available commands, or try:
             }
             "branches" => {
                 // Try to open repository first
-                if let Err(_) = self.git_ops.open_repository(".") {
+                if self.git_ops.open_repository(".").is_err() {
                     self.add_message(
                         MessageType::Error,
                         "❌ Not a git repository. Use '/git init' to initialize."
@@ -1652,7 +1777,7 @@ Type 'help' to see available commands, or try:
                 }
 
                 // Try to open repository first
-                if let Err(_) = self.git_ops.open_repository(".") {
+                if self.git_ops.open_repository(".").is_err() {
                     self.add_message(
                         MessageType::Error,
                         "❌ Not a git repository. Use '/git init' to initialize."
@@ -1686,7 +1811,7 @@ Type 'help' to see available commands, or try:
                 }
 
                 // Try to open repository first
-                if let Err(_) = self.git_ops.open_repository(".") {
+                if self.git_ops.open_repository(".").is_err() {
                     self.add_message(
                         MessageType::Error,
                         "❌ Not a git repository. Use '/git init' to initialize."
@@ -1720,7 +1845,7 @@ Type 'help' to see available commands, or try:
                 }
 
                 // Try to open repository first
-                if let Err(_) = self.git_ops.open_repository(".") {
+                if self.git_ops.open_repository(".").is_err() {
                     self.add_message(
                         MessageType::Error,
                         "❌ Not a git repository. Use '/git init' to initialize."
@@ -1746,7 +1871,7 @@ Type 'help' to see available commands, or try:
             }
             "add" => {
                 // Try to open repository first
-                if let Err(_) = self.git_ops.open_repository(".") {
+                if self.git_ops.open_repository(".").is_err() {
                     self.add_message(
                         MessageType::Error,
                         "❌ Not a git repository. Use '/git init' to initialize."
@@ -1779,7 +1904,7 @@ Type 'help' to see available commands, or try:
                 }
 
                 // Try to open repository first
-                if let Err(_) = self.git_ops.open_repository(".") {
+                if self.git_ops.open_repository(".").is_err() {
                     self.add_message(
                         MessageType::Error,
                         "❌ Not a git repository. Use '/git init' to initialize."
@@ -1872,9 +1997,22 @@ Type 'help' to see available commands, or try:
     }
 
     pub fn update(&mut self) {
+        // Update thinking animation if AI is processing
+        if self.is_ai_thinking {
+            self.thinking_frame_index = (self.thinking_frame_index + 1) % self.thinking_frames.len();
+        }
+
         // Handle any periodic updates
         if self.state == AppState::Exiting {
             // Handle exit state
+        }
+    }
+
+    pub fn get_thinking_indicator(&self) -> String {
+        if self.is_ai_thinking && !self.thinking_frames.is_empty() {
+            self.thinking_frames[self.thinking_frame_index].to_string()
+        } else {
+            String::new()
         }
     }
 }

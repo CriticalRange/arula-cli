@@ -1,9 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, KeyEventKind},
+    event::{self, Event, KeyCode, KeyModifiers, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, Clear},
+    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
+    cursor::MoveTo,
 };
 use ratatui::{
     backend::CrosstermBackend,
@@ -40,6 +41,7 @@ mod api;
 mod git_ops;
 mod cli_commands;
 mod progress;
+mod conversation;
 
 use app::App;
 use layout::Layout;
@@ -56,23 +58,21 @@ fn cleanup_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> Res
     // Ensure we're back to normal terminal state
     let _ = disable_raw_mode();
 
-    // Execute all cleanup commands in a specific order for Termux compatibility
+    // Clear screen and move cursor to top-left for clean exit
+    let _ = execute!(
+        terminal.backend_mut(),
+        Clear(ClearType::All),
+        MoveTo(0, 0)
+    );
+
+    // Execute cleanup commands (NO LeaveAlternateScreen since we didn't enter it)
     let result = execute!(
         terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture,
         crossterm::event::DisableBracketedPaste,
         crossterm::event::DisableFocusChange
     );
 
     let _ = terminal.show_cursor();
-
-    // Clear any remaining terminal state issues
-    let _ = execute!(io::stdout(), Clear(crossterm::terminal::ClearType::All));
-    let _ = io::stdout().flush();
-
-    // Reset terminal completely for Termux
-    print!("\x1b[!p");
     let _ = io::stdout().flush();
 
     result.map_err(|e| anyhow::anyhow!("Failed to cleanup terminal: {}", e))
@@ -110,14 +110,19 @@ async fn main() -> Result<()> {
     // Store original terminal state for restoration
     let mut stdout = stdout();
 
+    // Clear screen first for clean start (native scrollback still works)
+    execute!(
+        stdout,
+        Clear(ClearType::All),
+        MoveTo(0, 0)
+    )?;
+
     // Enable raw mode first
     enable_raw_mode()?;
 
-    // Enable all terminal features for better input handling, especially for Termux
+    // Enable terminal features WITHOUT alternate screen for native scrollback
     execute!(
         stdout,
-        EnterAlternateScreen,
-        EnableMouseCapture,
         crossterm::event::EnableBracketedPaste,
         crossterm::event::EnableFocusChange
     )?;
@@ -166,12 +171,22 @@ async fn run_app(
     layout: &mut Layout,
 ) -> Result<()> {
     let mut last_tick = Instant::now();
-    let tick_rate = Duration::from_millis(250);
+    let tick_rate = Duration::from_millis(100); // Faster updates for smoother animation
 
     loop {
+        // Check for AI responses (non-blocking)
+        app.check_ai_response();
 
         // Draw UI
-        terminal.draw(|f| layout.render(f, &app, &app.messages))?;
+        let messages = app.messages.clone();
+        terminal.draw(|f| layout.render(f, app, &messages))?;
+
+        // Check if scrolled to bottom after rendering, re-enable auto-scroll
+        {
+            let total_lines = app.messages.len() * 2; // Approximation: each message + blank line
+            let visible_lines = 20; // Approximation of visible area
+            app.check_if_at_bottom(total_lines, visible_lines);
+        }
 
         // Handle events with shorter timeout for better responsiveness
         let timeout = Duration::from_millis(50); // Very responsive to input
@@ -188,6 +203,12 @@ async fn run_app(
                     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
                         // Check if already in exit confirmation
                         if matches!(app.state, crate::app::AppState::Menu(crate::app::MenuType::ExitConfirmation)) {
+                            // Graceful exit: first clear popup and textarea, then exit
+                            app.state = crate::app::AppState::Chat; // Clear menu popup
+                            app.show_input = false; // Hide input textarea
+                            let messages = app.messages.clone();
+                            terminal.draw(|f| layout.render(f, app, &messages))?; // Render chat without popup/textarea
+                            std::thread::sleep(Duration::from_millis(100)); // Brief pause for visual feedback
                             app.state = crate::app::AppState::Exiting;
                             return Ok(());
                         } else {
@@ -211,12 +232,6 @@ async fn run_app(
                                 app.handle_key_event(key);
                             }
                         }
-                    }
-                }
-                Event::Mouse(_) => {
-                    // Mouse click - always enable input mode (more aggressive for Termux)
-                    if app.state == crate::app::AppState::Chat {
-                        app.input_mode = true;
                     }
                 }
                 Event::FocusGained => {
@@ -245,6 +260,12 @@ async fn run_app(
 
         // Check if app should exit
         if app.state == crate::app::AppState::Exiting {
+            // Graceful exit: first clear popup and textarea, then exit
+            app.state = crate::app::AppState::Chat; // Clear menu state
+            app.show_input = false; // Hide input textarea
+            let messages = app.messages.clone();
+            terminal.draw(|f| layout.render(f, app, &messages))?; // Render chat without popup/textarea
+            std::thread::sleep(Duration::from_millis(100)); // Brief pause for visual feedback
             return Ok(());
         }
     }

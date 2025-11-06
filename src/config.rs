@@ -72,6 +72,7 @@ impl Config {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_provider_defaults() -> Vec<(String, String, String)> {
         vec![
             ("openai".to_string(), "gpt-3.5-turbo".to_string(), "https://api.openai.com".to_string()),

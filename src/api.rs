@@ -338,6 +338,7 @@ impl ApiClient {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn test_connection(&self) -> Result<bool> {
         let test_message = "Hello! This is a connection test. Please respond briefly.";
         match self.send_message(test_message, None).await {

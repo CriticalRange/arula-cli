@@ -173,7 +173,7 @@ impl Gauge {
     }
 
     pub fn update(&mut self, delta: f32) {
-        self.progress = (self.progress + delta).min(100.0).max(0.0);
+        self.progress = (self.progress + delta).clamp(0.0, 100.0);
     }
 
     #[allow(dead_code)]

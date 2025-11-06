@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Padding, Paragraph},
     Frame,
 };
-use tui_scrollview::{ScrollView, ScrollViewState};
+use tui_markdown::from_str;
 
 use super::ui_components::{Gauge, Theme};
 
@@ -13,7 +13,6 @@ pub struct Layout {
     pub theme: Theme,
     pub status_gauge: Gauge,
     pub activity_gauge: Gauge,
-    pub scroll_state: ScrollViewState,
 }
 
 impl Layout {
@@ -28,117 +27,244 @@ impl Layout {
                 Color::Red,
             ]),
             theme,
-            scroll_state: ScrollViewState::default(),
         }
     }
 
     pub fn render(&mut self, f: &mut Frame, app: &crate::app::App, messages: &[crate::chat::ChatMessage]) {
-        // Sync scroll states
-        self.scroll_state = app.scroll_state.clone();
         // Clear the entire frame with background color
         f.render_widget(
             ratatui::widgets::Clear,
             f.area()
         );
 
-        // Main layout - Clean chat only
-        let main_chunks = RatatuiLayout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(0),     // Content (full screen)
-                Constraint::Length(3),  // TextArea input
-            ])
-            .split(f.area());
+        // Main layout - Simple chat and input only (conditionally show input)
+        let main_chunks = if app.show_input {
+            RatatuiLayout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),     // Chat content (no border)
+                    Constraint::Length(3),  // Input
+                ])
+                .split(f.area())
+        } else {
+            // No input area, full screen for chat
+            RatatuiLayout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),     // Chat content (no border)
+                ])
+                .split(f.area())
+        };
 
-        // Render chat area
-        self.chat_area(f, main_chunks[0], messages);
+        // Extract values before rendering
+        let menu_state = app.state.clone();
+        let menu_selected = app.menu_selected;
+        let textarea = app.textarea.clone();
+        let is_ai_thinking = app.is_ai_thinking;
+        let thinking_indicator = app.get_thinking_indicator();
 
-        // Render textarea widget
-        f.render_widget(&app.textarea, main_chunks[1]);
+        // Calculate scroll parameters
+        let chat_scroll_offset = app.chat_scroll_offset;
+        let auto_scroll = app.auto_scroll;
+
+        // Render chat area (borderless) - uses immutable references
+        self.chat_area_immutable(
+            f,
+            main_chunks[0],
+            messages,
+            is_ai_thinking,
+            &thinking_indicator,
+            chat_scroll_offset,
+            auto_scroll,
+        );
+
+        // Render textarea widget only if show_input is true
+        if app.show_input && main_chunks.len() > 1 {
+            f.render_widget(&textarea, main_chunks[1]);
+        }
 
         // Render menu if in menu mode
-        if let crate::app::AppState::Menu(ref menu_type) = app.state {
-            self.render_menu(f, f.area(), app, menu_type, app.menu_selected);
+        if let crate::app::AppState::Menu(ref menu_type) = menu_state {
+            self.render_menu(f, f.area(), app, menu_type, menu_selected);
         }
 
         // Update animations
         self.update();
     }
 
-    fn header(&self, f: &mut Frame, area: Rect) {
+    fn render_header(&self, f: &mut Frame, area: Rect, app: &crate::app::App) {
         let colors = self.theme.get_colors();
         let timestamp = chrono::Local::now().format("%H:%M:%S");
 
-        let header_text = Line::from(vec![
-            Span::styled("🚀 ARULA", Style::default().fg(colors.primary).add_modifier(Modifier::BOLD)),
-            Span::styled(" • ", Style::default().fg(colors.secondary)),
-            Span::styled(timestamp.to_string(), Style::default().fg(colors.info)),
-            Span::styled(" • ", Style::default().fg(colors.secondary)),
-            Span::styled(
-                self.theme.to_string(),
-                Style::default().fg(colors.info).add_modifier(Modifier::BOLD),
-            ),
-        ]);
+        // Create ASCII art header
+        let status_icon = if app.is_ai_thinking { "◉" } else { "◯" };
+        let status_text = if app.is_ai_thinking { "PROCESSING" } else { "READY" };
+        let status_color = if app.is_ai_thinking { colors.info } else { colors.success };
 
-        let header = Paragraph::new(header_text)
-            .style(Style::default().fg(colors.text))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(colors.primary))
-                    .padding(Padding::horizontal(1)),
-            )
-            .alignment(Alignment::Center);
+        let header_lines = vec![
+            Line::from(vec![
+                Span::styled("╔════════════════════════════════════════════════════════════════════╗",
+                    Style::default().fg(colors.primary).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::styled("║  ", Style::default().fg(colors.primary)),
+                Span::styled("▰▰▰ ARULA CLI", Style::default().fg(colors.primary).add_modifier(Modifier::BOLD)),
+                Span::styled("  │  ", Style::default().fg(colors.secondary)),
+                Span::styled(status_icon, Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
+                Span::styled(format!(" {}", status_text), Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
+                Span::styled("  │  ", Style::default().fg(colors.secondary)),
+                Span::styled("⏰ ", Style::default().fg(colors.info)),
+                Span::styled(timestamp.to_string(), Style::default().fg(colors.info)),
+                Span::styled("  ║", Style::default().fg(colors.primary)),
+            ]),
+            Line::from(vec![
+                Span::styled("╚════════════════════════════════════════════════════════════════════╝",
+                    Style::default().fg(colors.primary).add_modifier(Modifier::BOLD)),
+            ]),
+        ];
+
+        let header = Paragraph::new(header_lines)
+            .style(Style::default().bg(colors.background))
+            .alignment(Alignment::Left);
 
         f.render_widget(header, area);
     }
 
-    fn chat_area(&mut self, f: &mut Frame, area: Rect, messages: &[crate::chat::ChatMessage]) {
+    fn render_input(&self, f: &mut Frame, area: Rect, app: &crate::app::App) {
         let colors = self.theme.get_colors();
 
-        // Check if area is too small for scroll view
+        // Create custom input border with ASCII art
+        let input_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(colors.primary).add_modifier(Modifier::BOLD))
+            .border_type(ratatui::widgets::BorderType::Double)
+            .title(Span::styled(
+                " ⌨  INPUT ",
+                Style::default().fg(colors.success).add_modifier(Modifier::BOLD)
+            ))
+            .title_alignment(Alignment::Left);
+
+        // Clone the textarea and update its block
+        let mut textarea = app.textarea.clone();
+        textarea.set_block(input_block);
+
+        f.render_widget(&textarea, area);
+    }
+
+    fn chat_area_immutable(
+        &mut self,
+        f: &mut Frame,
+        area: Rect,
+        messages: &[crate::chat::ChatMessage],
+        is_ai_thinking: bool,
+        thinking_indicator: &str,
+        chat_scroll_offset: u16,
+        auto_scroll: bool,
+    ) {
+        let colors = self.theme.get_colors();
+
+        // Check if area is too small
         if area.width < 10 || area.height < 3 {
             return; // Not enough space to render anything
         }
 
-        // Build chat content with all messages (ScrollView handles scrolling)
-        let mut chat_content = String::new();
+        // Build chat content with all messages
+        let mut lines: Vec<Line> = Vec::new();
 
         for msg in messages {
             let timestamp = msg.timestamp.format("%H:%M:%S").to_string();
-            let (icon, _color) = match msg.message_type {
-                crate::chat::MessageType::User => ("👤", colors.success),
-                crate::chat::MessageType::Arula => ("🤖", colors.primary),
-                crate::chat::MessageType::System => ("🔧", colors.text),
-                crate::chat::MessageType::Success => ("✅", colors.success),
-                crate::chat::MessageType::Error => ("❌", colors.error),
-                crate::chat::MessageType::Info => ("ℹ️", colors.info),
+
+            // Special handling for System messages (like logo)
+            if msg.message_type == crate::chat::MessageType::System {
+                // For system messages, render multi-line content with special coloring
+                for content_line in msg.content.lines() {
+                    lines.push(Line::from(
+                        Span::styled(content_line, Style::default().fg(colors.primary).add_modifier(Modifier::BOLD))
+                    ));
+                }
+                lines.push(Line::from("")); // Empty line for spacing
+                continue;
+            }
+
+            // Get message color and prefix based on type
+            let (prefix, msg_color) = match msg.message_type {
+                crate::chat::MessageType::User => ("◈ ", colors.success),
+                crate::chat::MessageType::Arula => ("⊙ ", colors.primary),
+                crate::chat::MessageType::System => ("", colors.text),
+                crate::chat::MessageType::Success => ("✓ ", colors.success),
+                crate::chat::MessageType::Error => ("✗ ", colors.error),
+                crate::chat::MessageType::Info => ("ℹ ", colors.info),
             };
 
-            let formatted_msg = format!("[{}] {} {}\n", timestamp, icon, msg.content);
-            chat_content.push_str(&formatted_msg);
+            // For AI messages, parse markdown
+            if msg.message_type == crate::chat::MessageType::Arula {
+                // Parse markdown content
+                let markdown_text = from_str(&msg.content);
+
+                // Add prefix to first line
+                if let Some(first_line) = markdown_text.lines.first() {
+                    let mut spans = vec![Span::styled(prefix, Style::default().fg(msg_color))];
+                    spans.extend(first_line.spans.clone());
+                    lines.push(Line::from(spans));
+
+                    // Add remaining lines without prefix
+                    for line in markdown_text.lines.iter().skip(1) {
+                        lines.push(line.clone());
+                    }
+                } else {
+                    // Fallback if markdown parsing fails
+                    lines.push(Line::from(vec![
+                        Span::styled(prefix, Style::default().fg(msg_color)),
+                        Span::styled(&msg.content, Style::default().fg(msg_color)),
+                    ]));
+                }
+            } else {
+                // For non-AI messages, use plain text
+                lines.push(Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(msg_color)),
+                    Span::styled(&msg.content, Style::default().fg(msg_color)),
+                ]));
+            }
+            lines.push(Line::from("")); // Empty line for spacing
         }
 
-        // Create a paragraph widget with the chat content
-        let chat_paragraph = Paragraph::new(chat_content)
-            .style(Style::default()
-                .fg(colors.text)
-                .bg(colors.background))
-            .wrap(ratatui::widgets::Wrap { trim: true })
-            .block(ratatui::widgets::Block::default()
-                .borders(ratatui::widgets::Borders::ALL)
-                .border_style(Style::default().fg(colors.primary))
-                .title(" Chat ")
-                .padding(ratatui::widgets::Padding::horizontal(1)));
+        // Add thinking indicator if AI is processing (spinner replaces ⊙)
+        if is_ai_thinking {
+            lines.push(Line::from(vec![
+                Span::styled(format!("{} ", thinking_indicator), Style::default().fg(colors.primary).add_modifier(Modifier::BOLD)),
+            ]));
+            lines.push(Line::from("")); // Empty line for spacing
+        }
 
-        // Create scroll view with the area size
-        let mut scroll_view = ScrollView::new(area.as_size());
+        // Calculate scroll position
+        let total_lines = lines.len();
+        let visible_lines = area.height as usize;
 
-        // Render the paragraph inside the scroll view
-        scroll_view.render_widget(chat_paragraph, area);
+        // Use manual scroll offset if auto-scroll is disabled
+        let scroll_value = if auto_scroll {
+            // Auto-scroll to bottom
+            if total_lines > visible_lines {
+                (total_lines - visible_lines) as u16
+            } else {
+                0
+            }
+        } else {
+            // Use manual scroll offset, but clamp it to valid range
+            let max_scroll = if total_lines > visible_lines {
+                (total_lines - visible_lines) as u16
+            } else {
+                0
+            };
+            chat_scroll_offset.min(max_scroll)
+        };
 
-        // Render the scroll view
-        f.render_stateful_widget(scroll_view, area, &mut self.scroll_state);
+        // Create a paragraph widget with calculated scroll and wrapping
+        let chat_paragraph = Paragraph::new(lines)
+            .style(Style::default().bg(colors.background))
+            .scroll((scroll_value, 0))
+            .wrap(ratatui::widgets::Wrap { trim: false });
+
+        f.render_widget(chat_paragraph, area);
     }
 
     
@@ -201,6 +327,9 @@ impl Layout {
     fn render_menu(&self, f: &mut Frame, area: Rect, app: &crate::app::App, menu_type: &crate::app::MenuType, selected: usize) {
         let colors = self.theme.get_colors();
 
+        // Darker background for menu popup
+        let menu_bg = Color::Rgb(15, 15, 20);
+
         // Get menu options
         let menu_options = crate::app::App::menu_options(menu_type);
         let menu_title = crate::app::App::menu_title(menu_type);
@@ -230,6 +359,9 @@ impl Layout {
             height: popup_height,
         };
 
+        // Clear the popup area first so background doesn't show through
+        f.render_widget(ratatui::widgets::Clear, popup_area);
+
         // Create menu list items
         let items: Vec<ListItem> = menu_options
             .iter()
@@ -244,9 +376,7 @@ impl Layout {
                 // For Back/Close buttons, show left arrow instead of right arrow
                 let prefix = if is_back_button {
                     if is_selected { " ← " } else { "   " }
-                } else {
-                    if is_selected { " → " } else { "   " }
-                };
+                } else if is_selected { " → " } else { "   " };
 
                 let content = Line::from(vec![
                     Span::styled(
@@ -282,7 +412,7 @@ impl Layout {
                 // Only show content area, no menu section
                 if let Some(content) = app.menu_content(menu_type) {
                     let content_para = Paragraph::new(content)
-                        .style(Style::default().fg(colors.text).bg(colors.background))
+                        .style(Style::default().fg(colors.text).bg(menu_bg))
                         .block(
                             Block::default()
                                 .borders(Borders::ALL)
@@ -310,7 +440,7 @@ impl Layout {
                 // Render content area if available
                 if let Some(content) = app.menu_content(menu_type) {
                     let content_para = Paragraph::new(content)
-                        .style(Style::default().fg(colors.text).bg(colors.background))
+                        .style(Style::default().fg(colors.text).bg(menu_bg))
                         .block(
                             Block::default()
                                 .borders(Borders::ALL)
@@ -334,7 +464,7 @@ impl Layout {
                             .border_style(Style::default().fg(colors.primary))
                             .padding(Padding::horizontal(1)),
                     )
-                    .style(Style::default().bg(colors.background));
+                    .style(Style::default().bg(menu_bg));
 
                 f.render_widget(menu_list_detail, split[1]);
             }
@@ -353,7 +483,7 @@ impl Layout {
                 // Render content
                 if let Some(content) = app.menu_content(menu_type) {
                     let content_para = Paragraph::new(content)
-                        .style(Style::default().fg(colors.text).bg(colors.background))
+                        .style(Style::default().fg(colors.text).bg(menu_bg))
                         .block(
                             Block::default()
                                 .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
@@ -377,7 +507,7 @@ impl Layout {
                             .border_style(Style::default().fg(colors.primary))
                             .padding(Padding::horizontal(1)),
                     )
-                    .style(Style::default().bg(colors.background));
+                    .style(Style::default().bg(menu_bg));
 
                 f.render_widget(menu_list, split[1]);
             } else {
@@ -393,7 +523,7 @@ impl Layout {
                             ))
                             .padding(Padding::uniform(1)),
                     )
-                    .style(Style::default().bg(colors.background));
+                    .style(Style::default().bg(menu_bg));
 
                 f.render_widget(menu_list, popup_area);
             }
