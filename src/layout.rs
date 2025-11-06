@@ -2,9 +2,10 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout as RatatuiLayout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, Padding, Paragraph},
     Frame,
 };
+use tui_scrollview::{ScrollView, ScrollViewState};
 
 use super::ui_components::{Gauge, Theme};
 
@@ -12,6 +13,7 @@ pub struct Layout {
     pub theme: Theme,
     pub status_gauge: Gauge,
     pub activity_gauge: Gauge,
+    pub scroll_state: ScrollViewState,
 }
 
 impl Layout {
@@ -26,10 +28,13 @@ impl Layout {
                 Color::Red,
             ]),
             theme,
+            scroll_state: ScrollViewState::default(),
         }
     }
 
     pub fn render(&mut self, f: &mut Frame, app: &crate::app::App, messages: &[crate::chat::ChatMessage]) {
+        // Sync scroll states
+        self.scroll_state = app.scroll_state.clone();
         // Clear the entire frame with background color
         f.render_widget(
             ratatui::widgets::Clear,
@@ -71,7 +76,7 @@ impl Layout {
             Span::styled(" • ", Style::default().fg(colors.secondary)),
             Span::styled(
                 self.theme.to_string(),
-                Style::default().fg(colors.accent).add_modifier(Modifier::BOLD),
+                Style::default().fg(colors.info).add_modifier(Modifier::BOLD),
             ),
         ]);
 
@@ -88,201 +93,57 @@ impl Layout {
         f.render_widget(header, area);
     }
 
-    fn chat_area(&self, f: &mut Frame, area: Rect, messages: &[crate::chat::ChatMessage]) {
+    fn chat_area(&mut self, f: &mut Frame, area: Rect, messages: &[crate::chat::ChatMessage]) {
         let colors = self.theme.get_colors();
 
-        // Messages area with proper alignment
-        let message_items: Vec<ListItem> = messages
-            .iter()
-            .rev()
-            .take(area.height as usize - 1)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .map(|msg| {
-                let timestamp = msg.timestamp.format("%H:%M:%S").to_string();
-                let (icon, color) = match msg.message_type {
-                    crate::chat::MessageType::User => ("👤", colors.success),
-                    crate::chat::MessageType::Arula => ("🤖", colors.primary),
-                    crate::chat::MessageType::System => ("🔧", colors.text),
-                    crate::chat::MessageType::Success => ("✅", colors.success),
-                    crate::chat::MessageType::Error => ("❌", colors.error),
-                    crate::chat::MessageType::Info => ("ℹ️", colors.info),
-                };
+        // Check if area is too small for scroll view
+        if area.width < 10 || area.height < 3 {
+            return; // Not enough space to render anything
+        }
 
-                // Better alignment with proper spacing
-                let content = Line::from(vec![
-                    Span::styled(
-                        format!("[{}] {} ", timestamp, icon),
-                        Style::default()
-                            .fg(color)
-                            .add_modifier(Modifier::BOLD)
-                            .bg(colors.background),
-                    ),
-                    Span::styled(
-                        &msg.content,
-                        Style::default()
-                            .fg(colors.text)
-                            .bg(colors.background)
-                    ),
-                ]);
+        // Build chat content with all messages (ScrollView handles scrolling)
+        let mut chat_content = String::new();
 
-                ListItem::new(content)
-            })
-            .collect();
+        for msg in messages {
+            let timestamp = msg.timestamp.format("%H:%M:%S").to_string();
+            let (icon, _color) = match msg.message_type {
+                crate::chat::MessageType::User => ("👤", colors.success),
+                crate::chat::MessageType::Arula => ("🤖", colors.primary),
+                crate::chat::MessageType::System => ("🔧", colors.text),
+                crate::chat::MessageType::Success => ("✅", colors.success),
+                crate::chat::MessageType::Error => ("❌", colors.error),
+                crate::chat::MessageType::Info => ("ℹ️", colors.info),
+            };
 
-        let messages_list = List::new(message_items)
+            let formatted_msg = format!("[{}] {} {}\n", timestamp, icon, msg.content);
+            chat_content.push_str(&formatted_msg);
+        }
+
+        // Create a paragraph widget with the chat content
+        let chat_paragraph = Paragraph::new(chat_content)
             .style(Style::default()
                 .fg(colors.text)
-                .bg(colors.background));
+                .bg(colors.background))
+            .wrap(ratatui::widgets::Wrap { trim: true })
+            .block(ratatui::widgets::Block::default()
+                .borders(ratatui::widgets::Borders::ALL)
+                .border_style(Style::default().fg(colors.primary))
+                .title(" Chat ")
+                .padding(ratatui::widgets::Padding::horizontal(1)));
 
-        f.render_widget(messages_list, area);
+        // Create scroll view with the area size
+        let mut scroll_view = ScrollView::new(area.as_size());
+
+        // Render the paragraph inside the scroll view
+        scroll_view.render_widget(chat_paragraph, area);
+
+        // Render the scroll view
+        f.render_stateful_widget(scroll_view, area, &mut self.scroll_state);
     }
 
     
-    fn settings_area(&self, f: &mut Frame, area: Rect) {
-        let colors = self.theme.get_colors();
-
-        let settings_text = vec![
-            Line::from(vec![
-                Span::styled("⚙️ ", Style::default().fg(colors.accent).add_modifier(Modifier::BOLD)),
-                Span::styled("Settings", Style::default().fg(colors.primary).add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED)),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("🎨 Theme: ", Style::default().fg(colors.text).add_modifier(Modifier::BOLD)),
-                Span::styled(
-                    self.theme.to_string(),
-                    Style::default()
-                        .fg(colors.accent)
-                        .add_modifier(Modifier::BOLD)
-                        .add_modifier(Modifier::REVERSED),
-                ),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("Keyboard shortcuts:", Style::default().fg(colors.primary).add_modifier(Modifier::BOLD))
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("• ", Style::default().fg(colors.secondary)),
-                Span::styled("Tab", Style::default().fg(colors.info).add_modifier(Modifier::BOLD)),
-                Span::styled(": Switch tabs", Style::default().fg(colors.text)),
-            ]),
-            Line::from(vec![
-                Span::styled("• ", Style::default().fg(colors.secondary)),
-                Span::styled("t", Style::default().fg(colors.info).add_modifier(Modifier::BOLD)),
-                Span::styled(": Change theme", Style::default().fg(colors.text)),
-            ]),
-            Line::from(vec![
-                Span::styled("• ", Style::default().fg(colors.secondary)),
-                Span::styled("i", Style::default().fg(colors.info).add_modifier(Modifier::BOLD)),
-                Span::styled(": Start typing", Style::default().fg(colors.text)),
-            ]),
-            Line::from(vec![
-                Span::styled("• ", Style::default().fg(colors.secondary)),
-                Span::styled("q", Style::default().fg(colors.info).add_modifier(Modifier::BOLD)),
-                Span::styled(": Quit", Style::default().fg(colors.text)),
-            ]),
-            Line::from(vec![
-                Span::styled("• ", Style::default().fg(colors.secondary)),
-                Span::styled("Ctrl+L", Style::default().fg(colors.info).add_modifier(Modifier::BOLD)),
-                Span::styled(": Clear chat", Style::default().fg(colors.text)),
-            ]),
-        ];
-
-        let settings = Paragraph::new(settings_text)
-            .style(Style::default().fg(colors.text).bg(colors.background))
-            .block(
-                Block::default()
-                    .title("Configuration")
-                    .title_style(Style::default().fg(colors.warning).add_modifier(Modifier::BOLD))
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(colors.warning).bg(colors.background))
-                    .padding(Padding::uniform(1)),
-            )
-            .wrap(Wrap { trim: true });
-
-        f.render_widget(settings, area);
-    }
-
-    fn input_area(&self, f: &mut Frame, area: Rect, input: &str, input_mode: bool, cursor_position: usize) {
-        let colors = self.theme.get_colors();
-
-        // Split input area into prompt and input box
-        let input_chunks = RatatuiLayout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(3), Constraint::Min(0)])
-            .split(area);
-
-        // Prompt indicator with better contrast
-        let prompt = Paragraph::new("❯")
-            .style(
-                Style::default()
-                    .fg(if input_mode { colors.accent } else { colors.primary })
-                    .add_modifier(Modifier::BOLD)
-                    .bg(colors.background),
-            )
-            .alignment(Alignment::Right);
-
-        f.render_widget(prompt, input_chunks[0]);
-
-        // Input box with cursor display
-        let input_text = if input_mode {
-            // Show input with visual cursor
-            let before_cursor = &input[..cursor_position];
-            let after_cursor = &input[cursor_position..];
-            format!("{}█{}", before_cursor, after_cursor)
-        } else {
-            "Press any key or click to start typing...".to_string()
-        };
-
-        let input_style = if input_mode {
-            Style::default()
-                .fg(colors.text)
-                .bg(colors.background)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-                .fg(colors.secondary)
-                .bg(colors.background)
-                .add_modifier(Modifier::DIM)
-        };
-
-        let input_box = Paragraph::new(input_text)
-            .style(input_style)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(if input_mode {
-                        Style::default()
-                            .fg(colors.accent)
-                            .bg(colors.background)
-                    } else {
-                        Style::default()
-                            .fg(colors.border)
-                            .bg(colors.background)
-                    })
-                    .title("Input")
-                    .title_style(
-                        Style::default()
-                            .fg(colors.primary)
-                            .add_modifier(Modifier::BOLD)
-                    )
-                    .padding(Padding::horizontal(1)),
-            );
-
-        f.render_widget(input_box, input_chunks[1]);
-
-        // Set terminal cursor position to match our visual cursor
-        if input_mode {
-            f.set_cursor_position((
-                input_chunks[1].x + 2 + cursor_position as u16, // +2 for padding
-                input_chunks[1].y + 1,
-            ));
-        }
-    }
-
+    
+    
     #[allow(dead_code)]
     fn status_bar(&self, f: &mut Frame, area: Rect) {
         let colors = self.theme.get_colors();
@@ -341,21 +202,17 @@ impl Layout {
         let colors = self.theme.get_colors();
 
         // Get menu options
-        let menu_options = crate::app::App::get_menu_options(menu_type);
-        let menu_title = crate::app::App::get_menu_title(menu_type);
+        let menu_options = crate::app::App::menu_options(menu_type);
+        let menu_title = crate::app::App::menu_title(menu_type);
 
         // For detail menus, show larger popup with content area
         let is_detail_menu = matches!(menu_type,
             crate::app::MenuType::GitCommandsDetail |
             crate::app::MenuType::SessionInfoDetail |
-            crate::app::MenuType::GitStatusDetail |
-            crate::app::MenuType::SystemInfoDetail |
             crate::app::MenuType::KeyboardShortcutsDetail |
             crate::app::MenuType::AboutArulaDetail |
             crate::app::MenuType::DocumentationDetail |
-            crate::app::MenuType::AiSettingsDetail |
             crate::app::MenuType::GitSettingsDetail |
-            crate::app::MenuType::AppearanceSettingsDetail |
             crate::app::MenuType::ExecCommandsDetail
         );
 
@@ -379,7 +236,7 @@ impl Layout {
             .enumerate()
             .map(|(i, option)| {
                 let is_selected = i == selected;
-                let (title, desc) = app.get_option_display(option);
+                let (title, desc) = app.option_display(option);
 
                 // Check if this is a Back or Close button
                 let is_back_button = matches!(option, crate::app::MenuOption::Back | crate::app::MenuOption::Close);
@@ -423,7 +280,7 @@ impl Layout {
 
             if has_no_actions {
                 // Only show content area, no menu section
-                if let Some(content) = app.get_menu_content(menu_type) {
+                if let Some(content) = app.menu_content(menu_type) {
                     let content_para = Paragraph::new(content)
                         .style(Style::default().fg(colors.text).bg(colors.background))
                         .block(
@@ -451,7 +308,7 @@ impl Layout {
                     .split(popup_area);
 
                 // Render content area if available
-                if let Some(content) = app.get_menu_content(menu_type) {
+                if let Some(content) = app.menu_content(menu_type) {
                     let content_para = Paragraph::new(content)
                         .style(Style::default().fg(colors.text).bg(colors.background))
                         .block(
@@ -494,7 +351,7 @@ impl Layout {
                     .split(popup_area);
 
                 // Render content
-                if let Some(content) = app.get_menu_content(menu_type) {
+                if let Some(content) = app.menu_content(menu_type) {
                     let content_para = Paragraph::new(content)
                         .style(Style::default().fg(colors.text).bg(colors.background))
                         .block(

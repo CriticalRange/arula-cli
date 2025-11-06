@@ -33,10 +33,8 @@ impl Theme {
             Theme::Cyberpunk => ThemeColors {
                 primary: Color::Magenta,
                 secondary: Color::Cyan,
-                accent: Color::Yellow,
                 success: Color::Green,
                 error: Color::Red,
-                warning: Color::Yellow,
                 info: Color::LightCyan,
                 background: Color::Black,
                 text: Color::White,
@@ -46,10 +44,8 @@ impl Theme {
             Theme::Matrix => ThemeColors {
                 primary: Color::Green,
                 secondary: Color::LightGreen,
-                accent: Color::LightYellow,
                 success: Color::LightGreen,
                 error: Color::LightRed,
-                warning: Color::Yellow,
                 info: Color::LightCyan,
                 background: Color::Black,
                 text: Color::LightGreen,
@@ -59,10 +55,8 @@ impl Theme {
             Theme::Ocean => ThemeColors {
                 primary: Color::Blue,
                 secondary: Color::Cyan,
-                accent: Color::LightBlue,
                 success: Color::LightGreen,
                 error: Color::Red,
-                warning: Color::Yellow,
                 info: Color::LightCyan,
                 background: Color::Rgb(10, 20, 30),
                 text: Color::White,
@@ -72,10 +66,8 @@ impl Theme {
             Theme::Sunset => ThemeColors {
                 primary: Color::Rgb(255, 94, 77),
                 secondary: Color::Rgb(255, 206, 84),
-                accent: Color::Rgb(255, 157, 77),
                 success: Color::LightGreen,
                 error: Color::LightRed,
-                warning: Color::Rgb(255, 206, 84),
                 info: Color::LightCyan,
                 background: Color::Rgb(25, 25, 35),
                 text: Color::White,
@@ -89,10 +81,8 @@ impl Theme {
             Theme::Monochrome => ThemeColors {
                 primary: Color::Gray,
                 secondary: Color::Rgb(200, 200, 200),
-                accent: Color::White,
                 success: Color::LightGreen,
                 error: Color::LightRed,
-                warning: Color::Yellow,
                 info: Color::LightBlue,
                 background: Color::Black,
                 text: Color::White,
@@ -106,10 +96,8 @@ impl Theme {
 pub struct ThemeColors {
     pub primary: Color,
     pub secondary: Color,
-    pub accent: Color,
     pub success: Color,
     pub error: Color,
-    pub warning: Color,
     pub info: Color,
     #[allow(dead_code)]
     pub background: Color,

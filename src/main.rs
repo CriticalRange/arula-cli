@@ -3,14 +3,15 @@ use clap::Parser;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, Clear},
 };
 use ratatui::{
     backend::CrosstermBackend,
     Terminal,
 };
-use std::io::{self, stdout, IsTerminal};
+use std::io::{self, stdout, IsTerminal, Write};
 use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Parser)]
 #[command(name = "arula")]
@@ -38,10 +39,44 @@ mod layout;
 mod api;
 mod git_ops;
 mod cli_commands;
+mod progress;
 
 use app::App;
 use layout::Layout;
 use ui_components::Theme;
+
+// Global flag for cleanup
+static CLEANUP_DONE: AtomicBool = AtomicBool::new(false);
+
+fn cleanup_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    if CLEANUP_DONE.swap(true, Ordering::SeqCst) {
+        return Ok(()); // Already cleaned up
+    }
+
+    // Ensure we're back to normal terminal state
+    let _ = disable_raw_mode();
+
+    // Execute all cleanup commands in a specific order for Termux compatibility
+    let result = execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture,
+        crossterm::event::DisableBracketedPaste,
+        crossterm::event::DisableFocusChange
+    );
+
+    let _ = terminal.show_cursor();
+
+    // Clear any remaining terminal state issues
+    let _ = execute!(io::stdout(), Clear(crossterm::terminal::ClearType::All));
+    let _ = io::stdout().flush();
+
+    // Reset terminal completely for Termux
+    print!("\x1b[!p");
+    let _ = io::stdout().flush();
+
+    result.map_err(|e| anyhow::anyhow!("Failed to cleanup terminal: {}", e))
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -72,9 +107,11 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    // Setup terminal with proper keyboard handling
-    enable_raw_mode()?;
+    // Store original terminal state for restoration
     let mut stdout = stdout();
+
+    // Enable raw mode first
+    enable_raw_mode()?;
 
     // Enable all terminal features for better input handling, especially for Termux
     execute!(
@@ -90,22 +127,31 @@ async fn main() -> Result<()> {
 
     // Create app and layout
     let mut app = App::new()?;
-    app.set_api_client(cli.endpoint.clone());
+
+    // Initialize AI client if configuration is valid
+    match app.initialize_api_client() {
+        Ok(()) => {
+            if cli.verbose {
+                println!("✅ AI client initialized successfully");
+            }
+        }
+        Err(e) => {
+            if cli.verbose {
+                println!("⚠️  AI client initialization failed: {}", e);
+                println!("💡 You can configure AI settings in the application menu");
+            }
+        }
+    }
+
     let mut layout = Layout::new(Theme::Cyberpunk);
 
-    // Run app
+    // Run app with proper cleanup
     let res = run_app(&mut terminal, &mut app, &mut layout).await;
 
-    // Restore terminal properly
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture,
-        crossterm::event::DisableBracketedPaste,
-        crossterm::event::DisableFocusChange
-    )?;
-    terminal.show_cursor()?;
+    // Always cleanup, even if an error occurred
+    if let Err(cleanup_err) = cleanup_terminal(terminal) {
+        eprintln!("Warning: Failed to cleanup terminal properly: {}", cleanup_err);
+    }
 
     if let Err(err) = res {
         println!("{err:?}");

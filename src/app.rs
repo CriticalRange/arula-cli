@@ -1,9 +1,10 @@
 use anyhow::Result;
 use chrono::Local;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tui_textarea::TextArea;
+use tui_scrollview::ScrollViewState;
 use crate::api::ApiClient;
 use crate::git_ops::GitOperations;
 
@@ -28,14 +29,10 @@ pub enum MenuType {
     GitCommandsDetail,
     ExecCommandsDetail,
     SessionInfoDetail,
-    GitStatusDetail,
-    SystemInfoDetail,
     KeyboardShortcutsDetail,
     AboutArulaDetail,
     DocumentationDetail,
-    AiSettingsDetail,
     GitSettingsDetail,
-    AppearanceSettingsDetail,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,8 +51,6 @@ pub enum MenuOption {
 
     // Context submenu
     SessionInfo,
-    GitStatus,
-    SystemInfo,
 
     // Help submenu
     KeyboardShortcuts,
@@ -63,9 +58,7 @@ pub enum MenuOption {
     Documentation,
 
     // Configuration submenu
-    AiSettings,
     GitSettings,
-    AppearanceSettings,
 
     // Detail menu actions (for Git Commands, etc)
     GitInit,
@@ -74,10 +67,8 @@ pub enum MenuOption {
     GitAdd,
     GitCommit,
     ExecCommand,
-    ViewSessionInfo,
     RefreshGitStatus,
     ViewSystemInfo,
-    ChangeTheme,
     ToggleAutoCommit,
     ToggleCreateBranch,
 
@@ -87,8 +78,8 @@ pub enum MenuOption {
     EditApiUrl,
     EditApiKey,
     EditTheme,
-    EditArtStyle,
 
+    
     // Common
     Back,
     Close,
@@ -107,6 +98,7 @@ pub struct Config {
 pub struct AiConfig {
     pub provider: String,
     pub model: String,
+    pub models: Vec<String>, // For custom provider to store multiple models
     pub api_url: String,
     pub api_key: String,
 }
@@ -144,19 +136,18 @@ pub struct App {
     pub pending_command: Option<String>,
     pub git_ops: GitOperations,
     pub menu_selected: usize,
-    pub menu_input: Option<String>,
-    pub menu_input_prompt: Option<String>,
     pub editing_field: Option<EditableField>,
+    pub scroll_state: ScrollViewState,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EditableField {
     AiProvider(Vec<String>, usize),  // (options, current_index)
     AiModel(Vec<String>, usize),
+    CustomModels(String),  // Text input for editing models array (comma-separated)
     ApiUrl(String),     // Text input
     ApiKey(String),     // Text input (masked)
     Theme(Vec<String>, usize),
-    ArtStyle(String),   // Text input
 }
 
 impl App {
@@ -180,20 +171,19 @@ impl App {
             textarea,
             input_mode: true,
             messages: Vec::new(),
-            config: Self::load_config(),
+            config: Config::load(),
             start_time: SystemTime::now(),
             session_id,
             api_client: None,
             pending_command: None,
             git_ops: GitOperations::new(),
             menu_selected: 0,
-            menu_input: None,
-            menu_input_prompt: None,
             editing_field: None,
+            scroll_state: ScrollViewState::default(),
         })
     }
 
-    pub fn get_menu_options(menu_type: &MenuType) -> Vec<MenuOption> {
+    pub fn menu_options(menu_type: &MenuType) -> Vec<MenuOption> {
         match menu_type {
             MenuType::Main => vec![
                 MenuOption::KeyboardShortcuts,
@@ -236,16 +226,9 @@ impl App {
             MenuType::SessionInfoDetail => vec![
                 MenuOption::RefreshGitStatus,
             ],
-            MenuType::GitStatusDetail => vec![
-                MenuOption::RefreshGitStatus,
-            ],
-            MenuType::SystemInfoDetail => vec![
-                MenuOption::ViewSystemInfo,
-            ],
             MenuType::KeyboardShortcutsDetail => vec![],
             MenuType::AboutArulaDetail => vec![],
             MenuType::DocumentationDetail => vec![],
-            MenuType::AiSettingsDetail => vec![],
             MenuType::GitSettingsDetail => vec![
                 MenuOption::EditAiProvider,      // Index 0 - AI Provider (editable)
                 MenuOption::EditAiModel,         // Index 1 - AI Model (editable)
@@ -254,9 +237,6 @@ impl App {
                 MenuOption::ToggleAutoCommit,    // Index 4
                 MenuOption::ToggleCreateBranch,  // Index 5
                 MenuOption::EditTheme,           // Index 6 - Theme (editable)
-            ],
-            MenuType::AppearanceSettingsDetail => vec![
-                MenuOption::ChangeTheme,
             ],
         }
     }
@@ -270,6 +250,9 @@ impl App {
                 }
                 (1, EditableField::AiModel(options, idx)) => {
                     format!("↑ {} ↓ (editing)", options[*idx])
+                }
+                (1, EditableField::CustomModels(text)) => {
+                    format!("{} (editing)", text)
                 }
                 (2, EditableField::ApiUrl(url)) => {
                     format!("{} █ (editing)", url)
@@ -286,21 +269,24 @@ impl App {
                 (6, EditableField::Theme(options, idx)) => {
                     format!("↑ {} ↓ (editing)", options[*idx])
                 }
-                (7, EditableField::ArtStyle(style)) => {
-                    format!("{} █ (editing)", style)
-                }
-                _ => self.get_field_current_value(field_index)
+                _ => self.field_current_value(field_index)
             }
         } else {
             // Not editing, just show current value
-            self.get_field_current_value(field_index)
+            self.field_current_value(field_index)
         }
     }
 
-    fn get_field_current_value(&self, field_index: usize) -> String {
+    fn field_current_value(&self, field_index: usize) -> String {
         match field_index {
             0 => self.config.ai.provider.clone(),
-            1 => self.config.ai.model.clone(),
+            1 => {
+                if self.config.ai.provider.to_lowercase() == "custom" {
+                    self.config.ai.models.join(", ")
+                } else {
+                    self.config.ai.model.clone()
+                }
+            },
             2 => self.config.ai.api_url.clone(),
             3 => {
                 // Mask the API key
@@ -316,7 +302,7 @@ impl App {
         }
     }
 
-    pub fn get_menu_content(&self, menu_type: &MenuType) -> Option<String> {
+    pub fn menu_content(&self, menu_type: &MenuType) -> Option<String> {
         match menu_type {
             MenuType::ExitConfirmation => {
                 Some("⚠️  Are you sure you want to exit?\n\n\
@@ -331,7 +317,7 @@ Press Ctrl+C again to exit or ESC to stay.".to_string())
                 // Get git status
                 let mut git_ops_clone = GitOperations::new();
                 let git_info = if git_ops_clone.open_repository(".").is_ok() {
-                    let branch = git_ops_clone.get_current_branch()
+                    let branch = git_ops_clone.current_branch()
                         .unwrap_or_else(|_| "unknown".to_string());
                     format!("✓ Repository detected | Branch: {}", branch)
                 } else {
@@ -354,30 +340,6 @@ SYSTEM:\n\
                     self.messages.iter().filter(|m| m.message_type == MessageType::User).count(),
                     self.messages.iter().filter(|m| m.message_type == MessageType::Arula).count(),
                     git_info,
-                    std::env::current_dir()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|_| "Unknown".to_string()),
-                    std::env::consts::OS,
-                    std::env::consts::ARCH
-                ))
-            }
-            MenuType::GitStatusDetail => {
-                // Clone git_ops to avoid borrow issues
-                let mut git_ops_clone = GitOperations::new();
-                let git_status = if git_ops_clone.open_repository(".").is_ok() {
-                    let branch = git_ops_clone.get_current_branch()
-                        .unwrap_or_else(|_| "unknown".to_string());
-                    format!("Repository detected ✓\nCurrent Branch: {}", branch)
-                } else {
-                    "No Git repository found".to_string()
-                };
-                Some(format!("🌿 Git Status\n\n{}", git_status))
-            }
-            MenuType::SystemInfoDetail => {
-                Some(format!("💻 System Information\n\n\
-Working Directory:\n{}\n\n\
-Platform: {}\n\
-Architecture: {}",
                     std::env::current_dir()
                         .map(|p| p.display().to_string())
                         .unwrap_or_else(|_| "Unknown".to_string()),
@@ -415,18 +377,6 @@ COMMANDS:\n\
 • /git <cmd> - Git operations (init, status, branch, commit)\n\
 • /exec <cmd> - Execute any shell command".to_string())
             }
-            MenuType::AiSettingsDetail => {
-                Some(format!("🤖 AI Settings\n\n\
-Provider: {}\n\
-Model: {}\n\
-Endpoint: {}",
-                    self.config.ai.provider,
-                    self.config.ai.model,
-                    self.api_client.as_ref()
-                        .map(|_| "Connected")
-                        .unwrap_or("Not configured")
-                ))
-            }
             MenuType::GitSettingsDetail => {
                 // Show a brief tip instead of duplicating the field values
                 Some("⚙️  Configuration\n\n\
@@ -434,17 +384,6 @@ Select a field below to edit it:\n\
 • For switch fields: Use ↑↓ arrows to cycle options\n\
 • For text fields: Type to edit\n\
 • Press Enter to save, Esc to cancel".to_string())
-            }
-            MenuType::AppearanceSettingsDetail => {
-                Some(format!("🎨 Appearance Settings\n\n\
-Current Theme: Cyberpunk\n\
-Art Style: {}\n\n\
-Available Themes:\n\
-• Cyberpunk (current)\n\
-• Matrix\n\
-• Ocean",
-                    self.config.art.default_style
-                ))
             }
             MenuType::DocumentationDetail => {
                 Some("📚 Documentation\n\n\
@@ -461,7 +400,7 @@ Command Reference:\n\
         }
     }
 
-    pub fn get_menu_title(menu_type: &MenuType) -> &'static str {
+    pub fn menu_title(menu_type: &MenuType) -> &'static str {
         match menu_type {
             MenuType::Main => " ARULA CLI Menu ",
             MenuType::ExitConfirmation => " Exit Confirmation ",
@@ -472,25 +411,21 @@ Command Reference:\n\
             MenuType::GitCommandsDetail => " Git Commands ",
             MenuType::ExecCommandsDetail => " Shell Commands ",
             MenuType::SessionInfoDetail => " Session Info ",
-            MenuType::GitStatusDetail => " Git Status ",
-            MenuType::SystemInfoDetail => " System Info ",
             MenuType::KeyboardShortcutsDetail => " Keyboard Shortcuts ",
             MenuType::AboutArulaDetail => " About ARULA ",
             MenuType::DocumentationDetail => " Documentation ",
-            MenuType::AiSettingsDetail => " AI Settings ",
             MenuType::GitSettingsDetail => " Configuration ",
-            MenuType::AppearanceSettingsDetail => " Appearance ",
         }
     }
 
-    pub fn get_option_display(&self, option: &MenuOption) -> (String, String) {
+    pub fn option_display(&self, option: &MenuOption) -> (String, String) {
         // For exit confirmation menu, show keyboard shortcuts
         if matches!(self.state, AppState::Menu(MenuType::ExitConfirmation)) {
             return match option {
                 MenuOption::Exit => ("Exit (Ctrl+C)".to_string(), "".to_string()),
                 MenuOption::Close => ("Stay (Esc)".to_string(), "".to_string()),
                 _ => {
-                    let (title, desc) = Self::get_option_info(option);
+                    let (title, desc) = Self::option_info(option);
                     (title.to_string(), desc.to_string())
                 }
             };
@@ -518,10 +453,6 @@ Command Reference:\n\
                 let value = self.get_field_display_text(6);
                 (format!("Theme: {}", value), "".to_string())
             }
-            MenuOption::EditArtStyle => {
-                let value = self.get_field_display_text(7);
-                (format!("Art Style: {}", value), "".to_string())
-            }
             MenuOption::ToggleAutoCommit => {
                 let status = if self.config.git.auto_commit { "✓ Enabled" } else { "✗ Disabled" };
                 (format!("Auto-Commit: {}", status), "".to_string())
@@ -531,13 +462,13 @@ Command Reference:\n\
                 (format!("Auto-Branch: {}", status), "".to_string())
             }
             _ => {
-                let (title, desc) = Self::get_option_info(option);
+                let (title, desc) = Self::option_info(option);
                 (title.to_string(), desc.to_string())
             }
         }
     }
 
-    pub fn get_option_info(option: &MenuOption) -> (&'static str, &'static str) {
+    pub fn option_info(option: &MenuOption) -> (&'static str, &'static str) {
         match option {
             // Main menu
             MenuOption::Commands => ("Commands", "View all available commands"),
@@ -553,8 +484,6 @@ Command Reference:\n\
 
             // Context submenu
             MenuOption::SessionInfo => ("View Context", "Session, git & system info"),
-            MenuOption::GitStatus => ("Git Status", "Repository information"),
-            MenuOption::SystemInfo => ("System Info", "Working directory & paths"),
 
             // Help submenu
             MenuOption::KeyboardShortcuts => ("Keyboard Shortcuts", "All available shortcuts"),
@@ -562,9 +491,7 @@ Command Reference:\n\
             MenuOption::Documentation => ("Documentation", "Full documentation"),
 
             // Configuration submenu
-            MenuOption::AiSettings => ("AI Settings", "AI provider & model"),
             MenuOption::GitSettings => ("Settings", "View & edit configuration"),
-            MenuOption::AppearanceSettings => ("Appearance", "Theme & UI settings"),
 
             // Detail menu actions
             MenuOption::GitInit => ("Initialize Repo", "Create new git repository"),
@@ -573,10 +500,8 @@ Command Reference:\n\
             MenuOption::GitAdd => ("Add Files", "Stage all changes"),
             MenuOption::GitCommit => ("Commit Changes", "Commit staged files"),
             MenuOption::ExecCommand => ("Execute Command", "Run custom shell command"),
-            MenuOption::ViewSessionInfo => ("View Info", "Show session details"),
             MenuOption::RefreshGitStatus => ("Refresh", "Update information"),
             MenuOption::ViewSystemInfo => ("View Info", "Show system details"),
-            MenuOption::ChangeTheme => ("Change Theme", "Switch color theme"),
             MenuOption::ToggleAutoCommit => ("Toggle Auto-Commit", "Enable/disable auto-commit"),
             MenuOption::ToggleCreateBranch => ("Toggle Auto-Branch", "Enable/disable auto-branch"),
 
@@ -586,7 +511,6 @@ Command Reference:\n\
             MenuOption::EditApiUrl => ("API URL", "Set API endpoint URL"),
             MenuOption::EditApiKey => ("API Key", "Set API authentication key"),
             MenuOption::EditTheme => ("Theme", "Change color theme"),
-            MenuOption::EditArtStyle => ("Art Style", "Change default art style"),
 
             // Common
             MenuOption::Back => ("Back", "Return to previous menu"),
@@ -607,7 +531,7 @@ Command Reference:\n\
             return;
         };
 
-        let menu_len = Self::get_menu_options(&current_menu).len();
+        let menu_len = Self::menu_options(&current_menu).len();
 
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -654,7 +578,7 @@ Command Reference:\n\
             return;
         };
 
-        let options = Self::get_menu_options(&current_menu);
+        let options = Self::menu_options(&current_menu);
         if let Some(option) = options.get(self.menu_selected) {
             match option {
                 // Main menu - navigate to submenus
@@ -698,14 +622,6 @@ Command Reference:\n\
                     self.state = AppState::Menu(MenuType::SessionInfoDetail);
                     self.menu_selected = 0;
                 }
-                MenuOption::GitStatus => {
-                    self.state = AppState::Menu(MenuType::GitStatusDetail);
-                    self.menu_selected = 0;
-                }
-                MenuOption::SystemInfo => {
-                    self.state = AppState::Menu(MenuType::SystemInfoDetail);
-                    self.menu_selected = 0;
-                }
 
                 // Help submenu - open detail menus
                 MenuOption::KeyboardShortcuts => {
@@ -722,16 +638,8 @@ Command Reference:\n\
                 }
 
                 // Configuration submenu - open detail menus
-                MenuOption::AiSettings => {
-                    self.state = AppState::Menu(MenuType::AiSettingsDetail);
-                    self.menu_selected = 0;
-                }
                 MenuOption::GitSettings => {
                     self.state = AppState::Menu(MenuType::GitSettingsDetail);
-                    self.menu_selected = 0;
-                }
-                MenuOption::AppearanceSettings => {
-                    self.state = AppState::Menu(MenuType::AppearanceSettingsDetail);
                     self.menu_selected = 0;
                 }
 
@@ -766,19 +674,11 @@ Command Reference:\n\
                     self.state = AppState::Chat;
                     self.menu_selected = 0;
                 }
-                MenuOption::ViewSessionInfo => {
-                    self.show_session_info();
-                }
                 MenuOption::RefreshGitStatus => {
                     self.show_git_status();
                 }
                 MenuOption::ViewSystemInfo => {
                     self.show_system_info();
-                }
-                MenuOption::ChangeTheme => {
-                    self.add_message(MessageType::Info, "Theme changing will be available in a future version.");
-                    self.state = AppState::Chat;
-                    self.menu_selected = 0;
                 }
                 MenuOption::ToggleAutoCommit => {
                     self.config.git.auto_commit = !self.config.git.auto_commit;
@@ -794,22 +694,21 @@ Command Reference:\n\
                 MenuOption::EditAiModel |
                 MenuOption::EditApiUrl |
                 MenuOption::EditApiKey |
-                MenuOption::EditTheme |
-                MenuOption::EditArtStyle => {
+                MenuOption::EditTheme => {
                     // These are handled by try_enter_field_edit_mode in handle_menu_navigation
                     // This match arm is just to satisfy the exhaustiveness check
                 }
 
+                
                 // Back button - go to parent menu
                 MenuOption::Back => {
                     let parent_menu = match &current_menu {
                         MenuType::Commands | MenuType::Context | MenuType::Help | MenuType::Configuration => MenuType::Main,
                         MenuType::GitCommandsDetail | MenuType::ExecCommandsDetail => MenuType::Commands,
-                        MenuType::SessionInfoDetail | MenuType::GitStatusDetail | MenuType::SystemInfoDetail => MenuType::Context,
+                        MenuType::SessionInfoDetail => MenuType::Context,
                         MenuType::DocumentationDetail => MenuType::Help,
                         // About and Shortcuts are now in main menu
                         MenuType::KeyboardShortcutsDetail | MenuType::AboutArulaDetail => MenuType::Main,
-                        MenuType::AiSettingsDetail | MenuType::AppearanceSettingsDetail => MenuType::Configuration,
                         MenuType::GitSettingsDetail => MenuType::Main, // Go directly back to main
                         _ => MenuType::Main,
                     };
@@ -838,20 +737,23 @@ Command Reference:\n\
         match self.menu_selected {
             0 => {
                 // AI Provider - cycle through options
-                let options = vec!["local".to_string(), "openai".to_string(), "anthropic".to_string()];
+                let options = self.get_provider_options();
                 let current_idx = options.iter().position(|x| x == &self.config.ai.provider).unwrap_or(0);
                 self.editing_field = Some(EditableField::AiProvider(options, current_idx));
                 true
             }
             1 => {
-                // AI Model - cycle through options based on provider
-                let options = match self.config.ai.provider.as_str() {
-                    "openai" => vec!["gpt-4".to_string(), "gpt-3.5-turbo".to_string()],
-                    "anthropic" => vec!["claude-3-opus".to_string(), "claude-3-sonnet".to_string()],
-                    _ => vec!["local-model".to_string()],
-                };
-                let current_idx = options.iter().position(|x| x == &self.config.ai.model).unwrap_or(0);
-                self.editing_field = Some(EditableField::AiModel(options, current_idx));
+                // AI Model - different behavior based on provider
+                if self.config.ai.provider.to_lowercase() == "custom" {
+                    // For custom provider, allow editing the models array as text
+                    let models_text = self.config.ai.models.join(", ");
+                    self.editing_field = Some(EditableField::CustomModels(models_text));
+                } else {
+                    // For other providers, cycle through predefined options
+                    let options = self.get_model_options();
+                    let current_idx = options.iter().position(|x| x == &self.config.ai.model).unwrap_or(0);
+                    self.editing_field = Some(EditableField::AiModel(options, current_idx));
+                }
                 true
             }
             2 => {
@@ -866,13 +768,7 @@ Command Reference:\n\
             }
             6 => {
                 // Theme - cycle through available themes
-                let options = vec![
-                    "Cyberpunk".to_string(),
-                    "Matrix".to_string(),
-                    "Ocean".to_string(),
-                    "Sunset".to_string(),
-                    "Monochrome".to_string(),
-                ];
+                let options = self.get_theme_options();
                 self.editing_field = Some(EditableField::Theme(options, 0));
                 true
             }
@@ -901,6 +797,22 @@ Command Reference:\n\
                     EditableField::AiModel(options, idx) => {
                         self.config.ai.model = options[idx].clone();
                     }
+                    EditableField::CustomModels(text) => {
+                        // Parse comma-separated models and update config
+                        let models: Vec<String> = text
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+
+                        if !models.is_empty() {
+                            self.config.ai.models = models.clone();
+                            // Ensure current model is in the list
+                            if !models.contains(&self.config.ai.model) {
+                                self.config.ai.model = models[0].clone();
+                            }
+                        }
+                    }
                     EditableField::ApiUrl(url) => {
                         self.config.ai.api_url = url;
                     }
@@ -910,14 +822,14 @@ Command Reference:\n\
                     EditableField::Theme(_options, _idx) => {
                         // Theme switching implementation
                     }
-                    EditableField::ArtStyle(style) => {
-                        self.config.art.default_style = style;
-                    }
                 }
                 self.editing_field = None;
 
                 // Save config to file
                 self.save_config();
+
+                // Reinitialize API client with new configuration
+                self.reinitialize_api_client();
             }
             KeyCode::Up => {
                 // Cycle up through options
@@ -929,6 +841,9 @@ Command Reference:\n\
                     EditableField::AiModel(options, idx) => {
                         let new_idx = if idx > 0 { idx - 1 } else { options.len() - 1 };
                         self.editing_field = Some(EditableField::AiModel(options, new_idx));
+                    }
+                    EditableField::CustomModels(_) => {
+                        // Text field - no up/down navigation
                     }
                     EditableField::Theme(options, idx) => {
                         let new_idx = if idx > 0 { idx - 1 } else { options.len() - 1 };
@@ -948,6 +863,9 @@ Command Reference:\n\
                         let new_idx = if idx < options.len() - 1 { idx + 1 } else { 0 };
                         self.editing_field = Some(EditableField::AiModel(options, new_idx));
                     }
+                    EditableField::CustomModels(_) => {
+                        // Text field - no up/down navigation
+                    }
                     EditableField::Theme(options, idx) => {
                         let new_idx = if idx < options.len() - 1 { idx + 1 } else { 0 };
                         self.editing_field = Some(EditableField::Theme(options, new_idx));
@@ -966,9 +884,9 @@ Command Reference:\n\
                         key.push(c);
                         self.editing_field = Some(EditableField::ApiKey(key));
                     }
-                    EditableField::ArtStyle(mut style) => {
-                        style.push(c);
-                        self.editing_field = Some(EditableField::ArtStyle(style));
+                    EditableField::CustomModels(mut text) => {
+                        text.push(c);
+                        self.editing_field = Some(EditableField::CustomModels(text));
                     }
                     _ => {}
                 }
@@ -984,9 +902,9 @@ Command Reference:\n\
                         key.pop();
                         self.editing_field = Some(EditableField::ApiKey(key));
                     }
-                    EditableField::ArtStyle(mut style) => {
-                        style.pop();
-                        self.editing_field = Some(EditableField::ArtStyle(style));
+                    EditableField::CustomModels(mut text) => {
+                        text.pop();
+                        self.editing_field = Some(EditableField::CustomModels(text));
                     }
                     _ => {}
                 }
@@ -996,54 +914,8 @@ Command Reference:\n\
     }
 
     // Commands submenu functions
-    fn show_git_commands(&mut self) {
-        self.add_message(
-            MessageType::Info,
-            "🌿 Git Commands
-
-Available Operations:
-• /git init - Initialize repository
-• /git status - Show working directory status
-• /git branches - List all branches
-• /git branch <name> - Create new branch
-• /git checkout <name> - Switch to branch
-• /git delete <name> - Delete branch
-• /git add - Add all files to staging
-• /git commit <message> - Commit changes
-• /git log - Show commit history
-• /git pull - Pull from remote
-• /git push - Push to remote
-
-Examples:
-• /git init
-• /git branch feature-xyz
-• /git checkout main
-• /git commit \"Add new feature\""
-        );
-    }
-
-    fn show_exec_commands(&mut self) {
-        self.add_message(
-            MessageType::Info,
-            "💻 Shell Commands
-
-Execute any shell command using /exec:
-
-Format:
-  /exec <command> [args...]
-
-Examples:
-• /exec ls -la - List directory contents
-• /exec cargo build - Build Rust project
-• /exec cargo test - Run tests
-• /exec npm install - Install Node packages
-• /exec python script.py - Run Python script
-• /exec git status - Run native git command
-
-Note: Commands run in your current working directory."
-        );
-    }
-
+    
+    
     // Context submenu functions
     fn show_session_info(&mut self) {
         let uptime = self.start_time.elapsed().unwrap_or_default().as_secs();
@@ -1071,7 +943,7 @@ AI Responses: {}",
 
     fn show_git_status(&mut self) {
         let git_status = if self.git_ops.open_repository(".").is_ok() {
-            let branch = self.git_ops.get_current_branch()
+            let branch = self.git_ops.current_branch()
                 .unwrap_or_else(|_| "unknown".to_string());
             format!("Repository detected ✓\nCurrent Branch: {}", branch)
         } else {
@@ -1108,143 +980,115 @@ Architecture: {}",
     }
 
     // Help submenu functions
-    fn show_keyboard_shortcuts(&mut self) {
-        self.add_message(
-            MessageType::Info,
-            "⌨️  Keyboard Shortcuts
-
-Navigation:
-• ESC - Open/close menu
-• ↑/↓ or k/j - Navigate menu items
-• Enter - Select menu item
-
-Text Editing:
-• Ctrl+A - Move to beginning of line
-• Ctrl+E - Move to end of line
-• Ctrl+K - Clear to end of line
-• Ctrl+U - Clear to beginning of line
-• Ctrl+W - Delete word backward
-• Ctrl+Left/Right - Move by words
-
-Application:
-• Ctrl+C - Quit immediately
-• Enter - Send message"
-        );
-    }
-
-    fn show_about(&mut self) {
-        self.add_message(
-            MessageType::Info,
-            "🤖 About ARULA CLI
-
-ARULA - Autonomous AI Interface
-Version: 0.2.0
-
-An autonomous AI command-line interface built with:
-• Rust - Systems programming language
-• Ratatui - Terminal UI framework
-• Tokio - Async runtime
-• Crossterm - Terminal manipulation
-
-Features:
-• Chat-style AI interaction
-• Git repository management
-• Shell command execution
-• Professional text editing
-• Multi-line input support
-• Theme customization
-
-Built for performance, reliability, and great UX."
-        );
-    }
-
-    fn show_documentation(&mut self) {
-        self.add_message(
-            MessageType::Info,
-            "📚 Documentation
-
-Quick Start:
-1. Type messages to chat with AI
-2. Use /git for Git operations
-3. Use /exec for shell commands
-4. Press ESC to open menu
-
-Command Reference:
-• All commands start with /
-• Git: /git <command> [args]
-• Exec: /exec <command> [args]
-
-Getting Help:
-• Press ESC → Help for shortcuts
-• Press ESC → Commands for examples
-• Check CLAUDE.md for development info
-
-For full documentation, visit the project repository."
-        );
-    }
-
+    
+    
+    
     // Configuration submenu functions
-    fn show_ai_settings(&mut self) {
-        self.add_message(
-            MessageType::Info,
-            &format!("🤖 AI Settings
 
-Provider: {}
-Model: {}
-Endpoint: {}
-
-Note: AI settings are configured via environment
-variables or configuration file.",
-                self.config.ai.provider,
-                self.config.ai.model,
-                self.api_client.as_ref()
-                    .map(|_| "Connected")
-                    .unwrap_or("Not configured")
-            )
-        );
+    pub fn get_provider_options(&self) -> Vec<String> {
+        vec![
+            "openai".to_string(),
+            "claude".to_string(),
+            "ollama".to_string(),
+            "Z.AI Coding Plan".to_string(),
+            "custom".to_string(),
+        ]
     }
 
-    fn show_git_settings(&mut self) {
-        self.add_message(
-            MessageType::Info,
-            &format!("🌿 Git Settings
-
-Auto Commit: {}
-Create Branch: {}
-
-These settings control automatic Git operations
-when working with AI-generated code.",
-                if self.config.git.auto_commit { "Enabled" } else { "Disabled" },
-                if self.config.git.create_branch { "Enabled" } else { "Disabled" }
-            )
-        );
+    pub fn get_model_options(&self) -> Vec<String> {
+        match self.config.ai.provider.to_lowercase().as_str() {
+            "openai" => vec![
+                "gpt-3.5-turbo".to_string(),
+                "gpt-4".to_string(),
+                "gpt-4-turbo".to_string(),
+            ],
+            "claude" | "anthropic" => vec![
+                "claude-3-sonnet-20240229".to_string(),
+                "claude-3-haiku-20240307".to_string(),
+                "claude-3-opus-20240229".to_string(),
+            ],
+            "ollama" => vec![
+                "llama2".to_string(),
+                "codellama".to_string(),
+                "mistral".to_string(),
+                "llama3".to_string(),
+            ],
+            "z.ai coding plan" | "z.ai" | "zai" => vec![
+                "glm-4.6".to_string(),
+                "glm-4.5".to_string(),
+                "glm-4.5v".to_string(),
+                "glm-4.5-air".to_string(),
+            ],
+            "custom" => self.config.ai.models.clone(),
+            _ => vec![
+                "default".to_string(),
+            ],
+        }
     }
 
-    fn show_appearance_settings(&mut self) {
-        self.add_message(
-            MessageType::Info,
-            &format!("🎨 Appearance Settings
-
-Current Theme: Cyberpunk
-
-Available Themes:
-• Cyberpunk (default)
-• Matrix
-• Ocean
-• Sunset
-• Monochrome
-
-Art Style: {}
-
-Note: Theme switching will be available
-in future versions.",
-                self.config.art.default_style
-            )
-        );
+    pub fn get_theme_options(&self) -> Vec<String> {
+        vec![
+            "Cyberpunk".to_string(),
+            "Matrix".to_string(),
+            "Ocean".to_string(),
+            "Sunset".to_string(),
+            "Monochrome".to_string(),
+        ]
     }
 
-    pub fn set_api_client(&mut self, endpoint: String) {
-        self.api_client = Some(ApiClient::new(endpoint));
+    pub fn initialize_api_client(&mut self) -> Result<()> {
+        // Validate configuration first
+        if let Err(e) = self.config.validate_ai_config() {
+            self.add_message(MessageType::Error, &format!("❌ Configuration Error: {}", e));
+            return Err(e);
+        }
+
+        let client = ApiClient::new(
+            self.config.ai.provider.clone(),
+            self.config.ai.api_url.clone(),
+            self.config.ai.api_key.clone(),
+            self.config.ai.model.clone(),
+        );
+
+        self.api_client = Some(client);
+
+        Ok(())
+    }
+
+    pub fn reinitialize_api_client(&mut self) {
+        // Clear existing client
+        self.api_client = None;
+
+        // Try to initialize new client
+        match self.initialize_api_client() {
+            Ok(()) => {
+                self.add_message(MessageType::Info, "🔌 AI client reinitialized successfully");
+            }
+            Err(e) => {
+                self.add_message(MessageType::Error, &format!("❌ Failed to initialize AI client: {}", e));
+            }
+        }
+    }
+
+    pub async fn test_api_connection(&mut self) -> bool {
+        if let Some(client) = self.api_client.clone() {
+            match client.test_connection().await {
+                Ok(true) => {
+                    self.add_message(MessageType::Info, "✅ AI connection successful!");
+                    true
+                }
+                Ok(false) => {
+                    self.add_message(MessageType::Error, "❌ AI connection test failed");
+                    false
+                }
+                Err(e) => {
+                    self.add_message(MessageType::Error, &format!("❌ Connection error: {}", e));
+                    false
+                }
+            }
+        } else {
+            false
+        }
     }
 
     pub async fn handle_ai_command(&mut self, command: String) -> Result<()> {
@@ -1256,13 +1100,46 @@ in future versions.",
             // Show thinking message
             self.add_message(MessageType::Arula, "🤔 Thinking...");
 
-            match client.send_message(&command, None).await {
+            // Build conversation history from recent messages (last 10 messages)
+            let conversation_history: Vec<crate::api::ChatMessage> = self.messages
+                .iter()
+                .rev()
+                .take(20) // Take last 20 messages to have enough context
+                .filter_map(|msg| {
+                    match msg.message_type {
+                        MessageType::User => Some(crate::api::ChatMessage {
+                            role: "user".to_string(),
+                            content: msg.content.clone(),
+                        }),
+                        MessageType::Arula => Some(crate::api::ChatMessage {
+                            role: "assistant".to_string(),
+                            content: msg.content.clone(),
+                        }),
+                        _ => None,
+                    }
+                })
+                .rev() // Reverse back to chronological order
+                .collect();
+
+            match client.send_message(&command, Some(conversation_history)).await {
                 Ok(response) => {
                     // Remove thinking message and add actual response
                     self.messages.pop(); // Remove "Thinking..."
 
                     if response.success {
                         self.add_message(MessageType::Arula, &response.response);
+
+                        // Add token usage info if available
+                        if let Some(usage) = response.usage {
+                            self.add_message(
+                                MessageType::Info,
+                                &format!("📊 Tokens: {} prompt + {} completion = {} total",
+                                    usage.prompt_tokens,
+                                    usage.completion_tokens,
+                                    usage.total_tokens
+                                )
+                            );
+                        }
                     } else {
                         let error_msg = response.error.unwrap_or_else(|| "Unknown error".to_string());
                         self.add_message(MessageType::Error, &format!("❌ Error: {}", error_msg));
@@ -1274,76 +1151,20 @@ in future versions.",
                 }
             }
         } else {
-            self.add_message(MessageType::Error, "❌ No API client configured");
+            self.add_message(MessageType::Error, "❌ AI not configured. Please configure AI settings in the menu.");
         }
 
         Ok(())
     }
 
-    fn default_config() -> Config {
-        Config {
-            ai: AiConfig {
-                provider: "local".to_string(),
-                model: "default".to_string(),
-                api_url: "http://localhost:8080".to_string(),
-                api_key: "".to_string(),
-            },
-            git: GitConfig {
-                auto_commit: true,
-                create_branch: true,
-            },
-            logging: LoggingConfig {
-                level: "INFO".to_string(),
-            },
-            art: ArtConfig {
-                default_style: "fractal".to_string(),
-            },
-            workspace: WorkspaceConfig {
-                path: "./arula_workspace".to_string(),
-            },
-        }
-    }
-
+  
     fn save_config(&self) {
-        // Save config to .arula/config.json
-        let config_dir = std::path::Path::new(".arula");
-        let config_path = config_dir.join("config.json");
-
-        // Create .arula directory if it doesn't exist
-        if let Err(e) = std::fs::create_dir_all(config_dir) {
-            eprintln!("Failed to create .arula directory: {}", e);
-            return;
-        }
-
-        // Serialize config to JSON
-        match serde_json::to_string_pretty(&self.config) {
-            Ok(json) => {
-                if let Err(e) = std::fs::write(&config_path, json) {
-                    eprintln!("Failed to write config file: {}", e);
-                }
-            }
-            Err(e) => {
-                eprintln!("Failed to serialize config: {}", e);
-            }
+        if let Err(e) = self.config.save() {
+            eprintln!("Failed to save config: {}", e);
         }
     }
 
-    fn load_config() -> Config {
-        let config_path = std::path::Path::new(".arula/config.json");
-
-        // Try to load existing config
-        if config_path.exists() {
-            if let Ok(json) = std::fs::read_to_string(config_path) {
-                if let Ok(config) = serde_json::from_str::<Config>(&json) {
-                    return config;
-                }
-            }
-        }
-
-        // Return default config if loading fails
-        Self::default_config()
-    }
-
+    
     pub fn handle_key_event(&mut self, key: KeyEvent) {
         // Only handle keys if input mode is enabled
         if !self.input_mode {
@@ -1367,6 +1188,34 @@ in future versions.",
             }
             KeyCode::Esc => {
                 // ESC is handled in main.rs, don't pass to textarea
+            }
+            KeyCode::PageUp => {
+                // Scroll chat up (multiple times for bigger scroll)
+                for _ in 0..5 {
+                    self.scroll_state.scroll_up();
+                }
+            }
+            KeyCode::PageDown => {
+                // Scroll chat down (multiple times for bigger scroll)
+                for _ in 0..5 {
+                    self.scroll_state.scroll_down();
+                }
+            }
+            KeyCode::Up => {
+                // If Ctrl is held, scroll up instead of navigating textarea
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.scroll_state.scroll_up();
+                } else {
+                    self.textarea.input(key);
+                }
+            }
+            KeyCode::Down => {
+                // If Ctrl is held, scroll down instead of navigating textarea
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.scroll_state.scroll_down();
+                } else {
+                    self.textarea.input(key);
+                }
             }
             _ => {
                 // Let TextArea handle all other input
@@ -1463,12 +1312,18 @@ Session: {}", uptime, self.session_id)
                         "Configuration initialized successfully!"
                     );
                 } else {
+                    let models_display = if self.config.ai.provider.to_lowercase() == "custom" {
+                        format!("\n  models: [{}]", self.config.ai.models.join(", "))
+                    } else {
+                        String::new()
+                    };
+
                     self.add_message(
                         MessageType::Arula,
                         &format!("⚙️ Current Configuration:
 ai:
   provider: {}
-  model: {}
+  model: {}{}
 git:
   auto_commit: {}
   create_branch: {}
@@ -1480,6 +1335,7 @@ workspace:
   path: {}",
                             self.config.ai.provider,
                             self.config.ai.model,
+                            models_display,
                             self.config.git.auto_commit,
                             self.config.git.create_branch,
                             self.config.logging.level,
@@ -1488,7 +1344,7 @@ workspace:
                     );
                 }
             }
-            cmd if cmd.starts_with("art") => {
+                        cmd if cmd.starts_with("art") => {
                 let art_type = cmd.strip_prefix("art ").unwrap_or("").trim();
                 match art_type {
                     "rust" | "crab" => {
@@ -1745,7 +1601,7 @@ Type 'help' to see available commands, or try:
                     return;
                 }
 
-                match self.git_ops.get_status() {
+                match self.git_ops.status() {
                     Ok(status_lines) => {
                         self.add_message(
                             MessageType::Arula,
@@ -1772,7 +1628,7 @@ Type 'help' to see available commands, or try:
 
                 match self.git_ops.list_branches() {
                     Ok(branches) => {
-                        let current_branch = self.git_ops.get_current_branch().unwrap_or_else(|_| "unknown".to_string());
+                        let current_branch = self.git_ops.current_branch().unwrap_or_else(|_| "unknown".to_string());
                         self.add_message(
                             MessageType::Arula,
                             &format!("🌿 Branches:\nCurrent: {}\n{}", current_branch, branches.join("\n"))
