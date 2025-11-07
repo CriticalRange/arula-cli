@@ -1,18 +1,14 @@
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers, KeyEventKind},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
-    cursor::MoveTo,
+    event::{self, EnableMouseCapture, DisableMouseCapture, Event, KeyCode, KeyModifiers, KeyEventKind, MouseEventKind},
 };
 use ratatui::{
     backend::CrosstermBackend,
     Terminal,
 };
-use std::io::{self, stdout, IsTerminal, Write};
+use std::io::{self, stdout, IsTerminal};
 use std::time::{Duration, Instant};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Parser)]
 #[command(name = "arula")]
@@ -47,39 +43,12 @@ use app::App;
 use layout::Layout;
 use ui_components::Theme;
 
-// Global flag for cleanup
-static CLEANUP_DONE: AtomicBool = AtomicBool::new(false);
-
-fn cleanup_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
-    if CLEANUP_DONE.swap(true, Ordering::SeqCst) {
-        return Ok(()); // Already cleaned up
-    }
-
-    // Ensure we're back to normal terminal state
-    let _ = disable_raw_mode();
-
-    // Clear screen and move cursor to top-left for clean exit
-    let _ = execute!(
-        terminal.backend_mut(),
-        Clear(ClearType::All),
-        MoveTo(0, 0)
-    );
-
-    // Execute cleanup commands (NO LeaveAlternateScreen since we didn't enter it)
-    let result = execute!(
-        terminal.backend_mut(),
-        crossterm::event::DisableBracketedPaste,
-        crossterm::event::DisableFocusChange
-    );
-
-    let _ = terminal.show_cursor();
-    let _ = io::stdout().flush();
-
-    result.map_err(|e| anyhow::anyhow!("Failed to cleanup terminal: {}", e))
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install color-eyre for better error reporting (optional)
+    let _ = color_eyre::install();
+
     let cli = Cli::parse();
 
     if cli.verbose {
@@ -107,28 +76,12 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    // Store original terminal state for restoration
-    let mut stdout = stdout();
+    // Initialize terminal with modern ratatui approach
+    let mut terminal = ratatui::init();
+    terminal.clear()?;
 
-    // Clear screen first for clean start (native scrollback still works)
-    execute!(
-        stdout,
-        Clear(ClearType::All),
-        MoveTo(0, 0)
-    )?;
-
-    // Enable raw mode first
-    enable_raw_mode()?;
-
-    // Enable terminal features WITHOUT alternate screen for native scrollback
-    execute!(
-        stdout,
-        crossterm::event::EnableBracketedPaste,
-        crossterm::event::EnableFocusChange
-    )?;
-
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    // Enable mouse capture for scroll wheel support
+    crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
 
     // Create app and layout
     let mut app = App::new()?;
@@ -148,15 +101,17 @@ async fn main() -> Result<()> {
         }
     }
 
-    let mut layout = Layout::new(Theme::Cyberpunk);
+    let mut layout = Layout::default();
+layout.set_theme(Theme::Cyberpunk);
 
     // Run app with proper cleanup
     let res = run_app(&mut terminal, &mut app, &mut layout).await;
 
-    // Always cleanup, even if an error occurred
-    if let Err(cleanup_err) = cleanup_terminal(terminal) {
-        eprintln!("Warning: Failed to cleanup terminal properly: {}", cleanup_err);
-    }
+    // Always cleanup using modern ratatui approach, even if an error occurred
+    let _ = ratatui::restore();
+
+    // Disable mouse capture
+    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
 
     if let Err(err) = res {
         println!("{err:?}");
@@ -181,13 +136,7 @@ async fn run_app(
         let messages = app.messages.clone();
         terminal.draw(|f| layout.render(f, app, &messages))?;
 
-        // Check if scrolled to bottom after rendering, re-enable auto-scroll
-        {
-            let total_lines = app.messages.len() * 2; // Approximation: each message + blank line
-            let visible_lines = 20; // Approximation of visible area
-            app.check_if_at_bottom(total_lines, visible_lines);
-        }
-
+        
         // Handle events with shorter timeout for better responsiveness
         let timeout = Duration::from_millis(50); // Very responsive to input
 
@@ -228,6 +177,42 @@ async fn run_app(
                                 // Open main menu
                                 app.state = crate::app::AppState::Menu(crate::app::MenuType::Main);
                             }
+                            KeyCode::PageUp => {
+                                // Scroll chat up
+                                for _ in 0..5 {
+                                    layout.scroll_state.scroll_up();
+                                }
+                            }
+                            KeyCode::PageDown => {
+                                // Scroll chat down
+                                for _ in 0..5 {
+                                    layout.scroll_state.scroll_down();
+                                }
+                            }
+                            KeyCode::Up => {
+                                // If Ctrl is held, scroll chat up
+                                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                    layout.scroll_state.scroll_up();
+                                } else {
+                                    app.handle_key_event(key);
+                                }
+                            }
+                            KeyCode::Down => {
+                                // If Ctrl is held, scroll chat down
+                                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                    layout.scroll_state.scroll_down();
+                                } else {
+                                    app.handle_key_event(key);
+                                }
+                            }
+                            KeyCode::Home => {
+                                // Scroll to top
+                                layout.scroll_state.scroll_to_top();
+                            }
+                            KeyCode::End => {
+                                // Scroll to bottom
+                                layout.scroll_state.scroll_to_bottom();
+                            }
                             _ => {
                                 app.handle_key_event(key);
                             }
@@ -243,6 +228,32 @@ async fn run_app(
                 Event::FocusLost => {
                     // Terminal lost focus - you might want to disable input mode here
                     // For now, keep it enabled for better UX
+                }
+                Event::Resize(width, height) => {
+                    // Handle terminal resize
+                    app.handle_terminal_resize(width, height);
+                }
+                Event::Mouse(mouse_event) => {
+                    // Handle mouse events for scrolling
+                    if matches!(app.state, crate::app::AppState::Chat) {
+                        match mouse_event.kind {
+                            MouseEventKind::ScrollDown => {
+                                // Scroll down - scroll multiple lines for better UX
+                                for _ in 0..3 {
+                                    layout.scroll_state.scroll_down();
+                                }
+                            }
+                            MouseEventKind::ScrollUp => {
+                                // Scroll up - scroll multiple lines for better UX
+                                for _ in 0..3 {
+                                    layout.scroll_state.scroll_up();
+                                }
+                            }
+                            _ => {
+                                // Handle other mouse events if needed
+                            }
+                        }
+                    }
                 }
                 _ => {}
             }

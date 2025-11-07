@@ -1,10 +1,12 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout as RatatuiLayout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout as RatatuiLayout, Rect, Size},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Padding, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
+    prelude::StatefulWidget,
     Frame,
 };
+use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
 use tui_markdown::from_str;
 
 use super::ui_components::{Gauge, Theme};
@@ -13,6 +15,13 @@ pub struct Layout {
     pub theme: Theme,
     pub status_gauge: Gauge,
     pub activity_gauge: Gauge,
+    pub scroll_state: ScrollViewState,
+}
+
+impl Default for Layout {
+    fn default() -> Self {
+        Self::new(Theme::Cyberpunk)
+    }
 }
 
 impl Layout {
@@ -27,7 +36,24 @@ impl Layout {
                 Color::Red,
             ]),
             theme,
+            scroll_state: ScrollViewState::default(),
         }
+    }
+
+    pub fn set_theme(&mut self, theme: Theme) {
+        let colors = theme.get_colors();
+        self.status_gauge = Gauge::new("AI Processing", colors.gradient.clone());
+        self.activity_gauge = Gauge::new("Network Activity", vec![
+            Color::Green,
+            Color::Yellow,
+            Color::Red,
+        ]);
+        self.theme = theme;
+    }
+
+    /// Reset scroll to bottom (useful when new messages arrive)
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll_state.scroll_to_bottom();
     }
 
     /// Detect if terminal is in vertical orientation or narrow terminal
@@ -77,64 +103,50 @@ impl Layout {
             f.area()
         );
 
-        // Always render chat in full area (responsive layout removed)
-        let full_chat_area = f.area();
-
-        // Detect if on-screen keyboard is likely open (small terminal height)
-        let keyboard_is_open = full_chat_area.height < 20;
-
-        // Hide textarea when keyboard is open - let it go under the keyboard
-        let textarea_area = if app.show_input && !keyboard_is_open {
-            let textarea_height = 3;
-            Rect {
-                x: 0,
-                y: full_chat_area.height.saturating_sub(textarea_height),
-                width: full_chat_area.width,
-                height: textarea_height,
-            }
-        } else {
-            Rect::default() // Hide textarea when keyboard is open
-        };
-
-        // Chat area gets full screen when keyboard is open, otherwise leaves space for textarea
-        let chat_area = if keyboard_is_open || !app.show_input {
-            // Full screen for chat when keyboard is open or input is hidden
-            full_chat_area
-        } else {
-            // Leave space at bottom for textarea when no keyboard
-            Rect {
-                x: full_chat_area.x,
-                y: full_chat_area.y,
-                width: full_chat_area.width,
-                height: full_chat_area.height.saturating_sub(3), // Space for textarea
-            }
-        };
-
         // Extract values before rendering
         let menu_state = app.state.clone();
         let menu_selected = app.menu_selected;
-        let textarea = app.textarea.clone();
         let is_ai_thinking = app.is_ai_thinking;
         let thinking_indicator = app.get_thinking_indicator();
 
-        // Calculate scroll parameters
-        let chat_scroll_offset = app.chat_scroll_offset;
-        let auto_scroll = app.auto_scroll;
+        
+        // Detect if on-screen keyboard is likely open (small terminal height)
+        let keyboard_is_open = f.area().height < 20;
 
-        // Render chat area (borderless) - uses immutable references
-        self.chat_area_immutable(
-            f,
-            chat_area,
-            messages,
-            is_ai_thinking,
-            &thinking_indicator,
-            chat_scroll_offset,
-            auto_scroll,
-        );
+        // Create layout with textarea always below chat area
+        if keyboard_is_open || !app.show_input {
+            // Full screen for chat when keyboard is open or input is hidden
+            let chat_area = f.area();
 
-        // Render textarea as overlay at absolute bottom position
-        if app.show_input && textarea_area.height > 0 {
-            f.render_widget(&textarea, textarea_area);
+            // Render chat area (borderless)
+            self.chat_area_immutable(
+                f,
+                chat_area,
+                messages,
+                is_ai_thinking,
+                &thinking_indicator,
+            );
+        } else {
+            // Split layout: chat area on top, textarea at bottom
+            let chunks = RatatuiLayout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0), // Chat area gets remaining space
+                    Constraint::Length(3), // Textarea gets fixed 3 lines
+                ])
+                .split(f.area());
+
+            // Render chat area (borderless) in the top chunk
+            self.chat_area_immutable(
+                f,
+                chunks[0],
+                messages,
+                is_ai_thinking,
+                &thinking_indicator,
+            );
+
+            // Render textarea in the bottom chunk
+            f.render_widget(&app.textarea, chunks[1]);
         }
 
         // Render menu if in menu mode (render last to be on top)
@@ -184,27 +196,7 @@ impl Layout {
         f.render_widget(header, area);
     }
 
-    fn render_input(&self, f: &mut Frame, area: Rect, app: &crate::app::App) {
-        let colors = self.theme.get_colors();
-
-        // Create custom input border with ASCII art
-        let input_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(colors.primary).add_modifier(Modifier::BOLD))
-            .border_type(ratatui::widgets::BorderType::Double)
-            .title(Span::styled(
-                " ⌨  INPUT ",
-                Style::default().fg(colors.success).add_modifier(Modifier::BOLD)
-            ))
-            .title_alignment(Alignment::Left);
-
-        // Clone the textarea and update its block
-        let mut textarea = app.textarea.clone();
-        textarea.set_block(input_block);
-
-        f.render_widget(&textarea, area);
-    }
-
+    
     fn chat_area_immutable(
         &mut self,
         f: &mut Frame,
@@ -212,8 +204,6 @@ impl Layout {
         messages: &[crate::chat::ChatMessage],
         is_ai_thinking: bool,
         thinking_indicator: &str,
-        chat_scroll_offset: u16,
-        auto_scroll: bool,
     ) {
         let colors = self.theme.get_colors();
 
@@ -226,7 +216,7 @@ impl Layout {
         let mut lines: Vec<Line> = Vec::new();
 
         for msg in messages {
-            let timestamp = msg.timestamp.format("%H:%M:%S").to_string();
+            let _timestamp = msg.timestamp.format("%H:%M:%S").to_string();
 
             // Special handling for System messages (like logo)
             if msg.message_type == crate::chat::MessageType::System {
@@ -290,35 +280,39 @@ impl Layout {
             lines.push(Line::from("")); // Empty line for spacing
         }
 
-        // Calculate scroll position
-        let total_lines = lines.len();
-        let visible_lines = area.height as usize;
+        // Calculate content size for ScrollView
+        let base_content_height = lines.len() as u16;
 
-        // Use manual scroll offset if auto-scroll is disabled
-        let scroll_value = if auto_scroll {
-            // Auto-scroll to bottom
-            if total_lines > visible_lines {
-                (total_lines - visible_lines) as u16
-            } else {
-                0
-            }
-        } else {
-            // Use manual scroll offset, but clamp it to valid range
-            let max_scroll = if total_lines > visible_lines {
-                (total_lines - visible_lines) as u16
-            } else {
-                0
-            };
-            chat_scroll_offset.min(max_scroll)
-        };
+        // Always ensure there's extra space for scrolling (add padding if needed)
+        let content_height = base_content_height.max(area.height + 10);
+        let content_width = area.width;
 
-        // Create a paragraph widget with calculated scroll and wrapping
-        let chat_paragraph = Paragraph::new(lines)
+        // Ensure content area is larger than viewport for scrolling
+        let content_size = Size::new(content_width, content_height);
+
+        // Ensure we have enough content lines to fill the content area
+        let mut content_lines = lines;
+        while content_lines.len() < content_height as usize {
+            content_lines.push(Line::from("")); // Add empty lines to fill content area
+        }
+
+        
+        // Create content for ScrollView that spans the full content area
+        let chat_paragraph = Paragraph::new(content_lines)
             .style(Style::default().bg(colors.background))
-            .scroll((scroll_value, 0))
-            .wrap(ratatui::widgets::Wrap { trim: false });
+            .wrap(Wrap { trim: true });
 
-        f.render_widget(chat_paragraph, area);
+        // Create ScrollView with proper configuration
+        let mut scroll_view = ScrollView::new(content_size)
+            .horizontal_scrollbar_visibility(ScrollbarVisibility::Never)
+            .vertical_scrollbar_visibility(ScrollbarVisibility::Automatic);
+
+        // Add the paragraph to the ScrollView
+        scroll_view.render_widget(chat_paragraph, Rect::new(0, 0, content_width, content_height));
+
+        
+        // Render the ScrollView
+        scroll_view.render(area, f.buffer_mut(), &mut self.scroll_state);
     }
 
     
@@ -370,14 +364,7 @@ impl Layout {
     }
 
     
-    #[allow(dead_code)]
-    pub fn set_theme(&mut self, theme: Theme) {
-        self.theme = theme;
-        // Reinitialize components with new theme
-        let colors = self.theme.get_colors();
-        self.status_gauge.colors = colors.gradient.clone();
-    }
-
+    
     fn render_menu(&self, f: &mut Frame, area: Rect, app: &crate::app::App, menu_type: &crate::app::MenuType, selected: usize) {
         let colors = self.theme.get_colors();
 
@@ -408,7 +395,7 @@ impl Layout {
             menu_options.len()
         );
 
-        let popup_area = Rect {
+        let _popup_area = Rect {
             x: popup_x,
             y: popup_y,
             width: popup_width,
@@ -502,11 +489,11 @@ impl Layout {
                                 .border_style(Style::default().fg(colors.primary))
                                 .title(Span::styled(
                                     menu_title,
-                                    Style::default().fg(colors.primary).add_modifier(Modifier::BOLD),
+                                    Style::default().fg(colors.primary).add_modifier(Modifier::BOLD)
                                 ))
                                 .padding(Padding::uniform(1)),
                         )
-                        .wrap(ratatui::widgets::Wrap { trim: true });
+                        .wrap(Wrap { trim: true });
 
                     f.render_widget(content_para, safe_popup_area);
                 }
@@ -530,11 +517,11 @@ impl Layout {
                                 .border_style(Style::default().fg(colors.primary))
                                 .title(Span::styled(
                                     menu_title,
-                                    Style::default().fg(colors.primary).add_modifier(Modifier::BOLD),
+                                    Style::default().fg(colors.primary).add_modifier(Modifier::BOLD)
                                 ))
                                 .padding(Padding::uniform(1)),
                         )
-                        .wrap(ratatui::widgets::Wrap { trim: true });
+                        .wrap(Wrap { trim: true });
 
                     f.render_widget(content_para, split[0]);
                 }
@@ -573,11 +560,11 @@ impl Layout {
                                 .border_style(Style::default().fg(colors.primary))
                                 .title(Span::styled(
                                     menu_title,
-                                    Style::default().fg(colors.primary).add_modifier(Modifier::BOLD),
+                                    Style::default().fg(colors.primary).add_modifier(Modifier::BOLD)
                                 ))
                                 .padding(Padding::uniform(1)),
                         )
-                        .wrap(ratatui::widgets::Wrap { trim: true });
+                        .wrap(Wrap { trim: true });
 
                     f.render_widget(content_para, split[0]);
                 }

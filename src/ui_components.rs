@@ -1,8 +1,8 @@
 use ratatui::{
-    layout::{Rect},
+    layout::{Rect, Alignment},
     style::{Color, Modifier, Style},
     widgets::{
-        Block, Borders, Padding, Paragraph, Sparkline, Wrap,
+        Block, Borders, Padding, Paragraph, Sparkline, Wrap, Tabs as RatatuiTabs, Gauge as RatatuiGauge,
     },
     Frame,
 };
@@ -146,7 +146,7 @@ impl Button {
                     .border_style(style)
                     .padding(Padding::horizontal(1)),
             )
-            .alignment(ratatui::layout::Alignment::Center);
+            .alignment(Alignment::Center);
 
         f.render_widget(button, area);
     }
@@ -160,6 +160,17 @@ pub struct Gauge {
     pub style: Style,
     #[allow(dead_code)]
     pub colors: Vec<Color>,
+}
+
+impl Default for Gauge {
+    fn default() -> Self {
+        Self {
+            label: "Gauge".to_string(),
+            progress: 0.0,
+            style: Style::default().fg(Color::Cyan),
+            colors: vec![Color::Cyan],
+        }
+    }
 }
 
 impl Gauge {
@@ -183,7 +194,7 @@ impl Gauge {
             gauge_colors.push(*color);
         }
 
-        let gauge = ratatui::widgets::Gauge::default()
+        let gauge = RatatuiGauge::default()
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -235,7 +246,7 @@ impl Tabs {
         let colors = self.theme.get_colors();
         let titles: Vec<&str> = self.titles.iter().map(|s| s.as_str()).collect();
 
-        let tabs = ratatui::widgets::Tabs::new(titles)
+        let tabs = RatatuiTabs::new(titles)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -301,7 +312,7 @@ pub fn paragraph(content: &str, style: Style) -> Paragraph<'_> {
                 .padding(Padding::uniform(1)),
         )
         .wrap(Wrap { trim: true })
-        .alignment(ratatui::layout::Alignment::Left)
+        .alignment(Alignment::Left)
 }
 
 #[allow(dead_code)]

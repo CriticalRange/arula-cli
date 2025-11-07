@@ -1,6 +1,7 @@
 use anyhow::Result;
 use chrono::Local;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::widgets::{Block, Borders};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tui_textarea::TextArea;
@@ -15,6 +16,9 @@ use crate::chat::{ChatMessage, MessageType};
 pub enum AiResponse {
     Success { response: String, usage: Option<crate::api::Usage> },
     Error(String),
+    StreamStart,
+    StreamChunk(String),
+    StreamEnd,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -150,9 +154,8 @@ pub struct App {
     pub thinking_frames: Vec<&'static str>,
     pub thinking_frame_index: usize,
     pub ai_response_rx: Option<mpsc::UnboundedReceiver<AiResponse>>,
+    pub current_streaming_message: Option<String>,  // Track current streaming message
     pub conversation_manager: ConversationManager,
-    pub chat_scroll_offset: u16,
-    pub auto_scroll: bool,
     pub show_input: bool,  // Control input area visibility
 }
 
@@ -177,8 +180,7 @@ impl App {
         let mut textarea = TextArea::default();
         textarea.set_placeholder_text("Type your message...");
         textarea.set_block(
-            ratatui::widgets::Block::default()
-                .borders(ratatui::widgets::Borders::ALL)
+            Block::default().borders(Borders::ALL)
                 .title(" Input ")
         );
 
@@ -221,10 +223,9 @@ impl App {
             thinking_frames,
             thinking_frame_index: 0,
             ai_response_rx: None,
+            current_streaming_message: None,
             conversation_manager,
-            chat_scroll_offset: 0,
-            auto_scroll: true, // Start with auto-scroll enabled
-            show_input: true,  // Show input by default
+            show_input: true,  // Show input by default (user can toggle with ESC)
         })
     }
 
@@ -398,6 +399,11 @@ Navigation:\n\
 • ESC - Open/close menu\n\
 • ↑/↓ or k/j - Navigate items\n\
 • Enter - Select item\n\n\
+Chat Scrolling:\n\
+• Mouse Wheel - Scroll 3 lines up/down\n\
+• PageUp/PageDown - Scroll 5 lines up/down\n\
+• Home/End - Jump to top/bottom\n\
+• Ctrl+↑/↓ - Scroll 1 line up/down\n\n\
 Text Editing:\n\
 • Ctrl+A - Beginning of line\n\
 • Ctrl+E - End of line\n\
@@ -1138,7 +1144,7 @@ Architecture: {}",
         }
     }
 
-    pub fn handle_ai_command(&mut self, command: String) {
+    pub async fn handle_ai_command(&mut self, command: String) -> Result<()> {
         let api_client = self.api_client.clone();
 
         if let Some(client) = api_client {
@@ -1146,6 +1152,11 @@ Architecture: {}",
 
             // Set thinking state - this will trigger the loading animation
             self.is_ai_thinking = true;
+
+            // Debug: Log that AI command is being processed
+            if std::env::var("RUST_LOG").unwrap_or_default() == "debug" {
+                self.add_message(MessageType::Info, &format!("🔄 Processing AI command: {}", command));
+            }
 
             // Get persistent memory from ARULA.md
             let persistent_memory = self.conversation_manager.get_memory()
@@ -1191,33 +1202,68 @@ Architecture: {}",
                 ]
             };
 
-            // Create channel for async response
-            let (tx, rx) = mpsc::unbounded_channel();
-            self.ai_response_rx = Some(rx);
+            // Use streaming if available (currently only OpenAI)
+            if matches!(client.provider, crate::api::AIProvider::OpenAI) {
+                let mut stream_rx = client.send_message_stream(&command, Some(conversation_history)).await?;
 
-            // Spawn async task that won't block the UI
-            tokio::spawn(async move {
-                let response = match client.send_message(&command, Some(conversation_history)).await {
-                    Ok(api_response) => {
-                        if api_response.success {
-                            AiResponse::Success {
-                                response: api_response.response,
-                                usage: api_response.usage,
+                // Create channel to convert StreamingResponse to AiResponse
+                let (tx, rx) = mpsc::unbounded_channel();
+                self.ai_response_rx = Some(rx);
+
+                tokio::spawn(async move {
+                    while let Some(stream_response) = stream_rx.recv().await {
+                        let ai_response = match stream_response {
+                            crate::api::StreamingResponse::Start => AiResponse::StreamStart,
+                            crate::api::StreamingResponse::Chunk(chunk) => AiResponse::StreamChunk(chunk),
+                            crate::api::StreamingResponse::End(api_response) => {
+                                if api_response.success {
+                                    AiResponse::Success {
+                                        response: api_response.response,
+                                        usage: api_response.usage,
+                                    }
+                                } else {
+                                    AiResponse::Error(api_response.error.unwrap_or_else(|| "Unknown error".to_string()))
+                                }
                             }
-                        } else {
-                            let error_msg = api_response.error.unwrap_or_else(|| "Unknown error".to_string());
-                            AiResponse::Error(error_msg)
+                            crate::api::StreamingResponse::Error(err) => AiResponse::Error(err),
+                        };
+
+                        if tx.send(ai_response).is_err() {
+                            break; // Channel closed
                         }
                     }
-                    Err(e) => AiResponse::Error(format!("API Error: {}", e)),
-                };
+                });
+            } else {
+                // Create channel for non-streaming fallback
+                let (tx, rx) = mpsc::unbounded_channel();
+                self.ai_response_rx = Some(rx);
 
-                // Send response through channel (ignore if receiver is dropped)
-                let _ = tx.send(response);
-            });
+                tokio::spawn(async move {
+                    let response = match client.send_message(&command, Some(conversation_history)).await {
+                        Ok(api_response) => {
+                            if api_response.success {
+                                AiResponse::Success {
+                                    response: api_response.response,
+                                    usage: api_response.usage,
+                                }
+                            } else {
+                                let error_msg = api_response.error.unwrap_or_else(|| "Unknown error".to_string());
+                                AiResponse::Error(error_msg)
+                            }
+                        }
+                        Err(e) => AiResponse::Error(format!("API Error: {}", e)),
+                    };
+                    let _ = tx.send(response);
+                });
+            }
         } else {
+            // Debug: Log that AI client is not configured
+            if std::env::var("RUST_LOG").unwrap_or_default() == "debug" {
+                self.add_message(MessageType::Info, "🔍 Debug: AI client not configured");
+            }
             self.add_message(MessageType::Error, "❌ AI not configured. Please configure AI settings in the menu.");
         }
+        Ok(())
     }
 
     pub fn check_ai_response(&mut self) {
@@ -1226,16 +1272,43 @@ Architecture: {}",
             // Try to receive response without blocking
             match rx.try_recv() {
                 Ok(response) => {
-                    // Stop thinking animation
-                    self.is_ai_thinking = false;
-                    self.ai_response_rx = None;
-
                     match response {
+                        AiResponse::StreamStart => {
+                            // Start streaming - create initial empty message
+                            self.current_streaming_message = Some(String::new());
+                            self.add_message(MessageType::Arula, ""); // Empty message to start
+                            // Keep thinking animation active during streaming
+                        }
+                        AiResponse::StreamChunk(chunk) => {
+                            // Append chunk to current streaming message
+                            if let Some(last_msg) = self.messages.last_mut() {
+                                if last_msg.message_type == MessageType::Arula {
+                                    last_msg.content.push_str(&chunk);
+                                }
+                            } else {
+                                // Fallback if no Arula message exists
+                                self.current_streaming_message = Some(chunk.clone());
+                                self.add_message(MessageType::Arula, &chunk);
+                            }
+                            // Keep receiver active for more chunks
+                        }
+                        AiResponse::StreamEnd => {
+                            // Streaming finished - clean up
+                            self.current_streaming_message = None;
+                            self.is_ai_thinking = false;
+                            self.ai_response_rx = None;
+                        }
                         AiResponse::Success { response, usage: _ } => {
+                            // Non-streaming success (fallback)
+                            self.is_ai_thinking = false;
+                            self.ai_response_rx = None;
                             self.add_message(MessageType::Arula, &response);
-                            // Token usage info hidden for cleaner UI
                         }
                         AiResponse::Error(error_msg) => {
+                            // Handle errors
+                            self.current_streaming_message = None;
+                            self.is_ai_thinking = false;
+                            self.ai_response_rx = None;
                             self.add_message(MessageType::Error, &format!("❌ {}", error_msg));
                         }
                     }
@@ -1275,8 +1348,7 @@ Architecture: {}",
                     self.textarea = TextArea::default();
                     self.textarea.set_placeholder_text("Type your message...");
                     self.textarea.set_block(
-                        ratatui::widgets::Block::default()
-                            .borders(ratatui::widgets::Borders::ALL)
+                        Block::default().borders(Borders::ALL)
                             .title(" Input ")
                     );
                     self.pending_command = Some(command);
@@ -1285,39 +1357,13 @@ Architecture: {}",
             KeyCode::Esc => {
                 // ESC is handled in main.rs, don't pass to textarea
             }
-            KeyCode::PageUp => {
-                // Scroll chat up - disable auto-scroll
-                self.chat_scroll_offset = self.chat_scroll_offset.saturating_sub(5);
-                self.auto_scroll = false;
-            }
-            KeyCode::PageDown => {
-                // Scroll chat down
-                if !self.auto_scroll {
-                    self.chat_scroll_offset = self.chat_scroll_offset.saturating_add(5);
-                }
-                // Will check if at bottom during render
-            }
             KeyCode::Up => {
-                // If Ctrl is held, scroll chat up
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    self.chat_scroll_offset = self.chat_scroll_offset.saturating_sub(1);
-                    self.auto_scroll = false;
-                } else {
-                    // Let textarea handle arrow keys for multi-line input
-                    self.textarea.input(key);
-                }
+                // Let textarea handle arrow keys for multi-line input
+                self.textarea.input(key);
             }
             KeyCode::Down => {
-                // If Ctrl is held, scroll chat down
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    if !self.auto_scroll {
-                        self.chat_scroll_offset = self.chat_scroll_offset.saturating_add(1);
-                    }
-                    // Will check if at bottom during render
-                } else {
-                    // Let textarea handle arrow keys for multi-line input
-                    self.textarea.input(key);
-                }
+                // Let textarea handle arrow keys for multi-line input
+                self.textarea.input(key);
             }
             _ => {
                 // Let TextArea handle all other input
@@ -1337,7 +1383,9 @@ Architecture: {}",
             }
             _ => {
                 // Forward everything else to AI (non-blocking)
-                self.handle_ai_command(command);
+                if let Err(e) = self.handle_ai_command(command).await {
+                    self.add_message(MessageType::Error, &format!("AI command error: {}", e));
+                }
             }
         }
     }
@@ -1638,28 +1686,21 @@ Type 'help' to see available commands, or try:
         // Auto-save conversation periodically
         let _ = self.conversation_manager.save_current_conversation();
 
-        // When new message arrives, re-enable auto-scroll
-        self.auto_scroll = true;
-        self.chat_scroll_offset = 0;
-
+        
         // Keep only last 50 messages in UI
         if self.messages.len() > 50 {
             self.messages.remove(0);
         }
     }
 
-    pub fn check_if_at_bottom(&mut self, total_lines: usize, visible_lines: usize) {
-        // Calculate the maximum scroll offset (bottom position)
-        let max_scroll = if total_lines > visible_lines {
-            (total_lines - visible_lines) as u16
-        } else {
-            0
-        };
-
-        // If we're at or past the bottom, re-enable auto-scroll
-        if self.chat_scroll_offset >= max_scroll {
-            self.auto_scroll = true;
-            self.chat_scroll_offset = 0; // Reset offset when auto-scrolling
+    
+    pub fn handle_terminal_resize(&mut self, new_width: u16, new_height: u16) {
+        // For cleaner UI, only add resize message in debug mode
+        if std::env::var("RUST_LOG").unwrap_or_default() == "debug" {
+            self.add_message(
+                MessageType::Info,
+                &format!("📐 Terminal resized to {}x{}", new_width, new_height)
+            );
         }
     }
 
