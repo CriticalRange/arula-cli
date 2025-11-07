@@ -30,6 +30,46 @@ impl Layout {
         }
     }
 
+    /// Detect if terminal is in vertical orientation or narrow terminal
+    /// This catches both tall terminals and very narrow ones that cause buffer issues
+    fn is_vertical_terminal(area: Rect) -> bool {
+        // Very narrow terminals (< 50 width) often cause buffer overflow issues
+        let is_very_narrow = area.width < 50;
+        // Tall terminals (height > width * 1.2)
+        let is_tall = area.height as f32 > area.width as f32 * 1.2;
+
+        is_very_narrow || is_tall
+    }
+
+    /// Get optimal menu dimensions based on terminal orientation
+    fn get_menu_dimensions(area: Rect, is_exit_confirmation: bool, is_detail_menu: bool, menu_options_len: usize) -> (u16, u16, u16, u16) {
+        let is_vertical = Self::is_vertical_terminal(area);
+
+        if is_vertical {
+            // For vertical terminals, use full width and center vertically
+            let popup_width = area.width.saturating_sub(4); // Leave 2 chars padding on each side
+            let popup_height = if is_exit_confirmation {
+                8
+            } else if is_detail_menu {
+                area.height.saturating_sub(4) // Use most of the screen height
+            } else {
+                (menu_options_len + 4).min(area.height.saturating_sub(4) as usize) as u16
+            };
+            let popup_x = 2; // Start 2 chars from left edge
+            let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+
+            (popup_width, popup_height, popup_x, popup_y)
+        } else {
+            // For horizontal terminals, use centered popup
+            let popup_width = if is_exit_confirmation { 50 } else if is_detail_menu { 70 } else { 60 };
+            let popup_height = if is_exit_confirmation { 8 } else if is_detail_menu { 20 } else { (menu_options_len + 4) as u16 };
+            let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+            let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+
+            (popup_width, popup_height, popup_x, popup_y)
+        }
+    }
+
     pub fn render(&mut self, f: &mut Frame, app: &crate::app::App, messages: &[crate::chat::ChatMessage]) {
         // Clear the entire frame with background color
         f.render_widget(
@@ -37,23 +77,37 @@ impl Layout {
             f.area()
         );
 
-        // Main layout - Simple chat and input only (conditionally show input)
-        let main_chunks = if app.show_input {
-            RatatuiLayout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(0),     // Chat content (no border)
-                    Constraint::Length(3),  // Input
-                ])
-                .split(f.area())
+        // Always render chat in full area (responsive layout removed)
+        let full_chat_area = f.area();
+
+        // Detect if on-screen keyboard is likely open (small terminal height)
+        let keyboard_is_open = full_chat_area.height < 20;
+
+        // Hide textarea when keyboard is open - let it go under the keyboard
+        let textarea_area = if app.show_input && !keyboard_is_open {
+            let textarea_height = 3;
+            Rect {
+                x: 0,
+                y: full_chat_area.height.saturating_sub(textarea_height),
+                width: full_chat_area.width,
+                height: textarea_height,
+            }
         } else {
-            // No input area, full screen for chat
-            RatatuiLayout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(0),     // Chat content (no border)
-                ])
-                .split(f.area())
+            Rect::default() // Hide textarea when keyboard is open
+        };
+
+        // Chat area gets full screen when keyboard is open, otherwise leaves space for textarea
+        let chat_area = if keyboard_is_open || !app.show_input {
+            // Full screen for chat when keyboard is open or input is hidden
+            full_chat_area
+        } else {
+            // Leave space at bottom for textarea when no keyboard
+            Rect {
+                x: full_chat_area.x,
+                y: full_chat_area.y,
+                width: full_chat_area.width,
+                height: full_chat_area.height.saturating_sub(3), // Space for textarea
+            }
         };
 
         // Extract values before rendering
@@ -70,7 +124,7 @@ impl Layout {
         // Render chat area (borderless) - uses immutable references
         self.chat_area_immutable(
             f,
-            main_chunks[0],
+            chat_area,
             messages,
             is_ai_thinking,
             &thinking_indicator,
@@ -78,12 +132,12 @@ impl Layout {
             auto_scroll,
         );
 
-        // Render textarea widget only if show_input is true
-        if app.show_input && main_chunks.len() > 1 {
-            f.render_widget(&textarea, main_chunks[1]);
+        // Render textarea as overlay at absolute bottom position
+        if app.show_input && textarea_area.height > 0 {
+            f.render_widget(&textarea, textarea_area);
         }
 
-        // Render menu if in menu mode
+        // Render menu if in menu mode (render last to be on top)
         if let crate::app::AppState::Menu(ref menu_type) = menu_state {
             self.render_menu(f, f.area(), app, menu_type, menu_selected);
         }
@@ -345,12 +399,14 @@ impl Layout {
             crate::app::MenuType::ExecCommandsDetail
         );
 
-        // Center the menu popup
+        // Calculate optimal popup dimensions based on terminal orientation
         let is_exit_confirmation = matches!(menu_type, crate::app::MenuType::ExitConfirmation);
-        let popup_width = if is_exit_confirmation { 50 } else if is_detail_menu { 70 } else { 60 };
-        let popup_height = if is_exit_confirmation { 8 } else if is_detail_menu { 20 } else { (menu_options.len() + 4) as u16 };
-        let popup_x = (area.width.saturating_sub(popup_width)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+        let (popup_width, popup_height, popup_x, popup_y) = Self::get_menu_dimensions(
+            area,
+            is_exit_confirmation,
+            is_detail_menu,
+            menu_options.len()
+        );
 
         let popup_area = Rect {
             x: popup_x,
@@ -359,8 +415,16 @@ impl Layout {
             height: popup_height,
         };
 
+        // Ensure popup area is within terminal bounds
+        let safe_popup_area = Rect {
+            x: popup_x.min(area.width.saturating_sub(1)),
+            y: popup_y.min(area.height.saturating_sub(1)),
+            width: popup_width.min(area.width.saturating_sub(popup_x)),
+            height: popup_height.min(area.height.saturating_sub(popup_y)),
+        };
+
         // Clear the popup area first so background doesn't show through
-        f.render_widget(ratatui::widgets::Clear, popup_area);
+        f.render_widget(ratatui::widgets::Clear, safe_popup_area);
 
         // Create menu list items
         let items: Vec<ListItem> = menu_options
@@ -378,29 +442,48 @@ impl Layout {
                     if is_selected { " ← " } else { "   " }
                 } else if is_selected { " → " } else { "   " };
 
-                let content = Line::from(vec![
-                    Span::styled(
-                        prefix,
-                        Style::default().fg(if is_selected { colors.primary } else { colors.text }),
-                    ),
-                    Span::styled(
-                        format!("{:<30}", title),  // Increased width for value display
-                        Style::default()
-                            .fg(if is_selected { colors.primary } else { colors.text })
-                            .add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
-                    ),
-                    Span::styled(
-                        desc,
-                        Style::default().fg(colors.secondary),
-                    ),
-                ]);
+                // Adaptive formatting for vertical vs horizontal terminals
+                let is_vertical = Self::is_vertical_terminal(area);
+                let content = if is_vertical || popup_width < 50 {
+                    // Compact formatting for narrow screens
+                    Line::from(vec![
+                        Span::styled(
+                            prefix,
+                            Style::default().fg(if is_selected { colors.primary } else { colors.text }),
+                        ),
+                        Span::styled(
+                            title,
+                            Style::default()
+                                .fg(if is_selected { colors.primary } else { colors.text })
+                                .add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
+                        ),
+                    ])
+                } else {
+                    // Full formatting for wide screens
+                    Line::from(vec![
+                        Span::styled(
+                            prefix,
+                            Style::default().fg(if is_selected { colors.primary } else { colors.text }),
+                        ),
+                        Span::styled(
+                            format!("{:<30}", title),  // Increased width for value display
+                            Style::default()
+                                .fg(if is_selected { colors.primary } else { colors.text })
+                                .add_modifier(if is_selected { Modifier::BOLD } else { Modifier::empty() }),
+                        ),
+                        Span::styled(
+                            desc,
+                            Style::default().fg(colors.secondary),
+                        ),
+                    ])
+                };
 
                 ListItem::new(content)
             })
             .collect();
 
         // Render menu
-        f.render_widget(ratatui::widgets::Clear, popup_area);
+        f.render_widget(ratatui::widgets::Clear, safe_popup_area);
 
         // For detail menus, split into content area and menu area
         if is_detail_menu {
@@ -425,7 +508,7 @@ impl Layout {
                         )
                         .wrap(ratatui::widgets::Wrap { trim: true });
 
-                    f.render_widget(content_para, popup_area);
+                    f.render_widget(content_para, safe_popup_area);
                 }
             } else {
                 // Show both content and menu sections
@@ -435,7 +518,7 @@ impl Layout {
                         Constraint::Min(10),  // Content area
                         Constraint::Length((menu_options.len() + 2) as u16), // Menu area
                     ])
-                    .split(popup_area);
+                    .split(safe_popup_area);
 
                 // Render content area if available
                 if let Some(content) = app.menu_content(menu_type) {
@@ -478,7 +561,7 @@ impl Layout {
                         Constraint::Length(5),  // Content area
                         Constraint::Min(0),     // Menu buttons
                     ])
-                    .split(popup_area);
+                    .split(safe_popup_area);
 
                 // Render content
                 if let Some(content) = app.menu_content(menu_type) {
@@ -525,18 +608,18 @@ impl Layout {
                     )
                     .style(Style::default().bg(menu_bg));
 
-                f.render_widget(menu_list, popup_area);
+                f.render_widget(menu_list, safe_popup_area);
             }
         }
 
         // Render help text at bottom (skip for exit confirmation)
         if !is_exit_confirmation {
-            let help_y = popup_y + popup_height;
-            if help_y < area.height {
+            let help_y = safe_popup_area.y + safe_popup_area.height;
+            if help_y < area.height && help_y + 1 <= area.height {
                 let help_area = Rect {
-                    x: popup_x,
+                    x: safe_popup_area.x,
                     y: help_y,
-                    width: popup_width,
+                    width: safe_popup_area.width,
                     height: 1,
                 };
 
