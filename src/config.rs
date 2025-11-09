@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::fs;
 use std::path::Path;
 
-use crate::app::{AiConfig, ArtConfig, Config, GitConfig, LoggingConfig, WorkspaceConfig};
+use crate::app::{AiConfig, ArtConfig, Config, LoggingConfig, WorkspaceConfig};
 
 impl Config {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -56,11 +56,7 @@ impl Config {
                 api_url: "https://api.openai.com".to_string(),
                 api_key: std::env::var("OPENAI_API_KEY").unwrap_or_default(),
             },
-            git: GitConfig {
-                auto_commit: false,
-                create_branch: false,
-            },
-            logging: LoggingConfig {
+                            logging: LoggingConfig {
                 level: "INFO".to_string(),
             },
             art: ArtConfig {

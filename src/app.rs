@@ -7,7 +7,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tui_textarea::TextArea;
 use tokio::sync::mpsc;
 use crate::api::ApiClient;
-use crate::git_ops::GitOperations;
 use crate::conversation::ConversationManager;
 
 use crate::chat::{ChatMessage, MessageType};
@@ -38,13 +37,12 @@ pub enum MenuType {
     Configuration,
     ExitConfirmation,
     // Nested submenus
-    GitCommandsDetail,
     ExecCommandsDetail,
     SessionInfoDetail,
     KeyboardShortcutsDetail,
     AboutArulaDetail,
     DocumentationDetail,
-    GitSettingsDetail,
+    SystemSettingsDetail,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,7 +57,6 @@ pub enum MenuOption {
     Exit,
 
     // Commands submenu
-    GitCommands,
     ExecCommands,
 
     // Context submenu
@@ -71,19 +68,11 @@ pub enum MenuOption {
     Documentation,
 
     // Configuration submenu
-    GitSettings,
+    SystemSettings,
 
-    // Detail menu actions (for Git Commands, etc)
-    GitInit,
-    GitStatusAction,
-    GitBranches,
-    GitAdd,
-    GitCommit,
+    // Detail menu actions
     ExecCommand,
-    RefreshGitStatus,
     ViewSystemInfo,
-    ToggleAutoCommit,
-    ToggleCreateBranch,
 
     // Editable field options (for configuration menu)
     EditAiProvider,
@@ -101,8 +90,7 @@ pub enum MenuOption {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub ai: AiConfig,
-    pub git: GitConfig,
-    pub logging: LoggingConfig,
+      pub logging: LoggingConfig,
     pub art: ArtConfig,
     pub workspace: WorkspaceConfig,
 }
@@ -116,11 +104,6 @@ pub struct AiConfig {
     pub api_key: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitConfig {
-    pub auto_commit: bool,
-    pub create_branch: bool,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
@@ -147,7 +130,6 @@ pub struct App {
     pub session_id: String,
     pub api_client: Option<ApiClient>,
     pub pending_command: Option<String>,
-    pub git_ops: GitOperations,
     pub menu_selected: usize,
     pub editing_field: Option<EditableField>,
     pub is_ai_thinking: bool,
@@ -219,8 +201,7 @@ impl App {
             session_id,
             api_client: None,
             pending_command: None,
-            git_ops: GitOperations::new(),
-            menu_selected: 0,
+              menu_selected: 0,
             editing_field: None,
             is_ai_thinking: false,
             thinking_frames,
@@ -251,7 +232,6 @@ impl App {
                 MenuOption::Close,
             ],
             MenuType::Commands => vec![
-                MenuOption::GitCommands,
                 MenuOption::ExecCommands,
             ],
             MenuType::Context => vec![
@@ -261,33 +241,21 @@ impl App {
                 MenuOption::Documentation,
             ],
             MenuType::Configuration => vec![
-                MenuOption::GitSettings,
-            ],
-            // Detail menus
-            MenuType::GitCommandsDetail => vec![
-                MenuOption::GitInit,
-                MenuOption::GitStatusAction,
-                MenuOption::GitBranches,
-                MenuOption::GitAdd,
-                MenuOption::GitCommit,
+                MenuOption::SystemSettings,
             ],
             MenuType::ExecCommandsDetail => vec![
                 MenuOption::ExecCommand,
             ],
-            MenuType::SessionInfoDetail => vec![
-                MenuOption::RefreshGitStatus,
-            ],
-            MenuType::KeyboardShortcutsDetail => vec![],
+            MenuType::SessionInfoDetail => vec![],
+              MenuType::KeyboardShortcutsDetail => vec![],
             MenuType::AboutArulaDetail => vec![],
             MenuType::DocumentationDetail => vec![],
-            MenuType::GitSettingsDetail => vec![
+            MenuType::SystemSettingsDetail => vec![
                 MenuOption::EditAiProvider,      // Index 0 - AI Provider (editable)
                 MenuOption::EditAiModel,         // Index 1 - AI Model (editable)
                 MenuOption::EditApiUrl,          // Index 2 - API URL (editable)
                 MenuOption::EditApiKey,          // Index 3 - API Key (editable)
-                MenuOption::ToggleAutoCommit,    // Index 4
-                MenuOption::ToggleCreateBranch,  // Index 5
-                MenuOption::EditTheme,           // Index 6 - Theme (editable)
+                MenuOption::EditTheme,           // Index 4 - Theme (editable)
             ],
         }
     }
@@ -365,23 +333,12 @@ Press Ctrl+C again to exit or ESC to stay.".to_string())
                 let uptime_mins = (uptime % 3600) / 60;
                 let uptime_secs = uptime % 60;
 
-                // Get git status
-                let mut git_ops_clone = GitOperations::new();
-                let git_info = if git_ops_clone.open_repository(".").is_ok() {
-                    let branch = git_ops_clone.current_branch()
-                        .unwrap_or_else(|_| "unknown".to_string());
-                    format!("✓ Repository detected | Branch: {}", branch)
-                } else {
-                    "✗ No git repository".to_string()
-                };
-
+                
                 Some(format!("📊 Context Information\n\n\
 SESSION:\n\
   ID: {}\n\
   Uptime: {}h {}m {}s\n\
   Messages: {} (User: {} | AI: {})\n\n\
-GIT:\n\
-  {}\n\n\
 SYSTEM:\n\
   Directory: {}\n\
   Platform: {} ({})",
@@ -390,7 +347,6 @@ SYSTEM:\n\
                     self.messages.len(),
                     self.messages.iter().filter(|m| m.message_type == MessageType::User).count(),
                     self.messages.iter().filter(|m| m.message_type == MessageType::Arula).count(),
-                    git_info,
                     std::env::current_dir()
                         .map(|p| p.display().to_string())
                         .unwrap_or_else(|_| "Unknown".to_string()),
@@ -420,7 +376,6 @@ Text Editing:\n\
 Version: 0.2.0\n\n\
 FEATURES:\n\
 • Chat-style AI interaction\n\
-• Git repository management (/git commands)\n\
 • Shell command execution (/exec commands)\n\
 • Professional text editing with tui-textarea\n\n\
 KEYBOARD SHORTCUTS:\n\
@@ -430,10 +385,9 @@ KEYBOARD SHORTCUTS:\n\
 TECH STACK:\n\
 Built with Rust, Ratatui, Tokio, Crossterm\n\n\
 COMMANDS:\n\
-• /git <cmd> - Git operations (init, status, branch, commit)\n\
 • /exec <cmd> - Execute any shell command".to_string())
             }
-            MenuType::GitSettingsDetail => {
+            MenuType::SystemSettingsDetail => {
                 // Show a brief tip instead of duplicating the field values
                 Some("⚙️  Configuration\n\n\
 Select a field below to edit it:\n\
@@ -445,11 +399,9 @@ Select a field below to edit it:\n\
                 Some("📚 Documentation\n\n\
 Quick Start:\n\
 1. Type messages to chat with AI\n\
-2. Use /git for Git operations\n\
-3. Use /exec for shell commands\n\
-4. Press ESC to open menu\n\n\
+2. Use /exec for shell commands\n\
+3. Press ESC to open menu\n\n\
 Command Reference:\n\
-• /git <command> [args]\n\
 • /exec <command> [args]".to_string())
             }
             _ => None,
@@ -464,13 +416,12 @@ Command Reference:\n\
             MenuType::Context => " Context ",
             MenuType::Help => " Help ",
             MenuType::Configuration => " Configuration ",
-            MenuType::GitCommandsDetail => " Git Commands ",
-            MenuType::ExecCommandsDetail => " Shell Commands ",
+                  MenuType::ExecCommandsDetail => " Shell Commands ",
             MenuType::SessionInfoDetail => " Session Info ",
             MenuType::KeyboardShortcutsDetail => " Keyboard Shortcuts ",
             MenuType::AboutArulaDetail => " About ARULA ",
             MenuType::DocumentationDetail => " Documentation ",
-            MenuType::GitSettingsDetail => " Configuration ",
+            MenuType::SystemSettingsDetail => " Configuration ",
         }
     }
 
@@ -509,15 +460,7 @@ Command Reference:\n\
                 let value = self.get_field_display_text(6);
                 (format!("Theme: {}", value), "".to_string())
             }
-            MenuOption::ToggleAutoCommit => {
-                let status = if self.config.git.auto_commit { "✓ Enabled" } else { "✗ Disabled" };
-                (format!("Auto-Commit: {}", status), "".to_string())
-            }
-            MenuOption::ToggleCreateBranch => {
-                let status = if self.config.git.create_branch { "✓ Enabled" } else { "✗ Disabled" };
-                (format!("Auto-Branch: {}", status), "".to_string())
-            }
-            _ => {
+                            _ => {
                 let (title, desc) = Self::option_info(option);
                 (title.to_string(), desc.to_string())
             }
@@ -535,11 +478,10 @@ Command Reference:\n\
             MenuOption::Exit => ("Exit", "Quit application"),
 
             // Commands submenu
-            MenuOption::GitCommands => ("Git Commands", "Git operations & examples"),
-            MenuOption::ExecCommands => ("Shell Commands", "Execute shell commands"),
+                        MenuOption::ExecCommands => ("Shell Commands", "Execute shell commands"),
 
             // Context submenu
-            MenuOption::SessionInfo => ("View Context", "Session, git & system info"),
+            MenuOption::SessionInfo => ("View Context", "Session & system info"),
 
             // Help submenu
             MenuOption::KeyboardShortcuts => ("Keyboard Shortcuts", "All available shortcuts"),
@@ -547,19 +489,11 @@ Command Reference:\n\
             MenuOption::Documentation => ("Documentation", "Full documentation"),
 
             // Configuration submenu
-            MenuOption::GitSettings => ("Settings", "View & edit configuration"),
+            MenuOption::SystemSettings => ("Settings", "View & edit configuration"),
 
             // Detail menu actions
-            MenuOption::GitInit => ("Initialize Repo", "Create new git repository"),
-            MenuOption::GitStatusAction => ("Check Status", "View git repository status"),
-            MenuOption::GitBranches => ("List Branches", "Show all branches"),
-            MenuOption::GitAdd => ("Add Files", "Stage all changes"),
-            MenuOption::GitCommit => ("Commit Changes", "Commit staged files"),
             MenuOption::ExecCommand => ("Execute Command", "Run custom shell command"),
-            MenuOption::RefreshGitStatus => ("Refresh", "Update information"),
             MenuOption::ViewSystemInfo => ("View Info", "Show system details"),
-            MenuOption::ToggleAutoCommit => ("Toggle Auto-Commit", "Enable/disable auto-commit"),
-            MenuOption::ToggleCreateBranch => ("Toggle Auto-Branch", "Enable/disable auto-branch"),
 
             // Editable fields (will be dynamically updated with actual values)
             MenuOption::EditAiProvider => ("AI Provider", "Change AI provider"),
@@ -651,7 +585,7 @@ Command Reference:\n\
                     self.menu_selected = 0;
                 }
                 MenuOption::Configuration => {
-                    self.state = AppState::Menu(MenuType::GitSettingsDetail);
+                    self.state = AppState::Menu(MenuType::SystemSettingsDetail);
                     self.menu_selected = 0;
                 }
                 MenuOption::ClearChat => {
@@ -664,10 +598,6 @@ Command Reference:\n\
                 }
 
                 // Commands submenu - open detail menus
-                MenuOption::GitCommands => {
-                    self.state = AppState::Menu(MenuType::GitCommandsDetail);
-                    self.menu_selected = 0;
-                }
                 MenuOption::ExecCommands => {
                     self.state = AppState::Menu(MenuType::ExecCommandsDetail);
                     self.menu_selected = 0;
@@ -693,56 +623,13 @@ Command Reference:\n\
                     self.menu_selected = 0;
                 }
 
-                // Configuration submenu - open detail menus
-                MenuOption::GitSettings => {
-                    self.state = AppState::Menu(MenuType::GitSettingsDetail);
-                    self.menu_selected = 0;
-                }
-
-                // Detail menu actions
-                MenuOption::GitInit => {
-                    self.pending_command = Some("/git init".to_string());
-                    self.state = AppState::Chat;
-                    self.menu_selected = 0;
-                }
-                MenuOption::GitStatusAction => {
-                    self.pending_command = Some("/git status".to_string());
-                    self.state = AppState::Chat;
-                    self.menu_selected = 0;
-                }
-                MenuOption::GitBranches => {
-                    self.pending_command = Some("/git branches".to_string());
-                    self.state = AppState::Chat;
-                    self.menu_selected = 0;
-                }
-                MenuOption::GitAdd => {
-                    self.pending_command = Some("/git add".to_string());
-                    self.state = AppState::Chat;
-                    self.menu_selected = 0;
-                }
-                MenuOption::GitCommit => {
-                    self.add_message(MessageType::Info, "Enter commit message in chat:");
-                    self.state = AppState::Chat;
-                    self.menu_selected = 0;
-                }
-                MenuOption::ExecCommand => {
+                                MenuOption::ExecCommand => {
                     self.add_message(MessageType::Info, "Enter shell command using /exec <command>");
                     self.state = AppState::Chat;
                     self.menu_selected = 0;
                 }
-                MenuOption::RefreshGitStatus => {
-                    self.show_git_status();
-                }
                 MenuOption::ViewSystemInfo => {
                     self.show_system_info();
-                }
-                MenuOption::ToggleAutoCommit => {
-                    self.config.git.auto_commit = !self.config.git.auto_commit;
-                    self.save_config();
-                }
-                MenuOption::ToggleCreateBranch => {
-                    self.config.git.create_branch = !self.config.git.create_branch;
-                    self.save_config();
                 }
 
                 // Editable field options - these do nothing here, handled by try_enter_field_edit_mode
@@ -760,12 +647,12 @@ Command Reference:\n\
                 MenuOption::Back => {
                     let parent_menu = match &current_menu {
                         MenuType::Commands | MenuType::Context | MenuType::Help | MenuType::Configuration => MenuType::Main,
-                        MenuType::GitCommandsDetail | MenuType::ExecCommandsDetail => MenuType::Commands,
+                        MenuType::ExecCommandsDetail => MenuType::Commands,
                         MenuType::SessionInfoDetail => MenuType::Context,
                         MenuType::DocumentationDetail => MenuType::Help,
                         // About and Shortcuts are now in main menu
                         MenuType::KeyboardShortcutsDetail | MenuType::AboutArulaDetail => MenuType::Main,
-                        MenuType::GitSettingsDetail => MenuType::Main, // Go directly back to main
+                        MenuType::SystemSettingsDetail => MenuType::Main, // Go directly back to main
                         _ => MenuType::Main,
                     };
                     self.state = AppState::Menu(parent_menu);
@@ -777,19 +664,24 @@ Command Reference:\n\
                     self.state = AppState::Chat;
                     self.menu_selected = 0;
                 }
+
+                // Handle remaining options that don't have specific actions
+                MenuOption::SystemSettings => {
+                    // These are handled elsewhere or just display info
+                }
             }
         }
     }
 
     // Field editing helper methods
     fn try_enter_field_edit_mode(&mut self, menu_type: &MenuType) -> bool {
-        // Only allow editing in the GitSettingsDetail menu (which shows all config)
-        if menu_type != &MenuType::GitSettingsDetail {
+        // Only allow editing in the SystemSettingsDetail menu (which shows all config)
+        if menu_type != &MenuType::SystemSettingsDetail {
             return false;
         }
 
         // Map menu selection index to editable fields
-        // In GitSettingsDetail, we show: AI Provider, AI Model, API URL, API Key, Auto Commit, Auto Branch, Theme, Back
+        // In SystemSettingsDetail, we show: AI Provider, AI Model, API URL, API Key, Theme, Back
         match self.menu_selected {
             0 => {
                 // AI Provider - cycle through options
@@ -822,7 +714,7 @@ Command Reference:\n\
                 self.editing_field = Some(EditableField::ApiKey(self.config.ai.api_key.clone()));
                 true
             }
-            6 => {
+            4 => {
                 // Theme - cycle through available themes
                 let options = self.get_theme_options();
                 self.editing_field = Some(EditableField::Theme(options, 0));
@@ -998,21 +890,7 @@ AI Responses: {}",
         );
     }
 
-    fn show_git_status(&mut self) {
-        let git_status = if self.git_ops.open_repository(".").is_ok() {
-            let branch = self.git_ops.current_branch()
-                .unwrap_or_else(|_| "unknown".to_string());
-            format!("Repository detected ✓\nCurrent Branch: {}", branch)
-        } else {
-            "No Git repository found in current directory".to_string()
-        };
-
-        self.add_message(
-            MessageType::Info,
-            &format!("🌿 Git Status\n\n{}", git_status)
-        );
-    }
-
+  
     fn show_system_info(&mut self) {
         self.add_message(
             MessageType::Info,
@@ -1450,7 +1328,6 @@ Architecture: {}",
 • task - Run task demos
 • logs - View recent logs
 • clear - Clear conversation
-• git - Git operations (see /git help)
 • exec - Execute shell commands
 • exit or quit - Exit ARULA CLI
 
@@ -1472,19 +1349,7 @@ Architecture: {}",
 • Ctrl+K - Clear to end
 • Ctrl+A/E - Move to beginning/end
 
-📝 Git Commands (use /git <command>):
-• /git init - Initialize git repository
-• /git status - Show git status
-• /git branches - List all branches
-• /git branch <name> - Create new branch
-• /git checkout <name> - Switch to branch
-• /git delete <name> - Delete branch
-• /git add - Add all files
-• /git commit <message> - Commit changes
-• /git log - Show commit history
-• /git pull - Pull from remote
-
-💡 Try: art rust, /git status, or /exec ls -la"
+💡 Try: art rust or /exec ls -la"
                 );
             }
             cmd if cmd == "status" || cmd == "st" => {
@@ -1517,9 +1382,6 @@ Session: {}", uptime, self.session_id)
 ai:
   provider: {}
   model: {}{}
-git:
-  auto_commit: {}
-  create_branch: {}
 logging:
   level: {}
 art:
@@ -1529,8 +1391,6 @@ workspace:
                             self.config.ai.provider,
                             self.config.ai.model,
                             models_display,
-                            self.config.git.auto_commit,
-                            self.config.git.create_branch,
                             self.config.logging.level,
                             self.config.art.default_style,
                             self.config.workspace.path)
@@ -1656,10 +1516,7 @@ Failed: {}", success_count, error_count)
                     }
                 }
             }
-            cmd if cmd.starts_with("git") => {
-                self.handle_git_command(cmd).await;
-            }
-            cmd if cmd.starts_with("exec") => {
+                  cmd if cmd.starts_with("exec") => {
                 self.handle_exec_command(cmd).await;
             }
             cmd if cmd == "logs" || cmd == "log" => {
@@ -1752,279 +1609,6 @@ Type 'help' to see available commands, or try:
         }
     }
 
-    async fn handle_git_command(&mut self, command: &str) {
-        let parts: Vec<&str> = command.split_whitespace().collect();
-
-        if parts.len() < 2 {
-            self.add_message(
-                MessageType::Error,
-                "Usage: /git <command> [args]\nUse /git help for available commands"
-            );
-            return;
-        }
-
-        match parts[1] {
-            "help" => {
-                self.add_message(
-                    MessageType::Arula,
-                    "🌿 Git Commands Help:
-• /git init - Initialize git repository in current directory
-• /git status - Show working directory status
-• /git branches - List all branches (local and remote)
-• /git branch <name> - Create new branch
-• /git checkout <name> - Switch to existing branch
-• /git delete <name> - Delete branch (not current branch)
-• /git add - Add all untracked files to staging
-• /git commit <message> - Commit staged changes
-• /git log - Show commit history
-• /git pull - Pull changes from remote
-• /git push - Push changes to remote
-
-💡 Examples:
-• /git init
-• /git status
-• /git branch feature-xyz
-• /git checkout main
-• /git add
-• /git commit \"Add new feature\""
-                );
-            }
-            "init" => {
-                match self.git_ops.initialize_repository(".") {
-                    Ok(()) => {
-                        self.add_message(
-                            MessageType::Success,
-                            "✅ Git repository initialized successfully!"
-                        );
-                    }
-                    Err(e) => {
-                        self.add_message(
-                            MessageType::Error,
-                            &format!("❌ Failed to initialize repository: {}", e)
-                        );
-                    }
-                }
-            }
-            "status" => {
-                // Try to open repository first
-                if self.git_ops.open_repository(".").is_err() {
-                    self.add_message(
-                        MessageType::Error,
-                        "❌ Not a git repository. Use '/git init' to initialize."
-                    );
-                    return;
-                }
-
-                match self.git_ops.status() {
-                    Ok(status_lines) => {
-                        self.add_message(
-                            MessageType::Arula,
-                            &format!("📊 Git Status:\n{}", status_lines.join("\n"))
-                        );
-                    }
-                    Err(e) => {
-                        self.add_message(
-                            MessageType::Error,
-                            &format!("❌ Failed to get status: {}", e)
-                        );
-                    }
-                }
-            }
-            "branches" => {
-                // Try to open repository first
-                if self.git_ops.open_repository(".").is_err() {
-                    self.add_message(
-                        MessageType::Error,
-                        "❌ Not a git repository. Use '/git init' to initialize."
-                    );
-                    return;
-                }
-
-                match self.git_ops.list_branches() {
-                    Ok(branches) => {
-                        let current_branch = self.git_ops.current_branch().unwrap_or_else(|_| "unknown".to_string());
-                        self.add_message(
-                            MessageType::Arula,
-                            &format!("🌿 Branches:\nCurrent: {}\n{}", current_branch, branches.join("\n"))
-                        );
-                    }
-                    Err(e) => {
-                        self.add_message(
-                            MessageType::Error,
-                            &format!("❌ Failed to list branches: {}", e)
-                        );
-                    }
-                }
-            }
-            "branch" => {
-                if parts.len() < 3 {
-                    self.add_message(
-                        MessageType::Error,
-                        "Usage: /git branch <name>"
-                    );
-                    return;
-                }
-
-                // Try to open repository first
-                if self.git_ops.open_repository(".").is_err() {
-                    self.add_message(
-                        MessageType::Error,
-                        "❌ Not a git repository. Use '/git init' to initialize."
-                    );
-                    return;
-                }
-
-                let branch_name = parts[2];
-                match self.git_ops.create_branch(branch_name) {
-                    Ok(()) => {
-                        self.add_message(
-                            MessageType::Success,
-                            &format!("✅ Branch '{}' created successfully!", branch_name)
-                        );
-                    }
-                    Err(e) => {
-                        self.add_message(
-                            MessageType::Error,
-                            &format!("❌ Failed to create branch: {}", e)
-                        );
-                    }
-                }
-            }
-            "checkout" => {
-                if parts.len() < 3 {
-                    self.add_message(
-                        MessageType::Error,
-                        "Usage: /git checkout <branch_name>"
-                    );
-                    return;
-                }
-
-                // Try to open repository first
-                if self.git_ops.open_repository(".").is_err() {
-                    self.add_message(
-                        MessageType::Error,
-                        "❌ Not a git repository. Use '/git init' to initialize."
-                    );
-                    return;
-                }
-
-                let branch_name = parts[2];
-                match self.git_ops.checkout_branch(branch_name) {
-                    Ok(()) => {
-                        self.add_message(
-                            MessageType::Success,
-                            &format!("✅ Switched to branch '{}'", branch_name)
-                        );
-                    }
-                    Err(e) => {
-                        self.add_message(
-                            MessageType::Error,
-                            &format!("❌ Failed to checkout branch: {}", e)
-                        );
-                    }
-                }
-            }
-            "delete" => {
-                if parts.len() < 3 {
-                    self.add_message(
-                        MessageType::Error,
-                        "Usage: /git delete <branch_name>"
-                    );
-                    return;
-                }
-
-                // Try to open repository first
-                if self.git_ops.open_repository(".").is_err() {
-                    self.add_message(
-                        MessageType::Error,
-                        "❌ Not a git repository. Use '/git init' to initialize."
-                    );
-                    return;
-                }
-
-                let branch_name = parts[2];
-                match self.git_ops.delete_branch(branch_name) {
-                    Ok(()) => {
-                        self.add_message(
-                            MessageType::Success,
-                            &format!("✅ Branch '{}' deleted successfully!", branch_name)
-                        );
-                    }
-                    Err(e) => {
-                        self.add_message(
-                            MessageType::Error,
-                            &format!("❌ Failed to delete branch: {}", e)
-                        );
-                    }
-                }
-            }
-            "add" => {
-                // Try to open repository first
-                if self.git_ops.open_repository(".").is_err() {
-                    self.add_message(
-                        MessageType::Error,
-                        "❌ Not a git repository. Use '/git init' to initialize."
-                    );
-                    return;
-                }
-
-                match self.git_ops.add_all() {
-                    Ok(()) => {
-                        self.add_message(
-                            MessageType::Success,
-                            "✅ Files added to staging area successfully!"
-                        );
-                    }
-                    Err(e) => {
-                        self.add_message(
-                            MessageType::Error,
-                            &format!("❌ Failed to add files: {}", e)
-                        );
-                    }
-                }
-            }
-            "commit" => {
-                if parts.len() < 3 {
-                    self.add_message(
-                        MessageType::Error,
-                        "Usage: /git commit <message>"
-                    );
-                    return;
-                }
-
-                // Try to open repository first
-                if self.git_ops.open_repository(".").is_err() {
-                    self.add_message(
-                        MessageType::Error,
-                        "❌ Not a git repository. Use '/git init' to initialize."
-                    );
-                    return;
-                }
-
-                let commit_message = parts[2..].join(" ");
-                match self.git_ops.commit(&commit_message) {
-                    Ok(()) => {
-                        self.add_message(
-                            MessageType::Success,
-                            &format!("✅ Commit created successfully!\n📝 Message: {}", commit_message)
-                        );
-                    }
-                    Err(e) => {
-                        self.add_message(
-                            MessageType::Error,
-                            &format!("❌ Failed to create commit: {}", e)
-                        );
-                    }
-                }
-            }
-            _ => {
-                self.add_message(
-                    MessageType::Error,
-                    &format!("Unknown git command: {}\nUse '/git help' for available commands", parts[1])
-                );
-            }
-        }
-    }
 
     async fn handle_exec_command(&mut self, command: &str) {
         use crate::cli_commands::CommandRunner;
@@ -2034,7 +1618,7 @@ Type 'help' to see available commands, or try:
         if parts.len() < 2 {
             self.add_message(
                 MessageType::Error,
-                "Usage: /exec <command>\nExamples:\n• /exec ls -la\n• /exec cargo build\n• /exec git status"
+                "Usage: /exec <command>\nExamples:\n• /exec ls -la\n• /exec cargo build"
             );
             return;
         }

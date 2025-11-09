@@ -110,7 +110,7 @@ impl ApiClient {
         // Add system message
         messages.push(ChatMessage {
             role: "system".to_string(),
-            content: "You are ARULA, an Autonomous AI Interface assistant. You help users with coding, Git operations, shell commands, and general software development tasks. Be concise, helpful, and provide practical solutions.".to_string(),
+            content: "You are ARULA, an Autonomous AI Interface assistant. You help users with coding, shell commands, and general software development tasks. Be concise, helpful, and provide practical solutions.".to_string(),
         });
 
         // Add conversation history if provided
@@ -143,7 +143,7 @@ impl ApiClient {
         // Add system message
         messages.push(ChatMessage {
             role: "system".to_string(),
-            content: "You are ARULA, an Autonomous AI Interface assistant. You help users with coding, Git operations, shell commands, and general software development tasks. Be concise, helpful, and provide practical solutions.".to_string(),
+            content: "You are ARULA, an Autonomous AI Interface assistant. You help users with coding, shell commands, and general software development tasks. Be concise, helpful, and provide practical solutions.".to_string(),
         });
 
         // Add conversation history if provided

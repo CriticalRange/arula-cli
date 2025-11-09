@@ -63,7 +63,7 @@ impl ConversationManager {
             let default_memory = r#"# ARULA - Persistent Memory
 
 ## About Me
-ARULA is an Autonomous AI CLI interface designed to help with coding, Git operations, and shell commands.
+ARULA is an Autonomous AI CLI interface designed to help with coding and shell commands.
 
 ## User Preferences
 - (Add user preferences here as we learn them)

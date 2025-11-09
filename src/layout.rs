@@ -445,12 +445,11 @@ impl Layout {
 
         // For detail menus, show larger popup with content area
         let is_detail_menu = matches!(menu_type,
-            crate::app::MenuType::GitCommandsDetail |
             crate::app::MenuType::SessionInfoDetail |
             crate::app::MenuType::KeyboardShortcutsDetail |
             crate::app::MenuType::AboutArulaDetail |
             crate::app::MenuType::DocumentationDetail |
-            crate::app::MenuType::GitSettingsDetail |
+            crate::app::MenuType::SystemSettingsDetail |
             crate::app::MenuType::ExecCommandsDetail
         );
 

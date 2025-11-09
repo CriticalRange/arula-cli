@@ -34,7 +34,6 @@ mod config;
 mod ui_components;
 mod layout;
 mod api;
-mod git_ops;
 mod cli_commands;
 mod progress;
 mod conversation;
