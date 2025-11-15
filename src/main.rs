@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
 use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
+use rustyline::{Editor, Config, CompletionType, EditMode};
+use rustyline::history::DefaultHistory;
 
 #[derive(Parser)]
 #[command(name = "arula")]
@@ -27,6 +28,9 @@ mod output;
 mod api;
 mod tool_call;
 mod overlay_menu;
+mod agent;
+mod agent_client;
+mod tools;
 
 use app::App;
 use output::OutputHandler;
@@ -43,9 +47,14 @@ async fn main() -> Result<()> {
         println!("🚀 Starting ARULA CLI with endpoint: {}", cli.endpoint);
     }
 
-    // Create output handler and app
-    let mut output = OutputHandler::new();
-    let mut app = App::new()?;
+    // Set debug environment variable if debug flag is enabled
+    if cli.debug {
+        std::env::set_var("ARULA_DEBUG", "1");
+    }
+
+    // Create output handler and app with debug flag
+    let mut output = OutputHandler::new().with_debug(cli.debug);
+    let mut app = App::new()?.with_debug(cli.debug);
 
     // Initialize AI client if configuration is valid
     match app.initialize_api_client() {
@@ -65,9 +74,17 @@ async fn main() -> Result<()> {
     // Print banner
     output.print_banner()?;
     println!();
+    println!("{}", console::style("Tip: End line with \\ to continue on next line. Press Enter alone to send.").dim());
+    println!();
 
-    // Create rustyline editor
-    let mut rl = DefaultEditor::new()?;
+    // Create rustyline editor with multi-line support
+    let config = Config::builder()
+        .completion_type(CompletionType::List)
+        .edit_mode(EditMode::Emacs)
+        .auto_add_history(true)
+        .build();
+
+    let mut rl: Editor<(), DefaultHistory> = Editor::with_config(config)?;
 
     // Create overlay menu
     let mut menu = OverlayMenu::new();
@@ -81,68 +98,100 @@ async fn main() -> Result<()> {
 
     // Main input loop
     loop {
-        // Check for AI responses (non-blocking)
-        if let Some(response) = app.check_ai_response_nonblocking() {
-            match response {
-                app::AiResponse::StreamStart => {
-                    output.start_ai_message()?;
-                }
-                app::AiResponse::StreamChunk(chunk) => {
-                    output.print_streaming_chunk(&chunk)?;
-                }
-                app::AiResponse::StreamEnd => {
-                    output.end_line()?;
-                    // Execute bash commands if any
-                    if let Some(commands) = app.get_pending_bash_commands() {
-                        for cmd in commands {
-                            output.print_system(&format!("Executing: {}", cmd))?;
-                            match app.execute_bash_command(&cmd).await {
-                                Ok(result) => {
-                                    output.print_tool_result(&result)?;
+        // Process all pending AI responses before blocking on readline
+        // Keep looping while we're waiting for a response
+        while app.is_waiting_for_response() {
+            match app.check_ai_response_nonblocking() {
+                Some(response) => {
+                    match response {
+                        app::AiResponse::StreamStart => {
+                            output.start_ai_message()?;
+                        }
+                        app::AiResponse::StreamChunk(chunk) => {
+                            output.print_streaming_chunk(&chunk)?;
+                        }
+                        app::AiResponse::StreamEnd(_) => {
+                            output.end_line()?;
+                            // Execute tool calls if any from API response
+                            if let Some(api_response) = app.get_pending_api_response() {
+                                app.execute_tools_and_continue(&api_response).await?;
+                            } else if let Some(tool_calls) = app.get_pending_tool_calls() {
+                                app.execute_tools(tool_calls).await;
+                            }
+                            // Execute tool results if any
+                            if let Some(tool_results) = app.get_pending_tool_results() {
+                                for result in tool_results {
+                                    if result.success {
+                                        output.print_tool_call(&result.tool, "✅ Success")?;
+                                    } else {
+                                        output.print_tool_call(&result.tool, "❌ Failed")?;
+                                    }
+                                    output.print_tool_result(&result.output)?;
                                 }
-                                Err(e) => {
-                                    output.print_error(&format!("Command failed: {}", e))?;
+
+                                // For native OpenAI tool calls, we don't need to send results back to AI
+                                // The tool results are already included in the response
+                            }
+                            // Execute legacy bash commands if any
+                            if let Some(commands) = app.get_pending_bash_commands() {
+                                for cmd in commands {
+                                    output.print_system(&format!("Executing: {}", cmd))?;
+                                    match app.execute_bash_command(&cmd).await {
+                                        Ok(result) => {
+                                            output.print_tool_result(&result)?;
+                                        }
+                                        Err(e) => {
+                                            output.print_error(&format!("Command failed: {}", e))?;
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
-                }
-                app::AiResponse::Success { response, usage: _ } => {
-                    output.print_ai_message(&response)?;
-                    // Execute bash commands if any
-                    if let Some(commands) = app.get_pending_bash_commands() {
-                        for cmd in commands {
-                            output.print_system(&format!("Executing: {}", cmd))?;
-                            match app.execute_bash_command(&cmd).await {
-                                Ok(result) => {
-                                    output.print_tool_result(&result)?;
-                                }
-                                Err(e) => {
-                                    output.print_error(&format!("Command failed: {}", e))?;
-                                }
-                            }
+                        app::AiResponse::Success { response, usage: _, tool_calls: _ } => {
+                            output.print_ai_message(&response)?;
+                        }
+                        app::AiResponse::Error(error_msg) => {
+                            output.print_error(&error_msg)?;
+                        }
+                        // New agent-based responses
+                        app::AiResponse::AgentStreamStart => {
+                            output.start_ai_message()?;
+                        }
+                        app::AiResponse::AgentStreamText(text) => {
+                            output.print_streaming_chunk(&text)?;
+                        }
+                        app::AiResponse::AgentToolCall { id: _, name, arguments } => {
+                            output.print_system(&format!("🔧 Tool call: {}({})", name, arguments))?;
+                        }
+                        app::AiResponse::AgentToolResult { tool_call_id, success, result } => {
+                            let status = if success { "✅" } else { "❌" };
+                            let result_text = serde_json::to_string_pretty(&result)
+                                .unwrap_or_else(|_| result.to_string());
+                            output.print_system(&format!("{} Tool result: {}", status, tool_call_id))?;
+                            output.print_tool_result(&result_text)?;
+                        }
+                        app::AiResponse::AgentStreamEnd => {
+                            output.end_line()?;
                         }
                     }
                 }
-                app::AiResponse::Error(error_msg) => {
-                    output.print_error(&error_msg)?;
+                None => {
+                    // No response yet, wait a bit and try again
+                    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                 }
             }
         }
 
-        // Read user input with rustyline
-        let readline = rl.readline(">> ");
+        // Read user input with multi-line support
+        let readline = read_multiline_input(&mut rl);
         match readline {
-            Ok(line) => {
-                let input = line.trim();
+            Ok(input) => {
+                let input = input.trim();
 
                 // Check for empty input
                 if input.is_empty() {
                     continue;
                 }
-
-                // Add to history
-                let _ = rl.add_history_entry(input);
 
                 // Check for special shortcuts
                 if input == "m" || input == "menu" {
@@ -159,9 +208,6 @@ async fn main() -> Result<()> {
                     break;
                 }
 
-                // Print user message
-                output.print_user_message(input)?;
-
                 // Handle command
                 if input.starts_with('/') {
                     // Handle CLI commands
@@ -169,6 +215,8 @@ async fn main() -> Result<()> {
                 } else {
                     // Send to AI
                     app.send_to_ai(input).await?;
+                    // Show loading indicator
+                    output.print_system("⏳ Waiting for response...")?;
                 }
             }
             Err(ReadlineError::Interrupted) => {
@@ -194,6 +242,68 @@ async fn main() -> Result<()> {
     let _ = rl.save_history(&history_path);
 
     Ok(())
+}
+
+fn read_multiline_input(rl: &mut Editor<(), DefaultHistory>) -> Result<String, ReadlineError> {
+    use console::style;
+
+    // Show prompt header
+    println!("{}", style("┌─[You]").cyan().dim());
+
+    let mut lines = Vec::new();
+    let mut in_multiline = false;
+
+    loop {
+        // Use continuation prompt if we're in multi-line mode
+        let prompt = if in_multiline {
+            format!("{} ", style("│").cyan().dim())
+        } else {
+            format!("{} ", style("│").cyan().bold())
+        };
+
+        match rl.readline(&prompt) {
+            Ok(line) => {
+                // If line ends with backslash, it's a continuation
+                if line.trim_end().ends_with('\\') {
+                    // Remove backslash and add line
+                    let mut content = line.trim_end().to_string();
+                    content.pop(); // Remove the backslash
+                    lines.push(content);
+                    in_multiline = true;
+                    continue;
+                }
+
+                // Empty line behavior:
+                // - If we're in multi-line mode (have content), finish
+                // - If first line is empty, cancel
+                if line.trim().is_empty() {
+                    if in_multiline {
+                        // Finish multi-line input
+                        break;
+                    } else {
+                        // Empty first line - cancel
+                        println!("{}", style("└─>").cyan().dim());
+                        return Err(ReadlineError::Interrupted);
+                    }
+                }
+
+                // Add current line and check if we should continue
+                lines.push(line);
+
+                // If not in multiline mode, this is a single line - finish
+                if !in_multiline {
+                    break;
+                }
+            }
+            Err(e) => {
+                println!("{}", style("└─>").cyan().dim());
+                return Err(e);
+            }
+        }
+    }
+
+    println!("{}", style("└─>").cyan().dim());
+    Ok(lines.join("\n"))
 }
 
 async fn handle_cli_command(

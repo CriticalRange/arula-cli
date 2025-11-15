@@ -1,101 +1,102 @@
 use std::io::{self, Write};
-use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
+use console::style;
 
 pub struct OutputHandler {
-    stdout: StandardStream,
+    debug: bool,
 }
 
 impl OutputHandler {
     pub fn new() -> Self {
-        Self {
-            stdout: StandardStream::stdout(ColorChoice::Always),
-        }
+        Self { debug: false }
+    }
+
+    pub fn with_debug(mut self, debug: bool) -> Self {
+        self.debug = debug;
+        self
+    }
+
+    pub fn is_debug(&self) -> bool {
+        self.debug
     }
 
     pub fn print_user_message(&mut self, content: &str) -> io::Result<()> {
-        self.stdout.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)).set_bold(true))?;
-        write!(self.stdout, "You: ")?;
-        self.stdout.reset()?;
-        writeln!(self.stdout, "{}", content)?;
-        self.stdout.flush()?;
+        println!("{} {}", style("You:").cyan().bold(), content);
         Ok(())
     }
 
     pub fn print_ai_message(&mut self, content: &str) -> io::Result<()> {
-        self.stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true))?;
-        write!(self.stdout, "ARULA: ")?;
-        self.stdout.reset()?;
-        writeln!(self.stdout, "{}", content)?;
-        self.stdout.flush()?;
+        println!("{} {}", style("ARULA:").green().bold(), content);
         Ok(())
     }
 
     pub fn print_error(&mut self, content: &str) -> io::Result<()> {
-        self.stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true))?;
-        write!(self.stdout, "Error: ")?;
-        self.stdout.reset()?;
-        writeln!(self.stdout, "{}", content)?;
-        self.stdout.flush()?;
+        println!("{} {}", style("Error:").red().bold(), content);
         Ok(())
     }
 
     pub fn print_system(&mut self, content: &str) -> io::Result<()> {
-        self.stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)))?;
-        writeln!(self.stdout, "{}", content)?;
-        self.stdout.reset()?;
-        self.stdout.flush()?;
+        println!("{}", style(content).yellow().dim());
         Ok(())
     }
 
     pub fn print_tool_call(&mut self, name: &str, args: &str) -> io::Result<()> {
-        self.stdout.set_color(ColorSpec::new().set_fg(Some(Color::Magenta)).set_bold(true))?;
-        write!(self.stdout, "🔧 Tool: ")?;
-        self.stdout.reset()?;
-        self.stdout.set_color(ColorSpec::new().set_fg(Some(Color::Magenta)))?;
-        writeln!(self.stdout, "{}", name)?;
-        if !args.is_empty() {
-            writeln!(self.stdout, "   Args: {}", args)?;
+        if self.debug {
+            println!("{} {}", style("🔧 Tool Call:").magenta().bold(), style(name).magenta());
+            if !args.is_empty() {
+                println!("   {}", style(format!("Args: {}", args)).dim());
+            }
         }
-        self.stdout.reset()?;
-        self.stdout.flush()?;
         Ok(())
     }
 
     pub fn print_tool_result(&mut self, result: &str) -> io::Result<()> {
-        self.stdout.set_color(ColorSpec::new().set_fg(Some(Color::Blue)))?;
-        writeln!(self.stdout, "   Result: {}", result)?;
-        self.stdout.reset()?;
-        self.stdout.flush()?;
+        let max_lines = if self.debug { 50 } else { 10 };
+        let truncated_result = self.truncate_output(result, max_lines);
+        if self.debug {
+            println!("   {}", style(format!("Result: {}", truncated_result)).blue());
+        } else {
+            println!("   {}", style(truncated_result).blue());
+        }
         Ok(())
     }
 
+    fn truncate_output(&self, output: &str, max_lines: usize) -> String {
+        let lines: Vec<&str> = output.lines().collect();
+
+        if lines.len() <= max_lines {
+            output.to_string()
+        } else {
+            let truncated_lines: Vec<String> = lines
+                .iter()
+                .take(max_lines)
+                .map(|line| line.to_string())
+                .collect();
+
+            format!("{}\n... ({} more lines)", truncated_lines.join("\n"), lines.len() - max_lines)
+        }
+    }
+
     pub fn print_streaming_chunk(&mut self, chunk: &str) -> io::Result<()> {
-        write!(self.stdout, "{}", chunk)?;
-        self.stdout.flush()?;
+        print!("{}", chunk);
+        std::io::stdout().flush()?;
         Ok(())
     }
 
     pub fn start_ai_message(&mut self) -> io::Result<()> {
-        self.stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true))?;
-        write!(self.stdout, "ARULA: ")?;
-        self.stdout.reset()?;
-        self.stdout.flush()?;
+        print!("{} ", style("ARULA:").green().bold());
+        std::io::stdout().flush()?;
         Ok(())
     }
 
     pub fn end_line(&mut self) -> io::Result<()> {
-        writeln!(self.stdout)?;
-        self.stdout.flush()?;
+        println!();
         Ok(())
     }
 
     pub fn print_banner(&mut self) -> io::Result<()> {
-        self.stdout.set_color(ColorSpec::new().set_fg(Some(Color::Cyan)).set_bold(true))?;
-        writeln!(self.stdout, "╔═══════════════════════════════════════╗")?;
-        writeln!(self.stdout, "║      ARULA - Autonomous AI CLI        ║")?;
-        writeln!(self.stdout, "╚═══════════════════════════════════════╝")?;
-        self.stdout.reset()?;
-        self.stdout.flush()?;
+        println!("{}", style("╔═══════════════════════════════════════╗").cyan().bold());
+        println!("{}", style("║      ARULA - Autonomous AI CLI        ║").cyan().bold());
+        println!("{}", style("╚═══════════════════════════════════════╝").cyan().bold());
         Ok(())
     }
 }

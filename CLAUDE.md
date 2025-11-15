@@ -113,13 +113,32 @@ execute!(stdout(), terminal::Clear(terminal::ClearType::All), cursor::MoveTo(0, 
 - Native scrollback enabled - no alternate screen
 - Menu shortcuts: `m`, `menu`, or `/menu`
 - Ctrl+C shows exit confirmation (double press to exit)
-- All output uses termcolor for consistent styling
+- All output uses console for consistent styling
 
 ## Key Libraries
 
 - **rustyline**: Readline-style input with history
 - **crossterm**: Terminal manipulation (raw mode, cursor, styling)
-- **termcolor**: Colored output
+- **console**: Colored output with rich styling options
 - **dialoguer**: Interactive prompts (used in configuration menu)
 - **tokio**: Async runtime for AI streaming
 - **async-openai**: OpenAI API client with streaming
+
+## TODO: Future Enhancements
+
+### UI/UX Improvements
+- [ ] Progress indicators with spinners (using `indicatif` or console built-in)
+- [ ] Formatted code blocks with syntax highlighting
+- [ ] Syntax highlighting for AI responses (using `syntect`)
+- [ ] Better markdown rendering (using `termimad` or `comrak`)
+- [ ] Multi-line input support (Shift+Enter for new line, Enter to send)
+- [ ] Enhanced input prompt with status indicators
+- [ ] Token count display
+- [ ] Message history browser
+
+### Features
+- [ ] Save/load conversation sessions
+- [ ] Export conversations to markdown
+- [ ] Custom system prompts
+- [ ] Function/tool calling support
+- [ ] Image input support (for vision models)
