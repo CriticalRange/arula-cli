@@ -918,6 +918,259 @@ impl Tool for WriteFileTool {
     }
 }
 
+/// Parameters for the search tool
+#[derive(Debug, Deserialize)]
+pub struct SearchParams {
+    pub query: String,
+    pub path: Option<String>,
+    pub file_pattern: Option<String>,
+    pub case_sensitive: Option<bool>,
+    pub max_results: Option<usize>,
+}
+
+/// Search result entry
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchMatch {
+    pub file: String,
+    pub line_number: usize,
+    pub line_content: String,
+    pub match_start: usize,
+    pub match_end: usize,
+}
+
+/// Result from search operation
+#[derive(Debug, Serialize)]
+pub struct SearchResult {
+    pub matches: Vec<SearchMatch>,
+    pub total_matches: usize,
+    pub files_searched: usize,
+    pub success: bool,
+}
+
+/// Fast parallel search tool with gitignore support
+pub struct SearchTool;
+
+impl SearchTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for SearchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Tool for SearchTool {
+    type Params = SearchParams;
+    type Result = SearchResult;
+
+    fn name(&self) -> &str {
+        "search_files"
+    }
+
+    fn description(&self) -> &str {
+        "Search for text patterns in files using parallel walker with gitignore support. Fast and efficient for searching large codebases."
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchemaBuilder::new(
+            "search_files",
+            "Search for text patterns in files"
+        )
+        .param("query", "string")
+        .description("query", "The text pattern to search for")
+        .required("query")
+        .param("path", "string")
+        .description("path", "The directory path to search in (default: current directory)")
+        .param("file_pattern", "string")
+        .description("file_pattern", "File pattern to match (e.g., '*.rs', '*.txt')")
+        .param("case_sensitive", "boolean")
+        .description("case_sensitive", "Whether the search should be case sensitive (default: false)")
+        .param("max_results", "integer")
+        .description("max_results", "Maximum number of results to return (default: 100)")
+        .build()
+    }
+
+    async fn execute(&self, params: Self::Params) -> Result<Self::Result, String> {
+        use ignore::WalkBuilder;
+        use std::sync::{Arc, Mutex};
+        use std::path::Path;
+
+        let SearchParams {
+            query,
+            path,
+            file_pattern,
+            case_sensitive,
+            max_results,
+        } = params;
+
+        if query.trim().is_empty() {
+            return Err("Search query cannot be empty".to_string());
+        }
+
+        let search_path = path.as_deref().unwrap_or(".");
+        let case_sensitive = case_sensitive.unwrap_or(false);
+        let max_results = max_results.unwrap_or(100);
+
+        // Build glob matcher if pattern is provided
+        let glob_matcher = if let Some(ref pattern) = file_pattern {
+            use ignore::gitignore::GitignoreBuilder;
+            let mut builder = GitignoreBuilder::new(search_path);
+            builder.add_line(None, pattern).ok();
+            Some(builder.build().map_err(|e| format!("Invalid glob pattern: {}", e))?)
+        } else {
+            None
+        };
+
+        // Validate path exists
+        if !Path::new(search_path).exists() {
+            return Err(format!("Search path '{}' does not exist", search_path));
+        }
+
+        // Shared state for collecting results
+        let matches = Arc::new(Mutex::new(Vec::new()));
+        let files_searched = Arc::new(Mutex::new(0usize));
+
+        // Build the parallel walker with gitignore support
+        let walker = WalkBuilder::new(search_path)
+            .hidden(false)           // Don't skip hidden files by default
+            .git_ignore(true)        // Respect .gitignore
+            .git_global(true)        // Respect global gitignore
+            .git_exclude(true)       // Respect .git/info/exclude
+            .require_git(false)      // Work even without git repo
+            .follow_links(false)     // Don't follow symlinks
+            .threads(num_cpus::get())
+            .build_parallel();
+
+        // Clone Arcs for the closure
+        let matches_clone = Arc::clone(&matches);
+        let files_searched_clone = Arc::clone(&files_searched);
+        let query_clone = query.clone();
+        let glob_matcher_clone = glob_matcher.clone();
+
+        // Walk files in parallel
+        walker.run(|| {
+            let matches = Arc::clone(&matches_clone);
+            let files_searched = Arc::clone(&files_searched_clone);
+            let query = query_clone.clone();
+            let glob_matcher = glob_matcher_clone.clone();
+
+            Box::new(move |result| {
+                use ignore::WalkState;
+
+                // Check if we've hit the max results limit
+                {
+                    let current_matches = matches.lock().unwrap();
+                    if current_matches.len() >= max_results {
+                        return WalkState::Quit;
+                    }
+                }
+
+                let entry = match result {
+                    Ok(entry) => entry,
+                    Err(_) => return WalkState::Continue,
+                };
+
+                // Only process files
+                if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
+                    return WalkState::Continue;
+                }
+
+                let path = entry.path();
+
+                // Apply glob pattern filter if specified
+                if let Some(ref matcher) = glob_matcher {
+                    let matched = matcher.matched(path, false);
+                    if matched.is_ignore() {
+                        return WalkState::Continue;
+                    }
+                }
+
+                // Check if file is binary before trying to read it
+                // We'll use a simple heuristic: try to read first 8KB and check for null bytes
+                if let Ok(sample) = std::fs::read(path) {
+                    // Take first 8KB or entire file if smaller
+                    let check_size = std::cmp::min(sample.len(), 8192);
+                    let sample_slice = &sample[..check_size];
+
+                    // If we find null bytes, it's likely binary
+                    if sample_slice.contains(&0) {
+                        return WalkState::Continue;
+                    }
+                }
+
+                // Increment files searched counter
+                {
+                    let mut count = files_searched.lock().unwrap();
+                    *count += 1;
+                }
+
+                // Read and search file contents
+                // We already read the file above, but read_to_string is safer for UTF-8
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    let file_path = path.to_string_lossy().to_string();
+
+                    for (line_num, line) in content.lines().enumerate() {
+                        let search_line = if case_sensitive {
+                            line.to_string()
+                        } else {
+                            line.to_lowercase()
+                        };
+
+                        let search_query = if case_sensitive {
+                            query.clone()
+                        } else {
+                            query.to_lowercase()
+                        };
+
+                        if let Some(pos) = search_line.find(&search_query) {
+                            let match_result = SearchMatch {
+                                file: file_path.clone(),
+                                line_number: line_num + 1,
+                                line_content: line.to_string(),
+                                match_start: pos,
+                                match_end: pos + query.len(),
+                            };
+
+                            let mut current_matches = matches.lock().unwrap();
+                            current_matches.push(match_result);
+
+                            // Check if we've reached the limit
+                            if current_matches.len() >= max_results {
+                                return WalkState::Quit;
+                            }
+                        }
+                    }
+                }
+
+                WalkState::Continue
+            })
+        });
+
+        // Collect final results
+        let final_matches = match Arc::try_unwrap(matches) {
+            Ok(mutex) => mutex.into_inner().unwrap(),
+            Err(arc) => arc.lock().unwrap().clone(),
+        };
+
+        let total_matches = final_matches.len();
+        let files_count = match Arc::try_unwrap(files_searched) {
+            Ok(mutex) => mutex.into_inner().unwrap(),
+            Err(arc) => *arc.lock().unwrap(),
+        };
+
+        Ok(SearchResult {
+            matches: final_matches,
+            total_matches,
+            files_searched: files_count,
+            success: true,
+        })
+    }
+}
+
 /// Factory function to create a default tool registry
 pub fn create_default_tool_registry() -> crate::agent::ToolRegistry {
     use crate::agent::ToolRegistry;
@@ -930,6 +1183,7 @@ pub fn create_default_tool_registry() -> crate::agent::ToolRegistry {
     registry.register(FileEditTool::new());
     registry.register(WriteFileTool::new());
     registry.register(ListDirectoryTool::new());
+    registry.register(SearchTool::new());
 
     registry
 }
