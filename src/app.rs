@@ -76,6 +76,64 @@ impl App {
         // Base ARULA personality
         prompt_parts.push("You are ARULA, an Autonomous AI Interface assistant. You help users with coding, shell commands, and general software development tasks. Be concise, helpful, and provide practical solutions.".to_string());
 
+        // Available tools documentation
+        prompt_parts.push(r#"
+## Available Tools
+
+You have access to the following tools:
+
+1. **execute_bash** - Execute bash/shell commands
+   - Use for running commands, checking files, installing packages, etc.
+   - Parameters: command (string)
+
+2. **read_file** - Read file contents with optional line range
+   - Parameters: path (string), start_line (optional), end_line (optional)
+
+3. **write_file** - Create or overwrite a file with content
+   - Parameters: path (string), content (string)
+
+4. **edit_file** - Edit files with various operations (replace, insert, delete, append, prepend)
+   - Parameters: path (string), operation (object)
+
+5. **list_directory** - List directory contents with optional recursion
+   - Parameters: path (string), show_hidden (bool), recursive (bool)
+
+6. **search_files** - Fast parallel search with gitignore support
+   - Search for text patterns across files efficiently
+   - Respects .gitignore, .git/info/exclude, and global gitignore
+   - Uses parallel walker for fast searching in large codebases
+   - Parameters:
+     * query (required): Text pattern to search for
+     * path (optional): Directory to search (default: current directory)
+     * file_pattern (optional): Filter by file pattern (e.g., '*.rs', '*.txt')
+     * case_sensitive (optional): Case-sensitive search (default: false)
+     * max_results (optional): Maximum results to return (default: 100)
+   - Returns: Array of matches with file path, line number, line content, and match positions
+   - Use this tool when you need to find text across multiple files or search the codebase
+
+When searching for code or text patterns, prefer using search_files over grep commands for better performance and gitignore support.
+"#.to_string());
+
+        // Add development mode warning if running from cargo
+        if Self::is_running_from_cargo() {
+            prompt_parts.push(r#"
+## Development Mode Warning
+
+⚠️ IMPORTANT: You are running in development mode (via `cargo run`).
+
+**DO NOT run any of the following commands:**
+- `cargo build` or `cargo run` - The executable is locked and cannot be rebuilt while running
+- Any rebuild/recompile commands - They will fail with "Access is denied" errors
+
+If the user asks you to rebuild or make code changes:
+1. Make the code changes to the files as requested
+2. Tell the user: "Changes complete. Please exit ARULA and run `cargo build && cargo run` to rebuild and test."
+3. DO NOT attempt to run cargo build/run commands yourself
+
+The user will manually rebuild after exiting the application.
+"#.to_string());
+        }
+
         // Read global ARULA.md from ~/.arula/
         if let Some(global_arula) = Self::read_global_arula_md() {
             prompt_parts.push(format!("\n## Global Project Instructions\n{}", global_arula));
@@ -87,6 +145,16 @@ impl App {
         }
 
         prompt_parts.join("\n")
+    }
+
+    /// Detect if running from cargo (development mode)
+    fn is_running_from_cargo() -> bool {
+        // Check if the executable path contains "target/debug" or "target\debug"
+        if let Ok(exe_path) = std::env::current_exe() {
+            let path_str = exe_path.to_string_lossy();
+            return path_str.contains("target/debug") || path_str.contains("target\\debug");
+        }
+        false
     }
 
     /// Read ARULA.md from ~/.arula/ directory
