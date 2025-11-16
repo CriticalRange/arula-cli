@@ -678,14 +678,19 @@ impl OutputHandler {
             self.last_printed_len = 0;
         }
 
-        // If there's remaining text in buffer (no newline yet), print only new content
+        // If there's remaining text in buffer (no newline yet), print raw and re-render
         // This handles incomplete lines during streaming
         if !self.line_buffer.is_empty() && !self.in_code_block {
             let buffer_len = self.line_buffer.len();
             if buffer_len > self.last_printed_len {
-                // Only print the new portion
-                let new_text = &self.line_buffer[self.last_printed_len..];
-                print!("{}", self.process_inline_markdown(new_text));
+                // Move cursor to start of current line buffer content
+                if self.last_printed_len > 0 {
+                    // Calculate how many characters back we need to go
+                    print!("\r\x1b[K"); // Clear line
+                }
+
+                // Print the entire buffer with markdown processing
+                print!("{}", self.process_inline_markdown(&self.line_buffer));
                 std::io::stdout().flush()?;
                 self.last_printed_len = buffer_len;
             }

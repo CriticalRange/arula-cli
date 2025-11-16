@@ -141,14 +141,19 @@ impl InputHandler {
                             // Ctrl+W - delete word backwards (character-aware)
                             if self.cursor_pos > 0 {
                                 let chars: Vec<char> = self.buffer.chars().collect();
-                                let before_cursor: String = chars[..self.cursor_pos].iter().collect();
+                                let before_cursor: String =
+                                    chars[..self.cursor_pos].iter().collect();
                                 let trimmed = before_cursor.trim_end();
-                                let last_space = trimmed.chars().rev().position(|c| c == ' ')
+                                let last_space = trimmed
+                                    .chars()
+                                    .rev()
+                                    .position(|c| c == ' ')
                                     .map(|p| trimmed.chars().count() - p)
                                     .unwrap_or(0);
 
                                 // Rebuild buffer from characters
-                                let new_buffer: String = chars[..last_space].iter()
+                                let new_buffer: String = chars[..last_space]
+                                    .iter()
                                     .chain(chars[self.cursor_pos..].iter())
                                     .collect();
                                 self.buffer = new_buffer;
@@ -267,6 +272,10 @@ impl InputHandler {
             KeyCode::Tab => {
                 // Could implement tab completion here
                 Ok(None)
+            }
+            KeyCode::Esc => {
+                // ESC - return special signal for cancellation
+                Ok(Some("__ESC__".to_string()))
             }
             _ => Ok(None),
         }

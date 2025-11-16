@@ -251,6 +251,14 @@ async fn main() -> Result<()> {
                                 enable_raw_mode()?;
                                 input_handler.draw()?;
                             }
+                        } else if input == "__ESC__" {
+                            // ESC pressed - cancel request if waiting
+                            if app.is_waiting_for_response() {
+                                custom_spinner.stop();
+                                output.print_system("🛑 Request cancelled")?;
+                                app.cancel_request();
+                                input_handler.draw()?;
+                            }
                         } else if input == "__CTRL_D__" {
                             // Ctrl+D - EOF
                             output.print_system("Goodbye! 👋")?;
