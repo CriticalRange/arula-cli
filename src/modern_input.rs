@@ -1,20 +1,16 @@
-/// Modern input handler using inquire - fully integrated with async event loop
+/// Modern input handler with proper cursor positioning
 use anyhow::Result;
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
+    style::{self, Color, Attribute, Print, SetForegroundColor, ResetColor, SetAttribute},
     terminal::{self, ClearType},
-};
-use inquire::{
-    ui::{Attributes, Color as InquireColor, IndexPrefix, RenderConfig, StyleSheet, Styled},
-    validator::Validation,
-    Text,
 };
 use std::collections::VecDeque;
 use std::io::{self, Write};
 
-/// Modern input handler with inquire styling but custom event handling
+/// Modern input handler with proper cursor positioning
 pub struct ModernInputHandler {
     buffer: String,
     cursor_pos: usize,
@@ -28,9 +24,6 @@ pub struct ModernInputHandler {
 
 impl ModernInputHandler {
     pub fn new(prompt: &str) -> Self {
-        // Set global inquire theme
-        Self::set_global_theme();
-
         Self {
             buffer: String::new(),
             cursor_pos: 0,
@@ -41,48 +34,6 @@ impl ModernInputHandler {
             max_history: 1000,
             esc_pressed_once: false,
         }
-    }
-
-    /// Set global inquire theme for consistency with modern ARULA styling
-    fn set_global_theme() {
-        let mut config = RenderConfig::default();
-
-        // Modern cyan/white theme matching ARULA
-        config.prompt = StyleSheet::new()
-            .with_fg(InquireColor::LightCyan)
-            .with_attr(Attributes::BOLD);
-
-        // Custom prompt prefix with icon
-        config.prompt_prefix = Styled::new("⚡").with_fg(InquireColor::LightCyan);
-
-        config.answer = StyleSheet::new()
-            .with_fg(InquireColor::White)
-            .with_attr(Attributes::ITALIC);
-
-        config.default_value = StyleSheet::new().with_fg(InquireColor::DarkGrey);
-
-        config.placeholder = StyleSheet::new().with_fg(InquireColor::DarkGrey);
-
-        config.help_message = StyleSheet::new().with_fg(InquireColor::DarkCyan);
-
-        // Enhanced error message styling
-        config.error_message.message.fg = Some(InquireColor::LightRed);
-        config.error_message.prefix = Styled::new("✗").with_fg(InquireColor::LightRed);
-
-        // Better selection indicators
-        config.highlighted_option_prefix =
-            Styled::new("➤").with_fg(InquireColor::LightGreen);
-        config.option_index_prefix = IndexPrefix::None;
-
-        // Modern checkbox icons
-        config.selected_checkbox = Styled::new("☑").with_fg(InquireColor::LightGreen);
-        config.unselected_checkbox = Styled::new("☐").with_fg(InquireColor::DarkGrey);
-
-        // Scroll indicators
-        config.scroll_up_prefix = Styled::new("⇞").with_fg(InquireColor::LightCyan);
-        config.scroll_down_prefix = Styled::new("⇟").with_fg(InquireColor::LightCyan);
-
-        inquire::set_global_render_config(config);
     }
 
     pub fn set_prompt(&mut self, prompt: &str) {
@@ -119,7 +70,7 @@ impl ModernInputHandler {
         self.history.iter().cloned().collect()
     }
 
-    /// Draw the modern styled input prompt with enhanced visuals
+    /// Draw the input prompt with proper cursor positioning and styling
     pub fn draw(&self) -> io::Result<()> {
         // Clear current line
         execute!(
@@ -128,17 +79,30 @@ impl ModernInputHandler {
             terminal::Clear(ClearType::CurrentLine)
         )?;
 
-        // Modern styled prompt with icon and gradient-like effect
-        let icon = console::style("⚡").cyan().bold();
-        let prompt = console::style(&self.prompt).cyan().bold();
-        let text = console::style(&self.buffer).white();
+        // Print prompt with cyan and bold
+        execute!(
+            io::stdout(),
+            SetForegroundColor(Color::Cyan),
+            SetAttribute(Attribute::Bold),
+            Print(&self.prompt),
+            ResetColor,
+            Print(" ")
+        )?;
 
-        print!("{} {}{}", icon, prompt, text);
+        // Print user input with white color
+        execute!(io::stdout(), SetForegroundColor(Color::White))?;
+        print!("{}", self.buffer);
+        execute!(io::stdout(), ResetColor)?;
 
-        // Position cursor (accounting for icon + space)
-        let icon_len = "⚡ ".chars().count();
-        let cursor_col = (icon_len + self.prompt.chars().count() + self.cursor_pos) as u16;
+        // Calculate cursor position: prompt + space (1) + cursor position in buffer
+        let total_len = self.prompt.chars().count() + 1 + self.cursor_pos;
+        let cursor_col = total_len as u16;
+
+        // Position cursor correctly
         execute!(io::stdout(), cursor::MoveToColumn(cursor_col))?;
+
+        // Make cursor visible
+        execute!(io::stdout(), cursor::Show)?;
 
         io::stdout().flush()?;
         Ok(())
@@ -161,7 +125,7 @@ impl ModernInputHandler {
                 self.cursor_pos = 0;
                 self.history_index = None;
                 self.temp_buffer = None;
-                println!();
+                println!(); // Move to next line after submission
                 Ok(Some(input))
             }
             KeyCode::Char(c) => {
@@ -313,7 +277,7 @@ impl ModernInputHandler {
                 Ok(None)
             }
             KeyCode::Tab => {
-                // Could add autocomplete here using inquire's autocomplete
+                // Could add autocomplete here
                 Ok(None)
             }
             KeyCode::Esc => {
@@ -339,51 +303,5 @@ impl ModernInputHandler {
         self.buffer.clear();
         self.cursor_pos = 0;
         self.draw()
-    }
-}
-
-/// Helper functions for using inquire prompts in dialogs
-pub mod dialogs {
-    use super::*;
-
-    /// Get input with validation using inquire
-    pub fn get_validated_input<F>(prompt: &str, validator: F) -> Result<String>
-    where
-        F: Fn(&str) -> Result<Validation, String> + Clone + 'static,
-    {
-        let input = Text::new(prompt)
-            .with_validator(move |input: &str| validator(input).map_err(|e| e.into()))
-            .prompt()?;
-        Ok(input)
-    }
-
-    /// Get input with placeholder
-    pub fn get_input_with_placeholder(prompt: &str, placeholder: &str) -> Result<String> {
-        let input = Text::new(prompt).with_placeholder(placeholder).prompt()?;
-        Ok(input)
-    }
-
-    /// Get input with default value
-    pub fn get_input_with_default(prompt: &str, default: &str) -> Result<String> {
-        let input = Text::new(prompt).with_default(default).prompt()?;
-        Ok(input)
-    }
-
-    /// Get input with autocomplete
-    pub fn get_input_with_autocomplete(
-        prompt: &str,
-        suggestions: Vec<String>,
-    ) -> Result<String> {
-        let input = Text::new(prompt)
-            .with_autocomplete(move |input: &str| {
-                let input_lower = input.to_lowercase();
-                Ok(suggestions
-                    .iter()
-                    .filter(|s| s.to_lowercase().contains(&input_lower))
-                    .map(|s| s.clone())
-                    .collect())
-            })
-            .prompt()?;
-        Ok(input)
     }
 }

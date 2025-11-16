@@ -34,7 +34,6 @@ mod chat;
 mod config;
 mod custom_spinner;
 mod input_handler;
-mod inquire_input;
 mod modern_input;
 mod output;
 mod overlay_menu;
@@ -125,8 +124,8 @@ async fn main() -> Result<()> {
     // NOW enable raw mode for keyboard input detection
     enable_raw_mode()?;
 
-    // Create modern input handler with inquire styling and spinner
-    let prompt = if cfg!(windows) { "▶ " } else { "▶ " };
+    // Create modern input handler with styling and spinner
+    let prompt = if cfg!(windows) { "▶" } else { "▶" };
     let mut input_handler = modern_input::ModernInputHandler::new(prompt);
     let mut custom_spinner = custom_spinner::CustomSpinner::new();
 
@@ -175,11 +174,8 @@ async fn main() -> Result<()> {
                                 custom_spinner.stop();
                             }
 
-                            // Add blank line for spacing between user message and AI response
-                            println!();
-
-                            // Restart spinner on the new line
-                            custom_spinner.start("Thinking...")?;
+                            // Restart spinner on the current line
+                            custom_spinner.start("")?;
                             output.start_ai_message()?;
                         }
                         app::AiResponse::AgentStreamText(text) => {
@@ -234,7 +230,7 @@ async fn main() -> Result<()> {
                 None => {
                     // No response yet, start spinner if not running
                     if !custom_spinner.is_running() {
-                        custom_spinner.start("Thinking...")?;
+                        custom_spinner.start("")?;
                     }
                     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                 }
