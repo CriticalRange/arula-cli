@@ -148,6 +148,22 @@ async fn main() -> Result<()> {
     loop {
         // Process AI responses if waiting
         while app.is_waiting_for_response() {
+            // Check for keyboard events FIRST (especially ESC to cancel)
+            if event::poll(std::time::Duration::from_millis(10))? {
+                if let Event::Key(key_event) = event::read()? {
+                    if key_event.kind == event::KeyEventKind::Press {
+                        // Check if ESC was pressed to cancel
+                        if key_event.code == event::KeyCode::Esc {
+                            custom_spinner.stop();
+                            output.print_system("🛑 Request cancelled (ESC pressed)")?;
+                            app.cancel_request();
+                            input_handler.draw()?;
+                            break; // Exit the waiting loop
+                        }
+                    }
+                }
+            }
+
             match app.check_ai_response_nonblocking() {
                 Some(response) => {
                     match response {
@@ -255,10 +271,19 @@ async fn main() -> Result<()> {
                             // ESC pressed - cancel request if waiting
                             if app.is_waiting_for_response() {
                                 custom_spinner.stop();
-                                output.print_system("🛑 Request cancelled")?;
+                                output.print_system("🛑 Request cancelled (ESC pressed)")?;
                                 app.cancel_request();
                                 input_handler.draw()?;
                             }
+                            // Otherwise do nothing (buffer is empty)
+                        } else if input == "__ESC_WARN__" {
+                            // First ESC press with non-empty buffer
+                            output.print_system("⚠️  Press ESC again to clear input")?;
+                            input_handler.draw()?;
+                        } else if input == "__ESC_CLEARED__" {
+                            // Second ESC press - buffer was cleared
+                            output.print_system("✓ Input cleared")?;
+                            input_handler.draw()?;
                         } else if input == "__CTRL_D__" {
                             // Ctrl+D - EOF
                             output.print_system("Goodbye! 👋")?;

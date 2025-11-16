@@ -16,6 +16,7 @@ pub struct InputHandler {
     temp_buffer: Option<String>, // Temporary storage when navigating history
     prompt: String,
     max_history: usize,
+    esc_pressed_once: bool, // Track if ESC was pressed once for double-press clear
 }
 
 impl InputHandler {
@@ -28,6 +29,7 @@ impl InputHandler {
             temp_buffer: None,
             prompt: prompt.to_string(),
             max_history: 1000,
+            esc_pressed_once: false,
         }
     }
 
@@ -89,8 +91,18 @@ impl InputHandler {
         Ok(())
     }
 
+    /// Reset ESC pressed flag (call when user types anything)
+    fn reset_esc_flag(&mut self) {
+        self.esc_pressed_once = false;
+    }
+
     /// Handle a key event, returns Some(input) if user submitted
     pub fn handle_key(&mut self, key: KeyEvent) -> io::Result<Option<String>> {
+        // Reset ESC flag on any key except ESC itself
+        if key.code != KeyCode::Esc {
+            self.reset_esc_flag();
+        }
+
         match key.code {
             KeyCode::Enter => {
                 // Submit input
@@ -274,8 +286,24 @@ impl InputHandler {
                 Ok(None)
             }
             KeyCode::Esc => {
-                // ESC - return special signal for cancellation
-                Ok(Some("__ESC__".to_string()))
+                // ESC - return special signal for cancellation or clear buffer
+                // If buffer is not empty, implement double-press to clear
+                if !self.buffer.is_empty() {
+                    if self.esc_pressed_once {
+                        // Second press - clear the buffer
+                        self.buffer.clear();
+                        self.cursor_pos = 0;
+                        self.esc_pressed_once = false;
+                        Ok(Some("__ESC_CLEARED__".to_string()))
+                    } else {
+                        // First press - set flag and warn
+                        self.esc_pressed_once = true;
+                        Ok(Some("__ESC_WARN__".to_string()))
+                    }
+                } else {
+                    // Buffer is empty, just send ESC signal
+                    Ok(Some("__ESC__".to_string()))
+                }
             }
             _ => Ok(None),
         }

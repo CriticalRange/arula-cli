@@ -46,6 +46,8 @@ pub struct App {
     pub debug: bool,
     // Cancellation token for stopping API requests
     pub cancellation_token: CancellationToken,
+    // Task handle for aborting in-flight requests
+    pub current_task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl App {
@@ -63,6 +65,7 @@ impl App {
             pending_tool_calls: None,
             debug: false,
             cancellation_token: CancellationToken::new(),
+            current_task_handle: None,
         })
     }
 
@@ -300,7 +303,7 @@ The user will manually rebuild after exiting the application.
         // Send message using modern agent in background
         let msg = message.to_string();
         let cancel_token = self.cancellation_token.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             tokio::select! {
                 _ = cancel_token.cancelled() => {
                     // Request was cancelled
@@ -373,6 +376,9 @@ The user will manually rebuild after exiting the application.
                 } => {}
             }
         });
+
+        // Store the task handle so we can abort it on cancellation
+        self.current_task_handle = Some(handle);
 
         Ok(())
     }
@@ -510,6 +516,12 @@ The user will manually rebuild after exiting the application.
     /// Cancel the current API request
     pub fn cancel_request(&mut self) {
         self.cancellation_token.cancel();
+
+        // Abort the task if it's still running
+        if let Some(handle) = self.current_task_handle.take() {
+            handle.abort();
+        }
+
         // Create a new token for future requests
         self.cancellation_token = CancellationToken::new();
         // Clear the response receiver so is_waiting_for_response() returns false
