@@ -147,11 +147,20 @@ impl OverlayMenu {
 
                     app.config.ai.provider = providers[provider_idx].to_string();
                     let _ = app.config.save();
-                    let _ = app.initialize_agent_client();
-                    output.print_system(&format!(
-                        "✅ Provider set to: {}",
-                        providers[provider_idx]
-                    ))?;
+                    match app.initialize_agent_client() {
+                        Ok(()) => {
+                            output.print_system(&format!(
+                                "✅ Provider set to: {} (AI client initialized)",
+                                providers[provider_idx]
+                            ))?;
+                        }
+                        Err(_) => {
+                            output.print_system(&format!(
+                                "✅ Provider set to: {} (AI client will initialize when configuration is complete)",
+                                providers[provider_idx]
+                            ))?;
+                        }
+                    }
                 }
                 Some(1) => {
                     // Edit model
@@ -172,8 +181,14 @@ impl OverlayMenu {
 
                     app.config.ai.api_url = url.clone();
                     let _ = app.config.save();
-                    let _ = app.initialize_agent_client();
-                    output.print_system(&format!("✅ API URL set to: {}", url))?;
+                    match app.initialize_agent_client() {
+                        Ok(()) => {
+                            output.print_system(&format!("✅ API URL set to: {} (AI client initialized)", url))?;
+                        }
+                        Err(_) => {
+                            output.print_system(&format!("✅ API URL set to: {} (AI client will initialize when configuration is complete)", url))?;
+                        }
+                    }
                 }
                 Some(3) => {
                     // Edit API Key
@@ -185,8 +200,14 @@ impl OverlayMenu {
                     if !key.is_empty() {
                         app.config.ai.api_key = key;
                         let _ = app.config.save();
-                        let _ = app.initialize_agent_client();
-                        output.print_system("✅ API Key updated")?;
+                        match app.initialize_agent_client() {
+                            Ok(()) => {
+                                output.print_system("✅ API Key updated (AI client initialized)")?;
+                            }
+                            Err(_) => {
+                                output.print_system("✅ API Key updated (AI client will initialize when other settings are complete)")?;
+                            }
+                        }
                     }
                 }
                 Some(4) | None => {
