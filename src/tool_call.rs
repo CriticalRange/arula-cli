@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// Represents a tool call in JSON format from the AI
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,7 +85,9 @@ pub fn extract_tool_calls(content: &str) -> Vec<ToolCall> {
             // Try to parse as JSON first
             if let Ok(tool_call) = serde_json::from_str::<ToolCall>(&current_code.trim()) {
                 tool_calls.push(tool_call);
-            } else if let Ok(tool_calls_array) = serde_json::from_str::<Vec<ToolCall>>(&current_code.trim()) {
+            } else if let Ok(tool_calls_array) =
+                serde_json::from_str::<Vec<ToolCall>>(&current_code.trim())
+            {
                 tool_calls.extend(tool_calls_array);
             } else {
                 // If JSON parsing fails, treat it as a bash command
@@ -166,7 +168,8 @@ pub fn extract_bash_commands(content: &str) -> Vec<String> {
         // Detect start of code block
         if trimmed.starts_with("```") && !in_code_block {
             in_code_block = true;
-            is_bash_block = trimmed.contains("bash") || trimmed.contains("sh") || trimmed.contains("shell");
+            is_bash_block =
+                trimmed.contains("bash") || trimmed.contains("sh") || trimmed.contains("shell");
             current_code.clear();
             continue;
         }

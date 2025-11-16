@@ -4,8 +4,8 @@ use crossterm::{
     execute,
     terminal::{self, ClearType},
 };
-use std::io::{self, Write};
 use std::collections::VecDeque;
+use std::io::{self, Write};
 
 /// Custom input handler that manages input line independently
 pub struct InputHandler {
@@ -135,22 +135,36 @@ impl InputHandler {
                         }
                         'e' | 'E' => {
                             // Ctrl+E - move to end
-                            self.cursor_pos = self.buffer.len();
+                            self.cursor_pos = self.buffer.chars().count();
                         }
                         'w' | 'W' => {
-                            // Ctrl+W - delete word backwards
+                            // Ctrl+W - delete word backwards (character-aware)
                             if self.cursor_pos > 0 {
-                                let before_cursor = &self.buffer[..self.cursor_pos];
+                                let chars: Vec<char> = self.buffer.chars().collect();
+                                let before_cursor: String = chars[..self.cursor_pos].iter().collect();
                                 let trimmed = before_cursor.trim_end();
-                                let last_space = trimmed.rfind(' ').map(|i| i + 1).unwrap_or(0);
-                                self.buffer.drain(last_space..self.cursor_pos);
+                                let last_space = trimmed.chars().rev().position(|c| c == ' ')
+                                    .map(|p| trimmed.chars().count() - p)
+                                    .unwrap_or(0);
+
+                                // Rebuild buffer from characters
+                                let new_buffer: String = chars[..last_space].iter()
+                                    .chain(chars[self.cursor_pos..].iter())
+                                    .collect();
+                                self.buffer = new_buffer;
                                 self.cursor_pos = last_space;
                             }
                         }
                         _ => {}
                     }
                 } else {
-                    self.buffer.insert(self.cursor_pos, c);
+                    // Insert character at cursor position (UTF-8 safe)
+                    let chars: Vec<char> = self.buffer.chars().collect();
+                    let mut new_buffer = String::new();
+                    new_buffer.extend(chars[..self.cursor_pos].iter());
+                    new_buffer.push(c);
+                    new_buffer.extend(chars[self.cursor_pos..].iter());
+                    self.buffer = new_buffer;
                     self.cursor_pos += 1;
                     self.history_index = None;
                 }
@@ -159,16 +173,27 @@ impl InputHandler {
             }
             KeyCode::Backspace => {
                 if self.cursor_pos > 0 {
+                    // Remove character before cursor (UTF-8 safe)
+                    let chars: Vec<char> = self.buffer.chars().collect();
+                    let mut new_buffer = String::new();
+                    new_buffer.extend(chars[..(self.cursor_pos - 1)].iter());
+                    new_buffer.extend(chars[self.cursor_pos..].iter());
+                    self.buffer = new_buffer;
                     self.cursor_pos -= 1;
-                    self.buffer.remove(self.cursor_pos);
                     self.history_index = None;
                 }
                 self.draw()?;
                 Ok(None)
             }
             KeyCode::Delete => {
-                if self.cursor_pos < self.buffer.len() {
-                    self.buffer.remove(self.cursor_pos);
+                let char_count = self.buffer.chars().count();
+                if self.cursor_pos < char_count {
+                    // Remove character at cursor (UTF-8 safe)
+                    let chars: Vec<char> = self.buffer.chars().collect();
+                    let mut new_buffer = String::new();
+                    new_buffer.extend(chars[..self.cursor_pos].iter());
+                    new_buffer.extend(chars[(self.cursor_pos + 1)..].iter());
+                    self.buffer = new_buffer;
                     self.history_index = None;
                 }
                 self.draw()?;
@@ -182,7 +207,8 @@ impl InputHandler {
                 Ok(None)
             }
             KeyCode::Right => {
-                if self.cursor_pos < self.buffer.len() {
+                let char_count = self.buffer.chars().count();
+                if self.cursor_pos < char_count {
                     self.cursor_pos += 1;
                 }
                 self.draw()?;
@@ -194,7 +220,7 @@ impl InputHandler {
                 Ok(None)
             }
             KeyCode::End => {
-                self.cursor_pos = self.buffer.len();
+                self.cursor_pos = self.buffer.chars().count();
                 self.draw()?;
                 Ok(None)
             }
@@ -216,7 +242,7 @@ impl InputHandler {
 
                 if let Some(idx) = self.history_index {
                     self.buffer = self.history[idx].clone();
-                    self.cursor_pos = self.buffer.len();
+                    self.cursor_pos = self.buffer.chars().count();
                 }
 
                 self.draw()?;
@@ -233,7 +259,7 @@ impl InputHandler {
                         self.history_index = None;
                         self.buffer = self.temp_buffer.take().unwrap_or_default();
                     }
-                    self.cursor_pos = self.buffer.len();
+                    self.cursor_pos = self.buffer.chars().count();
                     self.draw()?;
                 }
                 Ok(None)

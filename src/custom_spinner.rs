@@ -1,4 +1,7 @@
-use crossterm::{cursor, execute, terminal::{self, ClearType}};
+use crossterm::{
+    cursor, execute,
+    terminal::{self, ClearType},
+};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use std::thread;

@@ -1,11 +1,11 @@
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    cursor::{self, SetCursorStyle, MoveUp, MoveDown},
-    execute,
-    ExecutableCommand,
+    cursor::{self, MoveDown, MoveUp, SetCursorStyle},
     event::{self, Event, KeyEventKind},
+    execute,
     terminal::{self, disable_raw_mode, enable_raw_mode, ClearType},
+    ExecutableCommand,
 };
 use std::io::Write;
 
@@ -26,18 +26,18 @@ struct Cli {
     debug: bool,
 }
 
+mod agent;
+mod agent_client;
+mod api;
 mod app;
 mod chat;
 mod config;
-mod output;
-mod api;
-mod tool_call;
-mod overlay_menu;
-mod agent;
-mod agent_client;
-mod tools;
-mod input_handler;
 mod custom_spinner;
+mod input_handler;
+mod output;
+mod overlay_menu;
+mod tool_call;
+mod tools;
 
 use app::App;
 use output::OutputHandler;
@@ -98,11 +98,26 @@ async fn main() -> Result<()> {
     output.print_banner()?;
     println!();
     println!("{}", console::style("💡 Tips:").cyan().bold());
-    println!("{}", console::style("  • Type your message and press Enter to send").dim());
-    println!("{}", console::style("  • Use Shift+Enter for new lines, Enter on empty line to finish").dim());
-    println!("{}", console::style("  • Paste multi-line content, press Enter on empty line to finish").dim());
-    println!("{}", console::style("  • End line with \\ to continue typing on next line").dim());
-    println!("{}", console::style("  • Cursor changed to steady bar for better visibility").dim());
+    println!(
+        "{}",
+        console::style("  • Type your message and press Enter to send").dim()
+    );
+    println!(
+        "{}",
+        console::style("  • Use Shift+Enter for new lines, Enter on empty line to finish").dim()
+    );
+    println!(
+        "{}",
+        console::style("  • Paste multi-line content, press Enter on empty line to finish").dim()
+    );
+    println!(
+        "{}",
+        console::style("  • End line with \\ to continue typing on next line").dim()
+    );
+    println!(
+        "{}",
+        console::style("  • Cursor changed to steady bar for better visibility").dim()
+    );
     println!();
 
     // NOW enable raw mode for keyboard input detection
@@ -160,19 +175,28 @@ async fn main() -> Result<()> {
                                     cursor::MoveToColumn(0),
                                     terminal::Clear(terminal::ClearType::CurrentLine)
                                 )?;
-                                // Add left margin (one space) and print first chunk
-                                print!(" {}", text);
+                                // Add left margin (one space) and print first chunk with markdown
+                                print!(" ");
                                 std::io::stdout().flush()?;
+                                output.print_streaming_chunk(&text)?;
                             } else {
-                                // Print subsequent chunks (accumulates on the same line)
+                                // Print subsequent chunks with markdown rendering
                                 output.print_streaming_chunk(&text)?;
                             }
                         }
-                        app::AiResponse::AgentToolCall { id: _, name, arguments } => {
+                        app::AiResponse::AgentToolCall {
+                            id: _,
+                            name,
+                            arguments,
+                        } => {
                             custom_spinner.stop();
                             output.start_tool_execution(&name, &arguments)?;
                         }
-                        app::AiResponse::AgentToolResult { tool_call_id: _, success, result } => {
+                        app::AiResponse::AgentToolResult {
+                            tool_call_id: _,
+                            success,
+                            result,
+                        } => {
                             let result_text = serde_json::to_string_pretty(&result)
                                 .unwrap_or_else(|_| result.to_string());
                             output.complete_tool_execution(&result_text, success)?;
@@ -241,7 +265,6 @@ async fn main() -> Result<()> {
                                 continue;
                             }
 
-
                             // Add to history
                             input_handler.add_to_history(input.to_string());
 
@@ -275,7 +298,9 @@ async fn main() -> Result<()> {
                                     app.send_to_ai(input).await?;
                                     // Spinner will start in the response loop
                                 } else {
-                                    output.print_system("⚠️  Already processing a request, please wait...")?;
+                                    output.print_system(
+                                        "⚠️  Already processing a request, please wait...",
+                                    )?;
                                     input_handler.draw()?;
                                 }
                             }
@@ -309,7 +334,6 @@ fn restore_default_cursor() -> Result<(), Box<dyn std::error::Error>> {
     std::io::stdout().execute(SetCursorStyle::DefaultUserShape)?;
     Ok(())
 }
-
 
 async fn handle_cli_command(
     input: &str,
@@ -367,7 +391,14 @@ async fn handle_cli_command(
             let config = app.get_config();
             output.print_system(&format!("Provider: {}", config.ai.provider))?;
             output.print_system(&format!("Model: {}", config.ai.model))?;
-            output.print_system(&format!("API Key: {}", if config.ai.api_key.is_empty() { "Not set" } else { "Set" }))?;
+            output.print_system(&format!(
+                "API Key: {}",
+                if config.ai.api_key.is_empty() {
+                    "Not set"
+                } else {
+                    "Set"
+                }
+            ))?;
         }
         "/model" => {
             if parts.len() < 2 {

@@ -1,14 +1,14 @@
+use crate::agent::{AgentOptions, AgentOptionsBuilder, ContentBlock};
+use crate::agent_client::AgentClient;
+use crate::chat::{ChatMessage, MessageType};
+use crate::config::Config;
+use crate::tool_call::{execute_bash_tool, ToolCall, ToolCallResult};
 use anyhow::Result;
-use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 use futures::StreamExt;
 use std::fs;
 use std::path::Path;
-use crate::config::Config;
-use crate::chat::{ChatMessage, MessageType};
-use crate::tool_call::{execute_bash_tool, ToolCall, ToolCallResult};
-use crate::agent_client::AgentClient;
-use crate::agent::{AgentOptions, AgentOptionsBuilder, ContentBlock};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 /// Debug print helper that checks ARULA_DEBUG environment variable
 fn debug_print(msg: &str) {
@@ -21,8 +21,16 @@ fn debug_print(msg: &str) {
 pub enum AiResponse {
     AgentStreamStart,
     AgentStreamText(String),
-    AgentToolCall { id: String, name: String, arguments: String },
-    AgentToolResult { tool_call_id: String, success: bool, result: serde_json::Value },
+    AgentToolCall {
+        id: String,
+        name: String,
+        arguments: String,
+    },
+    AgentToolResult {
+        tool_call_id: String,
+        success: bool,
+        result: serde_json::Value,
+    },
     AgentStreamEnd,
 }
 
@@ -130,7 +138,10 @@ The user will manually rebuild after exiting the application.
 
         // Read global ARULA.md from ~/.arula/
         if let Some(global_arula) = Self::read_global_arula_md() {
-            prompt_parts.push(format!("\n## Global Project Instructions\n{}", global_arula));
+            prompt_parts.push(format!(
+                "\n## Global Project Instructions\n{}",
+                global_arula
+            ));
         }
 
         // Read local ARULA.md from current directory
@@ -159,7 +170,10 @@ The user will manually rebuild after exiting the application.
         if global_arula_path.exists() {
             match fs::read_to_string(&global_arula_path) {
                 Ok(content) => {
-                    debug_print(&format!("DEBUG: Loaded global ARULA.md from {}", global_arula_path.display()));
+                    debug_print(&format!(
+                        "DEBUG: Loaded global ARULA.md from {}",
+                        global_arula_path.display()
+                    ));
                     Some(content)
                 }
                 Err(e) => {
@@ -234,7 +248,8 @@ The user will manually rebuild after exiting the application.
 
     pub async fn send_to_ai(&mut self, message: &str) -> Result<()> {
         // Add user message to history
-        self.messages.push(ChatMessage::new(MessageType::User, message.to_string()));
+        self.messages
+            .push(ChatMessage::new(MessageType::User, message.to_string()));
 
         // Send message using the modern agent client
         self.send_to_ai_with_agent(message).await
@@ -254,13 +269,19 @@ The user will manually rebuild after exiting the application.
         let (tx, rx) = mpsc::unbounded_channel();
         self.ai_response_rx = Some(rx);
         if self.debug {
-            debug_print(&format!("DEBUG: send_to_ai_with_agent - Created new response receiver for message: '{}'", message));
+            debug_print(&format!(
+                "DEBUG: send_to_ai_with_agent - Created new response receiver for message: '{}'",
+                message
+            ));
         }
 
         // Convert chat messages to API format for agent
-        let api_messages: Vec<crate::api::ChatMessage> = self.messages
+        let api_messages: Vec<crate::api::ChatMessage> = self
+            .messages
             .iter()
-            .filter(|m| m.message_type != MessageType::ToolCall && m.message_type != MessageType::ToolResult)
+            .filter(|m| {
+                m.message_type != MessageType::ToolCall && m.message_type != MessageType::ToolResult
+            })
             .map(|m| {
                 let role = match m.message_type {
                     MessageType::User => "user".to_string(),
@@ -288,14 +309,21 @@ The user will manually rebuild after exiting the application.
                             ContentBlock::Text { text } => {
                                 let _ = tx.send(AiResponse::AgentStreamText(text));
                             }
-                            ContentBlock::ToolCall { id, name, arguments } => {
+                            ContentBlock::ToolCall {
+                                id,
+                                name,
+                                arguments,
+                            } => {
                                 let _ = tx.send(AiResponse::AgentToolCall {
                                     id,
                                     name,
                                     arguments,
                                 });
                             }
-                            ContentBlock::ToolResult { tool_call_id, result } => {
+                            ContentBlock::ToolResult {
+                                tool_call_id,
+                                result,
+                            } => {
                                 let _ = tx.send(AiResponse::AgentToolResult {
                                     tool_call_id,
                                     success: result.success,
@@ -304,7 +332,10 @@ The user will manually rebuild after exiting the application.
                             }
                             ContentBlock::Error { error } => {
                                 // Convert error to AgentStreamText to maintain compatibility
-                                let _ = tx.send(AiResponse::AgentStreamText(format!("[Error] {}", error)));
+                                let _ = tx.send(AiResponse::AgentStreamText(format!(
+                                    "[Error] {}",
+                                    error
+                                )));
                                 break;
                             }
                         }
@@ -313,7 +344,10 @@ The user will manually rebuild after exiting the application.
                     let _ = tx.send(AiResponse::AgentStreamEnd);
                 }
                 Err(e) => {
-                    let _ = tx.send(AiResponse::AgentStreamText(format!("[Error] Failed to send message via agent: {}", e)));
+                    let _ = tx.send(AiResponse::AgentStreamText(format!(
+                        "[Error] Failed to send message via agent: {}",
+                        e
+                    )));
                     let _ = tx.send(AiResponse::AgentStreamEnd);
                 }
             }
@@ -335,14 +369,22 @@ The user will manually rebuild after exiting the application.
                                 msg.push_str(&text);
                             }
                         }
-                        AiResponse::AgentToolCall { id: _, name, arguments } => {
+                        AiResponse::AgentToolCall {
+                            id: _,
+                            name,
+                            arguments,
+                        } => {
                             // Add tool call message to chat history
                             self.messages.push(ChatMessage::new(
                                 MessageType::ToolCall,
                                 format!("🔧 Tool call: {}({})", name, arguments),
                             ));
                         }
-                        AiResponse::AgentToolResult { tool_call_id, success, result } => {
+                        AiResponse::AgentToolResult {
+                            tool_call_id,
+                            success,
+                            result,
+                        } => {
                             // Add tool result message to chat history
                             let status = if *success { "✅" } else { "❌" };
                             let result_text = serde_json::to_string_pretty(&result)
@@ -350,15 +392,16 @@ The user will manually rebuild after exiting the application.
 
                             self.messages.push(ChatMessage::new(
                                 MessageType::ToolResult,
-                                format!("{} Tool result: {}\n{}", status, tool_call_id, result_text),
+                                format!(
+                                    "{} Tool result: {}\n{}",
+                                    status, tool_call_id, result_text
+                                ),
                             ));
                         }
                         AiResponse::AgentStreamEnd => {
                             if let Some(full_message) = self.current_streaming_message.take() {
-                                self.messages.push(ChatMessage::new(
-                                    MessageType::Arula,
-                                    full_message,
-                                ));
+                                self.messages
+                                    .push(ChatMessage::new(MessageType::Arula, full_message));
                             }
                             self.ai_response_rx = None;
                         }
@@ -390,7 +433,9 @@ The user will manually rebuild after exiting the application.
         for tool_call in tool_calls {
             match tool_call.tool.as_str() {
                 "bash_tool" => {
-                    if let Some(command) = tool_call.arguments.get("command").and_then(|v| v.as_str()) {
+                    if let Some(command) =
+                        tool_call.arguments.get("command").and_then(|v| v.as_str())
+                    {
                         if let Ok(result) = execute_bash_tool(command).await {
                             results.push(result);
                         }
@@ -409,7 +454,10 @@ The user will manually rebuild after exiting the application.
 
         if !results.is_empty() {
             if self.debug {
-                debug_print(&format!("DEBUG: execute_tools - Setting pending_tool_results with {} results", results.len()));
+                debug_print(&format!(
+                    "DEBUG: execute_tools - Setting pending_tool_results with {} results",
+                    results.len()
+                ));
             }
             self.pending_tool_results = Some(results);
         } else {
@@ -419,7 +467,6 @@ The user will manually rebuild after exiting the application.
         }
     }
 
-  
     pub fn get_pending_tool_calls(&mut self) -> Option<Vec<ToolCall>> {
         self.pending_tool_calls.take()
     }
@@ -431,13 +478,14 @@ The user will manually rebuild after exiting the application.
     pub fn get_pending_tool_results(&mut self) -> Option<Vec<ToolCallResult>> {
         let results = self.pending_tool_results.take();
         if self.debug {
-            debug_print(&format!("DEBUG: get_pending_tool_results - returning {} results",
-                     results.as_ref().map_or(0, |r| r.len())));
+            debug_print(&format!(
+                "DEBUG: get_pending_tool_results - returning {} results",
+                results.as_ref().map_or(0, |r| r.len())
+            ));
         }
         results
     }
 
-    
     /// Cancel the current API request
     pub fn cancel_request(&mut self) {
         self.cancellation_token.cancel();
@@ -456,14 +504,9 @@ The user will manually rebuild after exiting the application.
         use std::process::Command;
 
         let output = if cfg!(target_os = "windows") {
-            Command::new("cmd")
-                .args(["/C", command])
-                .output()?
+            Command::new("cmd").args(["/C", command]).output()?
         } else {
-            Command::new("sh")
-                .arg("-c")
-                .arg(command)
-                .output()?
+            Command::new("sh").arg("-c").arg(command).output()?
         };
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -476,11 +519,14 @@ The user will manually rebuild after exiting the application.
                 stdout
             })
         } else {
-            Err(anyhow::anyhow!("{}", if stderr.is_empty() {
-                "Command failed".to_string()
-            } else {
-                stderr
-            }))
+            Err(anyhow::anyhow!(
+                "{}",
+                if stderr.is_empty() {
+                    "Command failed".to_string()
+                } else {
+                    stderr
+                }
+            ))
         }
     }
 

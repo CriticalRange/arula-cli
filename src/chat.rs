@@ -9,8 +9,8 @@ pub enum MessageType {
     Success,
     Error,
     Info,
-    ToolCall,      // For displaying tool call boxes
-    ToolResult,    // For displaying tool execution results
+    ToolCall,   // For displaying tool call boxes
+    ToolResult, // For displaying tool execution results
 }
 
 impl std::fmt::Display for MessageType {
@@ -34,7 +34,7 @@ pub struct ChatMessage {
     pub message_type: MessageType,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_json: Option<String>,  // Store the raw JSON for tool calls
+    pub tool_call_json: Option<String>, // Store the raw JSON for tool calls
 }
 
 impl ChatMessage {

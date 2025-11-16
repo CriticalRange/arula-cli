@@ -4,10 +4,10 @@
 //! our existing reqwest-based infrastructure to avoid OpenSSL dependencies.
 
 use async_trait::async_trait;
+use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use futures::Stream;
 use std::pin::Pin;
 
 /// Tool execution result
@@ -180,22 +180,15 @@ pub trait Tool: Send + Sync {
 
     async fn execute_with_result(&self, params: Value) -> ToolResult {
         match serde_json::from_value::<Self::Params>(params) {
-            Ok(typed_params) => {
-                match self.execute(typed_params).await {
-                    Ok(result) => {
-                        let json_result = serde_json::to_value(&result).unwrap_or_else(|e| {
-                            json!("Failed to serialize result")
-                        });
-                        ToolResult::success(json_result)
-                    }
-                    Err(error) => {
-                        ToolResult::error(error)
-                    }
+            Ok(typed_params) => match self.execute(typed_params).await {
+                Ok(result) => {
+                    let json_result = serde_json::to_value(&result)
+                        .unwrap_or_else(|e| json!("Failed to serialize result"));
+                    ToolResult::success(json_result)
                 }
-            }
-            Err(error) => {
-                ToolResult::error(format!("Invalid parameters: {}", error))
-            }
+                Err(error) => ToolResult::error(error),
+            },
+            Err(error) => ToolResult::error(format!("Invalid parameters: {}", error)),
         }
     }
 }
@@ -356,7 +349,9 @@ impl AgentOptionsBuilder {
 
     pub fn build(self) -> AgentOptions {
         AgentOptions {
-            system_prompt: self.system_prompt.unwrap_or_else(|| "You are a helpful AI assistant.".to_string()),
+            system_prompt: self
+                .system_prompt
+                .unwrap_or_else(|| "You are a helpful AI assistant.".to_string()),
             model: self.model.unwrap_or_else(|| "gpt-3.5-turbo".to_string()),
             temperature: self.temperature.unwrap_or(0.7),
             max_tokens: self.max_tokens.unwrap_or(2048),
@@ -389,7 +384,9 @@ impl Default for AgentOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ContentBlock {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     ToolCall {
         id: String,
         name: String,
@@ -399,7 +396,9 @@ pub enum ContentBlock {
         tool_call_id: String,
         result: ToolResult,
     },
-    Error { error: String },
+    Error {
+        error: String,
+    },
 }
 
 impl ContentBlock {
@@ -408,14 +407,23 @@ impl ContentBlock {
     }
 
     pub fn tool_call(id: String, name: String, arguments: String) -> Self {
-        Self::ToolCall { id, name, arguments }
+        Self::ToolCall {
+            id,
+            name,
+            arguments,
+        }
     }
 
     pub fn tool_result(tool_call_id: String, result: ToolResult) -> Self {
-        Self::ToolResult { tool_call_id, result }
+        Self::ToolResult {
+            tool_call_id,
+            result,
+        }
     }
 
     pub fn error(error: impl Into<String>) -> Self {
-        Self::Error { error: error.into() }
+        Self::Error {
+            error: error.into(),
+        }
     }
 }

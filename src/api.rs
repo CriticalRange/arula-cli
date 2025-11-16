@@ -22,7 +22,6 @@ pub struct ChatMessage {
     pub tool_call_id: Option<String>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
@@ -35,9 +34,6 @@ pub struct ToolCallFunction {
     pub name: String,
     pub arguments: String,
 }
-
-
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Usage {
@@ -91,9 +87,16 @@ impl ApiClient {
             _ => AIProvider::Custom,
         };
 
-       if std::env::var("ARULA_DEBUG").is_ok() {
-            debug_print(&format!("DEBUG: Provider = {:?}, Input = {}", provider_type, provider));
-            debug_print(&format!("DEBUG: API Key length = {}, endpoint = {}", api_key.len(), endpoint));
+        if std::env::var("ARULA_DEBUG").is_ok() {
+            debug_print(&format!(
+                "DEBUG: Provider = {:?}, Input = {}",
+                provider_type, provider
+            ));
+            debug_print(&format!(
+                "DEBUG: API Key length = {}, endpoint = {}",
+                api_key.len(),
+                endpoint
+            ));
             debug_print(&format!("DEBUG: Model = {}", model));
         }
 
@@ -109,10 +112,20 @@ impl ApiClient {
             .expect("Failed to create HTTP client");
 
         // Initialize OpenAI client for streaming support
-        Self { client, provider: provider_type, endpoint, api_key, model }
+        Self {
+            client,
+            provider: provider_type,
+            endpoint,
+            api_key,
+            model,
+        }
     }
 
-    pub async fn send_message(&self, message: &str, conversation_history: Option<Vec<ChatMessage>>) -> Result<ApiResponse> {
+    pub async fn send_message(
+        &self,
+        message: &str,
+        conversation_history: Option<Vec<ChatMessage>>,
+    ) -> Result<ApiResponse> {
         let mut messages = Vec::new();
 
         // Add system message
@@ -149,7 +162,11 @@ impl ApiClient {
         }
     }
 
-    pub async fn send_message_stream(&self, message: &str, conversation_history: Option<Vec<ChatMessage>>) -> Result<mpsc::UnboundedReceiver<StreamingResponse>> {
+    pub async fn send_message_stream(
+        &self,
+        message: &str,
+        conversation_history: Option<Vec<ChatMessage>>,
+    ) -> Result<mpsc::UnboundedReceiver<StreamingResponse>> {
         let mut messages = Vec::new();
 
         // Add system message
@@ -187,14 +204,20 @@ impl ApiClient {
                 tokio::spawn(async move {
                     match client.send_openai_request(messages).await {
                         Ok(response) => {
-                            debug_print(&format!("DEBUG: OpenAI response with tool_calls: {:?}", response.tool_calls.is_some()));
+                            debug_print(&format!(
+                                "DEBUG: OpenAI response with tool_calls: {:?}",
+                                response.tool_calls.is_some()
+                            ));
                             let _ = tx.send(StreamingResponse::Start);
                             let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
                             let _ = tx.send(StreamingResponse::End(response));
                         }
                         Err(e) => {
                             debug_print(&format!("DEBUG: OpenAI request error: {}", e));
-                            let _ = tx.send(StreamingResponse::Error(format!("OpenAI request error: {}", e)));
+                            let _ = tx.send(StreamingResponse::Error(format!(
+                                "OpenAI request error: {}",
+                                e
+                            )));
                         }
                     }
                 });
@@ -220,16 +243,20 @@ impl ApiClient {
                             if let Some(_tool_calls) = &response.tool_calls {
                                 // Return tool calls for the app layer to handle
                                 // Don't execute here - let the app manage the conversation flow
-                                let _ = tx.send(StreamingResponse::Chunk("Let me help you with that...".to_string()));
+                                let _ = tx.send(StreamingResponse::Chunk(
+                                    "Let me help you with that...".to_string(),
+                                ));
                                 let _ = tx.send(StreamingResponse::End(response));
                             } else {
                                 // Regular text response
-                                let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
+                                let _ =
+                                    tx.send(StreamingResponse::Chunk(response.response.clone()));
                                 let _ = tx.send(StreamingResponse::End(response));
                             }
                         }
                         Err(e) => {
-                            let _ = tx.send(StreamingResponse::Error(format!("Request failed: {}", e)));
+                            let _ =
+                                tx.send(StreamingResponse::Error(format!("Request failed: {}", e)));
                         }
                     }
                 });
@@ -239,7 +266,10 @@ impl ApiClient {
         Ok(rx)
     }
 
-    pub async fn continue_conversation_with_tool_results(&self, messages: Vec<ChatMessage>) -> Result<mpsc::UnboundedReceiver<StreamingResponse>> {
+    pub async fn continue_conversation_with_tool_results(
+        &self,
+        messages: Vec<ChatMessage>,
+    ) -> Result<mpsc::UnboundedReceiver<StreamingResponse>> {
         let (tx, rx) = mpsc::unbounded_channel();
 
         match self.provider {
@@ -250,14 +280,20 @@ impl ApiClient {
                 tokio::spawn(async move {
                     match client.send_openai_request(messages).await {
                         Ok(response) => {
-                            debug_print(&format!("DEBUG: OpenAI response with tool_calls: {:?}", response.tool_calls.is_some()));
+                            debug_print(&format!(
+                                "DEBUG: OpenAI response with tool_calls: {:?}",
+                                response.tool_calls.is_some()
+                            ));
                             let _ = tx.send(StreamingResponse::Start);
                             let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
                             let _ = tx.send(StreamingResponse::End(response));
                         }
                         Err(e) => {
                             debug_print(&format!("DEBUG: OpenAI request error: {}", e));
-                            let _ = tx.send(StreamingResponse::Error(format!("OpenAI request error: {}", e)));
+                            let _ = tx.send(StreamingResponse::Error(format!(
+                                "OpenAI request error: {}",
+                                e
+                            )));
                         }
                     }
                 });
@@ -281,7 +317,8 @@ impl ApiClient {
                             let _ = tx.send(StreamingResponse::End(response));
                         }
                         Err(e) => {
-                            let _ = tx.send(StreamingResponse::Error(format!("Request failed: {}", e)));
+                            let _ =
+                                tx.send(StreamingResponse::Error(format!("Request failed: {}", e)));
                         }
                     }
                 });
@@ -320,13 +357,15 @@ impl ApiClient {
             "tool_choice": "auto"
         });
 
-        let mut request_builder = self.client
+        let mut request_builder = self
+            .client
             .post(format!("{}/chat/completions", self.endpoint))
             .json(&request_body);
 
         // Add authorization header if API key is provided
         if !self.api_key.is_empty() {
-            request_builder = request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
         let response = request_builder.send().await?;
@@ -336,18 +375,33 @@ impl ApiClient {
 
             if let Some(choices) = response_json["choices"].as_array() {
                 if let Some(choice) = choices.first() {
-                    let content = choice["message"]["content"].as_str().unwrap_or("").to_string();
+                    let content = choice["message"]["content"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
 
                     // Handle tool calls
-                    let tool_calls = if let Some(calls) = choice["message"]["tool_calls"].as_array() {
-                        Some(calls.iter().map(|tool_call| ToolCall {
-                            id: tool_call["id"].as_str().unwrap_or_default().to_string(),
-                            r#type: "function".to_string(),
-                            function: ToolCallFunction {
-                                name: tool_call["function"]["name"].as_str().unwrap_or_default().to_string(),
-                                arguments: tool_call["function"]["arguments"].as_str().unwrap_or_default().to_string(),
-                            },
-                        }).collect::<Vec<_>>())
+                    let tool_calls = if let Some(calls) = choice["message"]["tool_calls"].as_array()
+                    {
+                        Some(
+                            calls
+                                .iter()
+                                .map(|tool_call| ToolCall {
+                                    id: tool_call["id"].as_str().unwrap_or_default().to_string(),
+                                    r#type: "function".to_string(),
+                                    function: ToolCallFunction {
+                                        name: tool_call["function"]["name"]
+                                            .as_str()
+                                            .unwrap_or_default()
+                                            .to_string(),
+                                        arguments: tool_call["function"]["arguments"]
+                                            .as_str()
+                                            .unwrap_or_default()
+                                            .to_string(),
+                                    },
+                                })
+                                .collect::<Vec<_>>(),
+                        )
                     } else {
                         None
                     };
@@ -378,18 +432,24 @@ impl ApiClient {
                 })
             }
         } else {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             Err(anyhow::anyhow!("OpenAI API request failed: {}", error_text))
         }
     }
 
     async fn send_claude_request(&self, messages: Vec<ChatMessage>) -> Result<ApiResponse> {
-        let claude_messages: Vec<Value> = messages.into_iter().map(|msg| {
-            json!({
-                "role": msg.role,
-                "content": msg.content.unwrap_or_default()
+        let claude_messages: Vec<Value> = messages
+            .into_iter()
+            .map(|msg| {
+                json!({
+                    "role": msg.role,
+                    "content": msg.content.unwrap_or_default()
+                })
             })
-        }).collect();
+            .collect();
 
         let request = json!({
             "model": self.model,
@@ -398,7 +458,8 @@ impl ApiClient {
             "temperature": 0.7
         });
 
-        let mut request_builder = self.client
+        let mut request_builder = self
+            .client
             .post(format!("{}/v1/messages", self.endpoint))
             .header("content-type", "application/json")
             .header("anthropic-version", "2023-06-01")
@@ -436,15 +497,25 @@ impl ApiClient {
                 tool_calls: None,
             })
         } else {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             Err(anyhow::anyhow!("Claude API request failed: {}", error_text))
         }
     }
 
     async fn send_ollama_request(&self, messages: Vec<ChatMessage>) -> Result<ApiResponse> {
         // Convert messages to Ollama format
-        let prompt = messages.iter()
-            .map(|msg| format!("{}: {}", msg.role.to_uppercase(), msg.content.as_ref().unwrap_or(&String::new())))
+        let prompt = messages
+            .iter()
+            .map(|msg| {
+                format!(
+                    "{}: {}",
+                    msg.role.to_uppercase(),
+                    msg.content.as_ref().unwrap_or(&String::new())
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -458,7 +529,8 @@ impl ApiClient {
             }
         });
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/api/generate", self.endpoint))
             .json(&request)
             .send()
@@ -485,32 +557,38 @@ impl ApiClient {
                 })
             }
         } else {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             Err(anyhow::anyhow!("Ollama API request failed: {}", error_text))
         }
     }
 
     async fn send_zai_request(&self, messages: Vec<ChatMessage>) -> Result<ApiResponse> {
         // Convert ChatMessage format to plain objects for Z.AI
-        let zai_messages: Vec<Value> = messages.into_iter().map(|msg| {
-            let mut msg_obj = json!({
-                "role": msg.role,
-            });
+        let zai_messages: Vec<Value> = messages
+            .into_iter()
+            .map(|msg| {
+                let mut msg_obj = json!({
+                    "role": msg.role,
+                });
 
-            if let Some(content) = msg.content {
-                msg_obj["content"] = json!(content);
-            }
+                if let Some(content) = msg.content {
+                    msg_obj["content"] = json!(content);
+                }
 
-            if let Some(tool_calls) = msg.tool_calls {
-                msg_obj["tool_calls"] = json!(tool_calls);
-            }
+                if let Some(tool_calls) = msg.tool_calls {
+                    msg_obj["tool_calls"] = json!(tool_calls);
+                }
 
-            if let Some(tool_call_id) = msg.tool_call_id {
-                msg_obj["tool_call_id"] = json!(tool_call_id);
-            }
+                if let Some(tool_call_id) = msg.tool_call_id {
+                    msg_obj["tool_call_id"] = json!(tool_call_id);
+                }
 
-            msg_obj
-        }).collect();
+                msg_obj
+            })
+            .collect();
 
         // Z.AI uses OpenAI-compatible format with specific endpoint
         let mut request = json!({
@@ -543,13 +621,15 @@ impl ApiClient {
         ]);
         request["tool_choice"] = json!("required");
 
-        let mut request_builder = self.client
-            .post(format!("{}/chat/completions", self.endpoint))  // Z.AI uses this exact path
+        let mut request_builder = self
+            .client
+            .post(format!("{}/chat/completions", self.endpoint)) // Z.AI uses this exact path
             .json(&request);
 
         // Add authorization header if API key is provided
         if !self.api_key.is_empty() {
-            request_builder = request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
         let response = request_builder.send().await?;
@@ -560,18 +640,33 @@ impl ApiClient {
 
             if let Some(choices) = response_json["choices"].as_array() {
                 if let Some(choice) = choices.first() {
-                    let content = choice["message"]["content"].as_str().unwrap_or("").to_string();
+                    let content = choice["message"]["content"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
 
                     // Handle tool calls
-                    let tool_calls = if let Some(calls) = choice["message"]["tool_calls"].as_array() {
-                        Some(calls.iter().map(|tool_call| ToolCall {
-                            id: tool_call["id"].as_str().unwrap_or_default().to_string(),
-                            r#type: "function".to_string(),
-                            function: ToolCallFunction {
-                                name: tool_call["function"]["name"].as_str().unwrap_or_default().to_string(),
-                                arguments: tool_call["function"]["arguments"].as_str().unwrap_or_default().to_string(),
-                            },
-                        }).collect::<Vec<_>>())
+                    let tool_calls = if let Some(calls) = choice["message"]["tool_calls"].as_array()
+                    {
+                        Some(
+                            calls
+                                .iter()
+                                .map(|tool_call| ToolCall {
+                                    id: tool_call["id"].as_str().unwrap_or_default().to_string(),
+                                    r#type: "function".to_string(),
+                                    function: ToolCallFunction {
+                                        name: tool_call["function"]["name"]
+                                            .as_str()
+                                            .unwrap_or_default()
+                                            .to_string(),
+                                        arguments: tool_call["function"]["arguments"]
+                                            .as_str()
+                                            .unwrap_or_default()
+                                            .to_string(),
+                                    },
+                                })
+                                .collect::<Vec<_>>(),
+                        )
                     } else {
                         None
                     };
@@ -602,7 +697,10 @@ impl ApiClient {
                 })
             }
         } else {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             Err(anyhow::anyhow!("Z.AI API request failed: {}", error_text))
         }
     }
@@ -623,13 +721,15 @@ impl ApiClient {
                 "max_tokens": 2048
             });
 
-            let mut request_builder = self.client
+            let mut request_builder = self
+                .client
                 .post(format!("{}/api/chat", self.endpoint))
                 .json(&request_body);
 
             // Add authorization header if API key is provided
             if !self.api_key.is_empty() {
-                request_builder = request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+                request_builder =
+                    request_builder.header("Authorization", format!("Bearer {}", self.api_key));
             }
 
             let response = request_builder.send().await?;
@@ -638,34 +738,44 @@ impl ApiClient {
                 let api_response: ApiResponse = response.json().await?;
                 Ok(api_response)
             } else {
-                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                let error_text = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "Unknown error".to_string());
                 Err(anyhow::anyhow!("Custom API request failed: {}", error_text))
             }
         }
     }
 
     async fn send_zai_formatted_request(&self, messages: Vec<ChatMessage>) -> Result<ApiResponse> {
-        debug_print(&format!("DEBUG: Z.AI Formatted Request - API key empty? {}, length: {}", self.api_key.is_empty(), self.api_key.len()));
+        debug_print(&format!(
+            "DEBUG: Z.AI Formatted Request - API key empty? {}, length: {}",
+            self.api_key.is_empty(),
+            self.api_key.len()
+        ));
         // Convert ChatMessage format to plain objects for Z.AI
-        let zai_messages: Vec<Value> = messages.into_iter().map(|msg| {
-            let mut msg_obj = json!({
-                "role": msg.role,
-            });
+        let zai_messages: Vec<Value> = messages
+            .into_iter()
+            .map(|msg| {
+                let mut msg_obj = json!({
+                    "role": msg.role,
+                });
 
-            if let Some(content) = msg.content {
-                msg_obj["content"] = json!(content);
-            }
+                if let Some(content) = msg.content {
+                    msg_obj["content"] = json!(content);
+                }
 
-            if let Some(tool_calls) = msg.tool_calls {
-                msg_obj["tool_calls"] = json!(tool_calls);
-            }
+                if let Some(tool_calls) = msg.tool_calls {
+                    msg_obj["tool_calls"] = json!(tool_calls);
+                }
 
-            if let Some(tool_call_id) = msg.tool_call_id {
-                msg_obj["tool_call_id"] = json!(tool_call_id);
-            }
+                if let Some(tool_call_id) = msg.tool_call_id {
+                    msg_obj["tool_call_id"] = json!(tool_call_id);
+                }
 
-            msg_obj
-        }).collect();
+                msg_obj
+            })
+            .collect();
 
         // Z.AI uses OpenAI-compatible format with specific endpoint
         let mut request = json!({
@@ -698,13 +808,15 @@ impl ApiClient {
         ]);
         request["tool_choice"] = json!("required");
 
-        let mut request_builder = self.client
-            .post(format!("{}/chat/completions", self.endpoint))  // Z.AI uses this exact path
+        let mut request_builder = self
+            .client
+            .post(format!("{}/chat/completions", self.endpoint)) // Z.AI uses this exact path
             .json(&request);
 
         // Add authorization header if API key is provided
         if !self.api_key.is_empty() {
-            request_builder = request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
         let response = request_builder.send().await?;
@@ -715,18 +827,33 @@ impl ApiClient {
 
             if let Some(choices) = response_json["choices"].as_array() {
                 if let Some(choice) = choices.first() {
-                    let content = choice["message"]["content"].as_str().unwrap_or("").to_string();
+                    let content = choice["message"]["content"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
 
                     // Handle tool calls
-                    let tool_calls = if let Some(calls) = choice["message"]["tool_calls"].as_array() {
-                        Some(calls.iter().map(|tool_call| ToolCall {
-                            id: tool_call["id"].as_str().unwrap_or_default().to_string(),
-                            r#type: "function".to_string(),
-                            function: ToolCallFunction {
-                                name: tool_call["function"]["name"].as_str().unwrap_or_default().to_string(),
-                                arguments: tool_call["function"]["arguments"].as_str().unwrap_or_default().to_string(),
-                            },
-                        }).collect::<Vec<_>>())
+                    let tool_calls = if let Some(calls) = choice["message"]["tool_calls"].as_array()
+                    {
+                        Some(
+                            calls
+                                .iter()
+                                .map(|tool_call| ToolCall {
+                                    id: tool_call["id"].as_str().unwrap_or_default().to_string(),
+                                    r#type: "function".to_string(),
+                                    function: ToolCallFunction {
+                                        name: tool_call["function"]["name"]
+                                            .as_str()
+                                            .unwrap_or_default()
+                                            .to_string(),
+                                        arguments: tool_call["function"]["arguments"]
+                                            .as_str()
+                                            .unwrap_or_default()
+                                            .to_string(),
+                                    },
+                                })
+                                .collect::<Vec<_>>(),
+                        )
                     } else {
                         None
                     };
@@ -734,7 +861,8 @@ impl ApiClient {
                     let usage = if let Some(usage_info) = response_json.get("usage") {
                         Some(Usage {
                             prompt_tokens: usage_info["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                            completion_tokens: usage_info["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                            completion_tokens: usage_info["completion_tokens"].as_u64().unwrap_or(0)
+                                as u32,
                             total_tokens: usage_info["total_tokens"].as_u64().unwrap_or(0) as u32,
                         })
                     } else {
@@ -753,21 +881,25 @@ impl ApiClient {
 
             Err(anyhow::anyhow!("Invalid response format from Z.AI API"))
         } else {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             Err(anyhow::anyhow!("Z.AI API request failed: {}", error_text))
         }
     }
 
-
     // Fallback for non-streaming providers
     async fn fallback_non_streaming(messages: Vec<ChatMessage>) -> Result<ApiResponse> {
         // This is a simple fallback - in a real implementation, you'd want to reuse existing non-streaming logic
-        let _system_content = messages.iter()
+        let _system_content = messages
+            .iter()
             .find(|m| m.role == "system")
             .map(|m| m.content.clone().unwrap_or_default())
             .unwrap_or_else(|| "You are ARULA, an AI assistant.".to_string());
 
-        let user_content = messages.iter()
+        let user_content = messages
+            .iter()
             .find(|m| m.role == "user")
             .map(|m| m.content.clone().unwrap_or_default())
             .unwrap_or_else(|| "Hello".to_string());
@@ -815,7 +947,10 @@ impl ApiClient {
                         }
                         Err(e) => {
                             debug_print(&format!("DEBUG: OpenAI request error: {}", e));
-                            let _ = tx.send(StreamingResponse::Error(format!("OpenAI request error: {}", e)));
+                            let _ = tx.send(StreamingResponse::Error(format!(
+                                "OpenAI request error: {}",
+                                e
+                            )));
                         }
                     }
                 }
@@ -830,7 +965,10 @@ impl ApiClient {
                         }
                         Err(e) => {
                             debug_print(&format!("DEBUG: Z.AI request error: {}", e));
-                            let _ = tx.send(StreamingResponse::Error(format!("Z.AI request error: {}", e)));
+                            let _ = tx.send(StreamingResponse::Error(format!(
+                                "Z.AI request error: {}",
+                                e
+                            )));
                         }
                     }
                 }
@@ -850,7 +988,8 @@ impl ApiClient {
                             let _ = tx.send(StreamingResponse::End(response));
                         }
                         Err(e) => {
-                            let _ = tx.send(StreamingResponse::Error(format!("Request failed: {}", e)));
+                            let _ =
+                                tx.send(StreamingResponse::Error(format!("Request failed: {}", e)));
                         }
                     }
                 }
@@ -876,12 +1015,14 @@ impl ApiClient {
             "tool_choice": "auto"
         });
 
-        let mut request_builder = self.client
+        let mut request_builder = self
+            .client
             .post(format!("{}/chat/completions", self.endpoint))
             .json(&request_body);
 
         if !self.api_key.is_empty() {
-            request_builder = request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
         let response = request_builder.send().await?;
@@ -891,17 +1032,32 @@ impl ApiClient {
 
             if let Some(choices) = response_json["choices"].as_array() {
                 if let Some(choice) = choices.first() {
-                    let content = choice["message"]["content"].as_str().unwrap_or("").to_string();
+                    let content = choice["message"]["content"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
 
-                    let tool_calls = if let Some(calls) = choice["message"]["tool_calls"].as_array() {
-                        Some(calls.iter().map(|tool_call| ToolCall {
-                            id: tool_call["id"].as_str().unwrap_or_default().to_string(),
-                            r#type: "function".to_string(),
-                            function: ToolCallFunction {
-                                name: tool_call["function"]["name"].as_str().unwrap_or_default().to_string(),
-                                arguments: tool_call["function"]["arguments"].as_str().unwrap_or_default().to_string(),
-                            },
-                        }).collect::<Vec<_>>())
+                    let tool_calls = if let Some(calls) = choice["message"]["tool_calls"].as_array()
+                    {
+                        Some(
+                            calls
+                                .iter()
+                                .map(|tool_call| ToolCall {
+                                    id: tool_call["id"].as_str().unwrap_or_default().to_string(),
+                                    r#type: "function".to_string(),
+                                    function: ToolCallFunction {
+                                        name: tool_call["function"]["name"]
+                                            .as_str()
+                                            .unwrap_or_default()
+                                            .to_string(),
+                                        arguments: tool_call["function"]["arguments"]
+                                            .as_str()
+                                            .unwrap_or_default()
+                                            .to_string(),
+                                    },
+                                })
+                                .collect::<Vec<_>>(),
+                        )
                     } else {
                         None
                     };
@@ -932,7 +1088,10 @@ impl ApiClient {
                 })
             }
         } else {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             Err(anyhow::anyhow!("OpenAI API request failed: {}", error_text))
         }
     }
@@ -943,22 +1102,36 @@ impl ApiClient {
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Result<ApiResponse> {
-        debug_print(&format!("DEBUG: Z.AI Formatted Request with Tools - API key length: {}", self.api_key.len()));
+        debug_print(&format!(
+            "DEBUG: Z.AI Formatted Request with Tools - API key length: {}",
+            self.api_key.len()
+        ));
 
         let max_retries = 3;
         let mut retry_count = 0;
 
         loop {
-            match self.send_zai_request_with_tools_once(messages.clone(), tools.clone()).await {
+            match self
+                .send_zai_request_with_tools_once(messages.clone(), tools.clone())
+                .await
+            {
                 Ok(response) => return Ok(response),
                 Err(e) if retry_count < max_retries && self.should_retry(&e) => {
                     retry_count += 1;
-                    debug_print(&format!("DEBUG: Z.AI request failed (attempt {}), retrying in {} seconds: {}", retry_count, 2 * retry_count, e));
+                    debug_print(&format!(
+                        "DEBUG: Z.AI request failed (attempt {}), retrying in {} seconds: {}",
+                        retry_count,
+                        2 * retry_count,
+                        e
+                    ));
                     tokio::time::sleep(tokio::time::Duration::from_secs(2 * retry_count)).await;
                     continue;
                 }
                 Err(e) => {
-                    debug_print(&format!("DEBUG: Z.AI request failed permanently after {} attempts: {}", retry_count, e));
+                    debug_print(&format!(
+                        "DEBUG: Z.AI request failed permanently after {} attempts: {}",
+                        retry_count, e
+                    ));
                     return Err(e);
                 }
             }
@@ -971,26 +1144,28 @@ impl ApiClient {
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Result<ApiResponse> {
+        let zai_messages: Vec<serde_json::Value> = messages
+            .into_iter()
+            .map(|msg| {
+                let mut msg_obj = serde_json::json!({
+                    "role": msg.role,
+                });
 
-        let zai_messages: Vec<serde_json::Value> = messages.into_iter().map(|msg| {
-            let mut msg_obj = serde_json::json!({
-                "role": msg.role,
-            });
+                if let Some(content) = msg.content {
+                    msg_obj["content"] = serde_json::json!(content);
+                }
 
-            if let Some(content) = msg.content {
-                msg_obj["content"] = serde_json::json!(content);
-            }
+                if let Some(tool_calls) = msg.tool_calls {
+                    msg_obj["tool_calls"] = serde_json::json!(tool_calls);
+                }
 
-            if let Some(tool_calls) = msg.tool_calls {
-                msg_obj["tool_calls"] = serde_json::json!(tool_calls);
-            }
+                if let Some(tool_call_id) = msg.tool_call_id {
+                    msg_obj["tool_call_id"] = serde_json::json!(tool_call_id);
+                }
 
-            if let Some(tool_call_id) = msg.tool_call_id {
-                msg_obj["tool_call_id"] = serde_json::json!(tool_call_id);
-            }
-
-            msg_obj
-        }).collect();
+                msg_obj
+            })
+            .collect();
 
         let request = serde_json::json!({
             "model": self.model,
@@ -1006,7 +1181,7 @@ impl ApiClient {
         let zai_client = Client::builder()
             .timeout(Duration::from_secs(60))
             .user_agent("arula-cli/1.0")
-            .http1_only()  // Force HTTP/1.1 for Z.AI compatibility
+            .http1_only() // Force HTTP/1.1 for Z.AI compatibility
             .tcp_nodelay(true)
             .connection_verbose(std::env::var("ARULA_DEBUG").is_ok())
             .build()
@@ -1017,12 +1192,19 @@ impl ApiClient {
             .json(&request);
 
         if !self.api_key.is_empty() {
-            request_builder = request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
         if std::env::var("ARULA_DEBUG").is_ok() {
-            debug_print(&format!("DEBUG: Sending Z.AI request to: {}/chat/completions", self.endpoint));
-            debug_print(&format!("DEBUG: Request body size: {} bytes", serde_json::to_string(&request).unwrap_or_default().len()));
+            debug_print(&format!(
+                "DEBUG: Sending Z.AI request to: {}/chat/completions",
+                self.endpoint
+            ));
+            debug_print(&format!(
+                "DEBUG: Request body size: {} bytes",
+                serde_json::to_string(&request).unwrap_or_default().len()
+            ));
         }
 
         let response = request_builder
@@ -1036,17 +1218,32 @@ impl ApiClient {
 
             if let Some(choices) = response_json["choices"].as_array() {
                 if let Some(choice) = choices.first() {
-                    let content = choice["message"]["content"].as_str().unwrap_or("").to_string();
+                    let content = choice["message"]["content"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
 
-                    let tool_calls = if let Some(calls) = choice["message"]["tool_calls"].as_array() {
-                        Some(calls.iter().map(|tool_call| ToolCall {
-                            id: tool_call["id"].as_str().unwrap_or_default().to_string(),
-                            r#type: "function".to_string(),
-                            function: ToolCallFunction {
-                                name: tool_call["function"]["name"].as_str().unwrap_or_default().to_string(),
-                                arguments: tool_call["function"]["arguments"].as_str().unwrap_or_default().to_string(),
-                            },
-                        }).collect::<Vec<_>>())
+                    let tool_calls = if let Some(calls) = choice["message"]["tool_calls"].as_array()
+                    {
+                        Some(
+                            calls
+                                .iter()
+                                .map(|tool_call| ToolCall {
+                                    id: tool_call["id"].as_str().unwrap_or_default().to_string(),
+                                    r#type: "function".to_string(),
+                                    function: ToolCallFunction {
+                                        name: tool_call["function"]["name"]
+                                            .as_str()
+                                            .unwrap_or_default()
+                                            .to_string(),
+                                        arguments: tool_call["function"]["arguments"]
+                                            .as_str()
+                                            .unwrap_or_default()
+                                            .to_string(),
+                                    },
+                                })
+                                .collect::<Vec<_>>(),
+                        )
                     } else {
                         None
                     };
@@ -1054,7 +1251,8 @@ impl ApiClient {
                     let usage = if let Some(usage_info) = response_json.get("usage") {
                         Some(Usage {
                             prompt_tokens: usage_info["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                            completion_tokens: usage_info["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                            completion_tokens: usage_info["completion_tokens"].as_u64().unwrap_or(0)
+                                as u32,
                             total_tokens: usage_info["total_tokens"].as_u64().unwrap_or(0) as u32,
                         })
                     } else {
@@ -1081,7 +1279,10 @@ impl ApiClient {
                 Err(anyhow::anyhow!("Invalid response format from Z.AI API"))
             }
         } else {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             Err(anyhow::anyhow!("Z.AI API request failed: {}", error_text))
         }
     }
@@ -1091,22 +1292,22 @@ impl ApiClient {
         let error_str = error.to_string().to_lowercase();
 
         // Retry on network-related errors
-        error_str.contains("bad gateway") ||
-        error_str.contains("timeout") ||
-        error_str.contains("connection refused") ||
-        error_str.contains("connection reset") ||
-        error_str.contains("connection aborted") ||
-        error_str.contains("connection timed out") ||
-        error_str.contains("connection failed") ||
-        error_str.contains("error sending request") ||
-        error_str.contains("dns resolution failed") ||
-        error_str.contains("no route to host") ||
-        error_str.contains("network is unreachable") ||
-        error_str.contains("temporary failure") ||
-        error_str.contains("broken pipe") ||
-        error_str.contains("unexpected eof") ||
-        error_str.contains("http error") ||
-        error_str.contains("hyper error") ||
-        error_str.contains("reqwest error")
+        error_str.contains("bad gateway")
+            || error_str.contains("timeout")
+            || error_str.contains("connection refused")
+            || error_str.contains("connection reset")
+            || error_str.contains("connection aborted")
+            || error_str.contains("connection timed out")
+            || error_str.contains("connection failed")
+            || error_str.contains("error sending request")
+            || error_str.contains("dns resolution failed")
+            || error_str.contains("no route to host")
+            || error_str.contains("network is unreachable")
+            || error_str.contains("temporary failure")
+            || error_str.contains("broken pipe")
+            || error_str.contains("unexpected eof")
+            || error_str.contains("http error")
+            || error_str.contains("hyper error")
+            || error_str.contains("reqwest error")
     }
 }

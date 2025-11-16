@@ -1,8 +1,8 @@
-use anyhow::Result;
-use dialoguer::{theme::ColorfulTheme, Select, Confirm, Input};
-use console::style;
 use crate::app::App;
 use crate::output::OutputHandler;
+use anyhow::Result;
+use console::style;
+use dialoguer::{theme::ColorfulTheme, Confirm, Input, Select};
 
 pub struct OverlayMenu;
 
@@ -13,9 +13,18 @@ impl OverlayMenu {
 
     pub fn show_main_menu(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<bool> {
         println!();
-        println!("{}", style("╔══════════════════════════════════════╗").cyan());
-        println!("{}", style("║          ARULA MAIN MENU            ║").cyan());
-        println!("{}", style("╚══════════════════════════════════════╝").cyan());
+        println!(
+            "{}",
+            style("╔══════════════════════════════════════╗").cyan()
+        );
+        println!(
+            "{}",
+            style("║          ARULA MAIN MENU            ║").cyan()
+        );
+        println!(
+            "{}",
+            style("╚══════════════════════════════════════╝").cyan()
+        );
         println!();
 
         let options = vec![
@@ -104,7 +113,14 @@ impl OverlayMenu {
                 format!("Provider: {}", config.ai.provider),
                 format!("Model: {}", config.ai.model),
                 format!("API URL: {}", config.ai.api_url),
-                format!("API Key: {}", if config.ai.api_key.is_empty() { "Not set" } else { "********" }),
+                format!(
+                    "API Key: {}",
+                    if config.ai.api_key.is_empty() {
+                        "Not set"
+                    } else {
+                        "********"
+                    }
+                ),
                 "← Back to Main Menu".to_string(),
             ];
 
@@ -118,7 +134,10 @@ impl OverlayMenu {
                 Some(0) => {
                     // Edit provider
                     let providers = vec!["openai", "claude", "anthropic", "ollama", "custom"];
-                    let current_idx = providers.iter().position(|&p| p == config.ai.provider).unwrap_or(0);
+                    let current_idx = providers
+                        .iter()
+                        .position(|&p| p == config.ai.provider)
+                        .unwrap_or(0);
 
                     let provider_idx = Select::with_theme(&ColorfulTheme::default())
                         .with_prompt("Select AI Provider")
@@ -129,7 +148,10 @@ impl OverlayMenu {
                     app.config.ai.provider = providers[provider_idx].to_string();
                     let _ = app.config.save();
                     let _ = app.initialize_agent_client();
-                    output.print_system(&format!("✅ Provider set to: {}", providers[provider_idx]))?;
+                    output.print_system(&format!(
+                        "✅ Provider set to: {}",
+                        providers[provider_idx]
+                    ))?;
                 }
                 Some(1) => {
                     // Edit model
@@ -205,15 +227,24 @@ impl OverlayMenu {
         println!("{}", style("🔧 Commands:").yellow().bold());
         println!("  {}  - Show this help", style("/help").green());
         println!("  {}  - Open interactive menu", style("/menu").green());
-        println!("  {}  - Clear conversation history", style("/clear").green());
-        println!("  {}  - Show current configuration", style("/config").green());
+        println!(
+            "  {}  - Clear conversation history",
+            style("/clear").green()
+        );
+        println!(
+            "  {}  - Show current configuration",
+            style("/config").green()
+        );
         println!("  {}  - Change AI model", style("/model <name>").green());
         println!("  {}  - Exit ARULA", style("exit or quit").green());
         println!();
         println!("{}", style("⌨️  Keyboard Shortcuts:").yellow().bold());
         println!("  {}  - Open menu", style("Ctrl+C").green());
         println!("  {}  - Exit", style("Ctrl+D").green());
-        println!("  {}  - Navigate command history", style("Up/Down Arrow").green());
+        println!(
+            "  {}  - Navigate command history",
+            style("Up/Down Arrow").green()
+        );
         println!();
         println!("{}", style("💡 Tips:").yellow().bold());
         println!("  • End line with \\ to continue on next line");

@@ -1,13 +1,13 @@
 //! Modern tool implementations using the agent framework
 
-use crate::agent::{Tool, ToolSchema, ToolSchemaBuilder, ToolResult};
+use crate::agent::{Tool, ToolResult, ToolSchema, ToolSchemaBuilder};
 use async_trait::async_trait;
+use futures::StreamExt;
+use memmap2::{Mmap, MmapOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::process::Command;
 use tokio::process::Command as TokioCommand;
-use futures::StreamExt;
-use memmap2::{Mmap, MmapOptions};
 
 /// Parameters for the bash tool
 #[derive(Debug, Deserialize)]
@@ -55,7 +55,7 @@ impl Tool for BashTool {
     fn schema(&self) -> ToolSchema {
         ToolSchemaBuilder::new(
             "execute_bash",
-            "Execute bash shell commands and return the output"
+            "Execute bash shell commands and return the output",
         )
         .param("command", "string")
         .description("command", "The bash command to execute")
@@ -98,9 +98,7 @@ impl Tool for BashTool {
                     success,
                 })
             }
-            Err(e) => {
-                Err(format!("Failed to execute command '{}': {}", command, e))
-            }
+            Err(e) => Err(format!("Failed to execute command '{}': {}", command, e)),
         }
     }
 }
@@ -150,18 +148,18 @@ impl Tool for FileReadTool {
     }
 
     fn schema(&self) -> ToolSchema {
-        ToolSchemaBuilder::new(
-            "read_file",
-            "Read the contents of a file"
-        )
-        .param("path", "string")
-        .description("path", "The path to the file to read")
-        .required("path")
-        .param("start_line", "integer")
-        .description("start_line", "The starting line number (1-indexed, optional)")
-        .param("end_line", "integer")
-        .description("end_line", "The ending line number (1-indexed, optional)")
-        .build()
+        ToolSchemaBuilder::new("read_file", "Read the contents of a file")
+            .param("path", "string")
+            .description("path", "The path to the file to read")
+            .required("path")
+            .param("start_line", "integer")
+            .description(
+                "start_line",
+                "The starting line number (1-indexed, optional)",
+            )
+            .param("end_line", "integer")
+            .description("end_line", "The ending line number (1-indexed, optional)")
+            .build()
     }
 
     async fn execute(&self, params: Self::Params) -> Result<Self::Result, String> {
@@ -179,8 +177,8 @@ impl Tool for FileReadTool {
             return Err("File path cannot be empty".to_string());
         }
 
-        let file = File::open(&path)
-            .map_err(|e| format!("Failed to open file '{}': {}", path, e))?;
+        let file =
+            File::open(&path).map_err(|e| format!("Failed to open file '{}': {}", path, e))?;
 
         // Try to use memory mapping for large files first
         if let Ok(mmap) = unsafe { MmapOptions::new().map(&file) } {
@@ -315,18 +313,21 @@ impl Tool for ListDirectoryTool {
     }
 
     fn schema(&self) -> ToolSchema {
-        ToolSchemaBuilder::new(
-            "list_directory",
-            "List the contents of a directory"
-        )
-        .param("path", "string")
-        .description("path", "The directory path to list")
-        .required("path")
-        .param("show_hidden", "boolean")
-        .description("show_hidden", "Whether to show hidden files (default: false)")
-        .param("recursive", "boolean")
-        .description("recursive", "Whether to list directories recursively (default: false)")
-        .build()
+        ToolSchemaBuilder::new("list_directory", "List the contents of a directory")
+            .param("path", "string")
+            .description("path", "The directory path to list")
+            .required("path")
+            .param("show_hidden", "boolean")
+            .description(
+                "show_hidden",
+                "Whether to show hidden files (default: false)",
+            )
+            .param("recursive", "boolean")
+            .description(
+                "recursive",
+                "Whether to list directories recursively (default: false)",
+            )
+            .build()
     }
 
     async fn execute(&self, params: Self::Params) -> Result<Self::Result, String> {
@@ -365,12 +366,11 @@ impl ListDirectoryTool {
 
         for entry in dir_entries {
             let entry = entry.map_err(|e| format!("Error reading directory entry: {}", e))?;
-            let metadata = entry.metadata()
+            let metadata = entry
+                .metadata()
                 .map_err(|e| format!("Error reading file metadata: {}", e))?;
 
-            let name = entry.file_name()
-                .to_string_lossy()
-                .to_string();
+            let name = entry.file_name().to_string_lossy().to_string();
 
             // Skip hidden files unless requested
             if !show_hidden && name.starts_with('.') {
@@ -391,9 +391,7 @@ impl ListDirectoryTool {
                 None
             };
 
-            let entry_path = entry.path()
-                .to_string_lossy()
-                .to_string();
+            let entry_path = entry.path().to_string_lossy().to_string();
 
             entries.push(DirectoryEntry {
                 name: name.clone(),
@@ -495,12 +493,21 @@ where
 impl From<AiOperation> for EditOperation {
     fn from(ai_op: AiOperation) -> Self {
         match ai_op.operation_type.as_str() {
-            "create" => EditOperation::Create { content: ai_op.content.unwrap_or_default() },
+            "create" => EditOperation::Create {
+                content: ai_op.content.unwrap_or_default(),
+            },
             "replace" => {
                 if let (Some(start_line), Some(end_line)) = (ai_op.start_line, ai_op.end_line) {
                     let content = ai_op.content.unwrap_or_default();
-                    EditOperation::Replace { start_line, end_line, content }
-                } else if let (Some(old_text), Some(new_text)) = (ai_op.old_text.or(ai_op.old_text_alt), ai_op.new_text.or(ai_op.new_text_alt)) {
+                    EditOperation::Replace {
+                        start_line,
+                        end_line,
+                        content,
+                    }
+                } else if let (Some(old_text), Some(new_text)) = (
+                    ai_op.old_text.or(ai_op.old_text_alt),
+                    ai_op.new_text.or(ai_op.new_text_alt),
+                ) {
                     EditOperation::ReplaceText { old_text, new_text }
                 } else {
                     let content = ai_op.content.unwrap_or_default();
@@ -515,10 +522,17 @@ impl From<AiOperation> for EditOperation {
             "delete" => {
                 let start_line = ai_op.start_line.unwrap_or(1);
                 let end_line = ai_op.end_line.unwrap_or(start_line);
-                EditOperation::Delete { start_line, end_line }
+                EditOperation::Delete {
+                    start_line,
+                    end_line,
+                }
             }
-            "append" => EditOperation::Append { content: ai_op.content.unwrap_or_default() },
-            _ => EditOperation::Append { content: ai_op.content.unwrap_or_default() }
+            "append" => EditOperation::Append {
+                content: ai_op.content.unwrap_or_default(),
+            },
+            _ => EditOperation::Append {
+                content: ai_op.content.unwrap_or_default(),
+            },
         }
     }
 }
@@ -561,28 +575,21 @@ impl Tool for FileEditTool {
     }
 
     fn schema(&self) -> ToolSchema {
-        ToolSchemaBuilder::new(
-            "edit_file",
-            "Edit file contents with various operations"
-        )
-        .param("path", "string")
-        .description("path", "The path to the file to edit")
-        .required("path")
-        .param("operation", "object")
-        .description("operation", "The edit operation to perform")
-        .required("operation")
-        .build()
+        ToolSchemaBuilder::new("edit_file", "Edit file contents with various operations")
+            .param("path", "string")
+            .description("path", "The path to the file to edit")
+            .required("path")
+            .param("operation", "object")
+            .description("operation", "The edit operation to perform")
+            .required("operation")
+            .build()
     }
 
     async fn execute(&self, params: Self::Params) -> Result<Self::Result, String> {
         use std::fs;
         use std::path::Path;
 
-  
-        let FileEditParams {
-            path,
-            operation,
-        } = params;
+        let FileEditParams { path, operation } = params;
 
         // Basic security check
         if path.trim().is_empty() {
@@ -590,7 +597,12 @@ impl Tool for FileEditTool {
         }
 
         // Verify file exists for most operations (except prepend if file doesn't exist)
-        if !Path::new(&path).exists() && !matches!(operation, EditOperation::Prepend { .. } | EditOperation::Replace { .. }) {
+        if !Path::new(&path).exists()
+            && !matches!(
+                operation,
+                EditOperation::Prepend { .. } | EditOperation::Replace { .. }
+            )
+        {
             return Err(format!("File '{}' does not exist", path));
         }
 
@@ -612,13 +624,17 @@ impl Tool for FileEditTool {
             // Handle AI format by converting it first
             EditOperation::AiFormat(ai_op) => {
                 let converted_op: EditOperation = (*ai_op).into();
-                return self.execute(FileEditParams { path, operation: converted_op }).await;
+                return self
+                    .execute(FileEditParams {
+                        path,
+                        operation: converted_op,
+                    })
+                    .await;
             }
 
             // AI-friendly operations
             EditOperation::Create { content } => {
-                fs::write(&path, &content)
-                    .map_err(|e| format!("Failed to create file: {}", e))?;
+                fs::write(&path, &content).map_err(|e| format!("Failed to create file: {}", e))?;
 
                 let lines = content.lines().count();
                 Ok(FileEditResult {
@@ -648,11 +664,19 @@ impl Tool for FileEditTool {
                         backup_path,
                     })
                 } else {
-                    Err(format!("Invalid line number: {}. File has {} lines", line, lines.len()))
+                    Err(format!(
+                        "Invalid line number: {}. File has {} lines",
+                        line,
+                        lines.len()
+                    ))
                 }
             }
 
-            EditOperation::Replace { start_line, end_line, content } => {
+            EditOperation::Replace {
+                start_line,
+                end_line,
+                content,
+            } => {
                 let file_content = fs::read_to_string(&path)
                     .map_err(|e| format!("Failed to read file '{}': {}", path, e))?;
 
@@ -667,16 +691,27 @@ impl Tool for FileEditTool {
 
                     Ok(FileEditResult {
                         success: true,
-                        message: format!("Replaced lines {} to {} in file '{}'", start_line, end_line, path),
+                        message: format!(
+                            "Replaced lines {} to {} in file '{}'",
+                            start_line, end_line, path
+                        ),
                         lines_changed: Some(end_line - start_line + 1),
                         backup_path,
                     })
                 } else {
-                    Err(format!("Invalid line range: {} to {}. File has {} lines", start_line, end_line, lines.len()))
+                    Err(format!(
+                        "Invalid line range: {} to {}. File has {} lines",
+                        start_line,
+                        end_line,
+                        lines.len()
+                    ))
                 }
             }
 
-            EditOperation::Delete { start_line, end_line } => {
+            EditOperation::Delete {
+                start_line,
+                end_line,
+            } => {
                 let file_content = fs::read_to_string(&path)
                     .map_err(|e| format!("Failed to read file '{}': {}", path, e))?;
 
@@ -691,12 +726,20 @@ impl Tool for FileEditTool {
 
                     Ok(FileEditResult {
                         success: true,
-                        message: format!("Deleted {} lines ({} to {}) from file '{}'", deleted_count, start_line, end_line, path),
+                        message: format!(
+                            "Deleted {} lines ({} to {}) from file '{}'",
+                            deleted_count, start_line, end_line, path
+                        ),
                         lines_changed: Some(deleted_count),
                         backup_path,
                     })
                 } else {
-                    Err(format!("Invalid line range: {} to {}. File has {} lines", start_line, end_line, lines.len()))
+                    Err(format!(
+                        "Invalid line range: {} to {}. File has {} lines",
+                        start_line,
+                        end_line,
+                        lines.len()
+                    ))
                 }
             }
 
@@ -712,13 +755,19 @@ impl Tool for FileEditTool {
 
                 Ok(FileEditResult {
                     success: true,
-                    message: format!("Replaced '{}' with '{}' in file '{}'", old_text, new_text, path),
+                    message: format!(
+                        "Replaced '{}' with '{}' in file '{}'",
+                        old_text, new_text, path
+                    ),
                     lines_changed: None,
                     backup_path,
                 })
             }
 
-            EditOperation::InsertAt { line_number, content } => {
+            EditOperation::InsertAt {
+                line_number,
+                content,
+            } => {
                 let file_content = fs::read_to_string(&path)
                     .map_err(|e| format!("Failed to read file '{}': {}", path, e))?;
 
@@ -732,16 +781,26 @@ impl Tool for FileEditTool {
 
                     Ok(FileEditResult {
                         success: true,
-                        message: format!("Inserted content at line {} in file '{}'", line_number, path),
+                        message: format!(
+                            "Inserted content at line {} in file '{}'",
+                            line_number, path
+                        ),
                         lines_changed: Some(1),
                         backup_path,
                     })
                 } else {
-                    Err(format!("Invalid line number: {}. File has {} lines", line_number, lines.len()))
+                    Err(format!(
+                        "Invalid line number: {}. File has {} lines",
+                        line_number,
+                        lines.len()
+                    ))
                 }
             }
 
-            EditOperation::DeleteRange { start_line, end_line } => {
+            EditOperation::DeleteRange {
+                start_line,
+                end_line,
+            } => {
                 let file_content = fs::read_to_string(&path)
                     .map_err(|e| format!("Failed to read file '{}': {}", path, e))?;
 
@@ -756,12 +815,20 @@ impl Tool for FileEditTool {
 
                     Ok(FileEditResult {
                         success: true,
-                        message: format!("Deleted {} lines ({} to {}) from file '{}'", deleted_count, start_line, end_line, path),
+                        message: format!(
+                            "Deleted {} lines ({} to {}) from file '{}'",
+                            deleted_count, start_line, end_line, path
+                        ),
                         lines_changed: Some(deleted_count),
                         backup_path,
                     })
                 } else {
-                    Err(format!("Invalid line range: {} to {}. File has {} lines", start_line, end_line, lines.len()))
+                    Err(format!(
+                        "Invalid line range: {} to {}. File has {} lines",
+                        start_line,
+                        end_line,
+                        lines.len()
+                    ))
                 }
             }
 
@@ -860,7 +927,7 @@ impl Tool for WriteFileTool {
     fn schema(&self) -> ToolSchema {
         ToolSchemaBuilder::new(
             "write_file",
-            "Write content to a file (creates or overwrites)"
+            "Write content to a file (creates or overwrites)",
         )
         .param("path", "string")
         .description("path", "The file path to write to")
@@ -875,10 +942,7 @@ impl Tool for WriteFileTool {
         use std::fs;
         use std::path::Path;
 
-        let WriteFileParams {
-            path,
-            content,
-        } = params;
+        let WriteFileParams { path, content } = params;
 
         // Basic security checks
         if path.trim().is_empty() {
@@ -888,8 +952,9 @@ impl Tool for WriteFileTool {
         // Create parent directories if they don't exist
         if let Some(parent) = Path::new(&path).parent() {
             if !parent.exists() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create directory '{}': {}", parent.display(), e))?;
+                fs::create_dir_all(parent).map_err(|e| {
+                    format!("Failed to create directory '{}': {}", parent.display(), e)
+                })?;
             }
         }
 
@@ -901,12 +966,22 @@ impl Tool for WriteFileTool {
             .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
 
         let bytes_written = content.len();
-        let lines_written = if content.is_empty() { 0 } else { content.lines().count() };
+        let lines_written = if content.is_empty() {
+            0
+        } else {
+            content.lines().count()
+        };
 
         let message = if file_existed {
-            format!("Successfully overwrote file '{}' ({} bytes, {} lines)", path, bytes_written, lines_written)
+            format!(
+                "Successfully overwrote file '{}' ({} bytes, {} lines)",
+                path, bytes_written, lines_written
+            )
         } else {
-            format!("Successfully created file '{}' ({} bytes, {} lines)", path, bytes_written, lines_written)
+            format!(
+                "Successfully created file '{}' ({} bytes, {} lines)",
+                path, bytes_written, lines_written
+            )
         };
 
         Ok(WriteFileResult {
@@ -996,8 +1071,8 @@ impl Tool for SearchTool {
 
     async fn execute(&self, params: Self::Params) -> Result<Self::Result, String> {
         use ignore::WalkBuilder;
-        use std::sync::{Arc, Mutex};
         use std::path::Path;
+        use std::sync::{Arc, Mutex};
 
         let SearchParams {
             query,
@@ -1023,7 +1098,11 @@ impl Tool for SearchTool {
                 .map_err(|e| format!("Invalid file pattern '{}': {}. Common patterns: '*.rs', '*.py', '*.txt', '*.md'", pattern, e))?;
             let mut builder = GlobSetBuilder::new();
             builder.add(glob);
-            Some(builder.build().map_err(|e| format!("Failed to process file pattern '{}': {}", pattern, e))?)
+            Some(
+                builder
+                    .build()
+                    .map_err(|e| format!("Failed to process file pattern '{}': {}", pattern, e))?,
+            )
         } else {
             None
         };
@@ -1039,12 +1118,12 @@ impl Tool for SearchTool {
 
         // Build the parallel walker with gitignore support
         let walker = WalkBuilder::new(search_path)
-            .hidden(false)           // Don't skip hidden files by default
-            .git_ignore(true)        // Respect .gitignore
-            .git_global(true)        // Respect global gitignore
-            .git_exclude(true)       // Respect .git/info/exclude
-            .require_git(false)      // Work even without git repo
-            .follow_links(false)     // Don't follow symlinks
+            .hidden(false) // Don't skip hidden files by default
+            .git_ignore(true) // Respect .gitignore
+            .git_global(true) // Respect global gitignore
+            .git_exclude(true) // Respect .git/info/exclude
+            .require_git(false) // Work even without git repo
+            .follow_links(false) // Don't follow symlinks
             .threads(num_cpus::get())
             .build_parallel();
 
