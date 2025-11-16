@@ -92,9 +92,9 @@ impl ApiClient {
         };
 
        if std::env::var("ARULA_DEBUG").is_ok() {
-            eprintln!("DEBUG: Provider = {:?}, Input = {}", provider_type, provider);
-            eprintln!("DEBUG: API Key length = {}, endpoint = {}", api_key.len(), endpoint);
-            eprintln!("DEBUG: Model = {}", model);
+            debug_print(&format!("DEBUG: Provider = {:?}, Input = {}", provider_type, provider));
+            debug_print(&format!("DEBUG: API Key length = {}, endpoint = {}", api_key.len(), endpoint));
+            debug_print(&format!("DEBUG: Model = {}", model));
         }
 
         let client = Client::builder()
@@ -181,19 +181,19 @@ impl ApiClient {
 
         match self.provider {
             AIProvider::OpenAI => {
-                eprintln!("DEBUG: Using OpenAI provider in send_message_stream");
+                debug_print("DEBUG: Using OpenAI provider in send_message_stream");
                 // Use regular OpenAI request for now to support tool calls
                 let client = self.clone();
                 tokio::spawn(async move {
                     match client.send_openai_request(messages).await {
                         Ok(response) => {
-                            eprintln!("DEBUG: OpenAI response with tool_calls: {:?}", response.tool_calls.is_some());
+                            debug_print(&format!("DEBUG: OpenAI response with tool_calls: {:?}", response.tool_calls.is_some()));
                             let _ = tx.send(StreamingResponse::Start);
                             let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
                             let _ = tx.send(StreamingResponse::End(response));
                         }
                         Err(e) => {
-                            eprintln!("DEBUG: OpenAI request error: {}", e);
+                            debug_print(&format!("DEBUG: OpenAI request error: {}", e));
                             let _ = tx.send(StreamingResponse::Error(format!("OpenAI request error: {}", e)));
                         }
                     }
@@ -244,19 +244,19 @@ impl ApiClient {
 
         match self.provider {
             AIProvider::OpenAI => {
-                eprintln!("DEBUG: Using OpenAI provider in send_message_stream");
+                debug_print("DEBUG: Using OpenAI provider in send_message_stream");
                 // Use regular OpenAI request for now to support tool calls
                 let client = self.clone();
                 tokio::spawn(async move {
                     match client.send_openai_request(messages).await {
                         Ok(response) => {
-                            eprintln!("DEBUG: OpenAI response with tool_calls: {:?}", response.tool_calls.is_some());
+                            debug_print(&format!("DEBUG: OpenAI response with tool_calls: {:?}", response.tool_calls.is_some()));
                             let _ = tx.send(StreamingResponse::Start);
                             let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
                             let _ = tx.send(StreamingResponse::End(response));
                         }
                         Err(e) => {
-                            eprintln!("DEBUG: OpenAI request error: {}", e);
+                            debug_print(&format!("DEBUG: OpenAI request error: {}", e));
                             let _ = tx.send(StreamingResponse::Error(format!("OpenAI request error: {}", e)));
                         }
                     }
@@ -645,7 +645,7 @@ impl ApiClient {
     }
 
     async fn send_zai_formatted_request(&self, messages: Vec<ChatMessage>) -> Result<ApiResponse> {
-        eprintln!("DEBUG: Z.AI Formatted Request - API key empty? {}, length: {}", self.api_key.is_empty(), self.api_key.len());
+        debug_print(&format!("DEBUG: Z.AI Formatted Request - API key empty? {}, length: {}", self.api_key.is_empty(), self.api_key.len()));
         // Convert ChatMessage format to plain objects for Z.AI
         let zai_messages: Vec<Value> = messages.into_iter().map(|msg| {
             let mut msg_obj = json!({
@@ -808,13 +808,13 @@ impl ApiClient {
                     // Use custom tool-aware OpenAI implementation
                     match client.send_openai_request_with_tools(messages, tools).await {
                         Ok(response) => {
-                            eprintln!("DEBUG: OpenAI response with tools");
+                            debug_print("DEBUG: OpenAI response with tools");
                             let _ = tx.send(StreamingResponse::Start);
                             let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
                             let _ = tx.send(StreamingResponse::End(response));
                         }
                         Err(e) => {
-                            eprintln!("DEBUG: OpenAI request error: {}", e);
+                            debug_print(&format!("DEBUG: OpenAI request error: {}", e));
                             let _ = tx.send(StreamingResponse::Error(format!("OpenAI request error: {}", e)));
                         }
                     }
@@ -823,13 +823,13 @@ impl ApiClient {
                     // For Z.AI, use the existing zai_formatted_request with tools
                     match client.send_zai_request_with_tools(messages, tools).await {
                         Ok(response) => {
-                            eprintln!("DEBUG: Z.AI response with tools");
+                            debug_print("DEBUG: Z.AI response with tools");
                             let _ = tx.send(StreamingResponse::Start);
                             let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
                             let _ = tx.send(StreamingResponse::End(response));
                         }
                         Err(e) => {
-                            eprintln!("DEBUG: Z.AI request error: {}", e);
+                            debug_print(&format!("DEBUG: Z.AI request error: {}", e));
                             let _ = tx.send(StreamingResponse::Error(format!("Z.AI request error: {}", e)));
                         }
                     }
@@ -943,7 +943,7 @@ impl ApiClient {
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Result<ApiResponse> {
-        eprintln!("DEBUG: Z.AI Formatted Request with Tools - API key length: {}", self.api_key.len());
+        debug_print(&format!("DEBUG: Z.AI Formatted Request with Tools - API key length: {}", self.api_key.len()));
 
         let max_retries = 3;
         let mut retry_count = 0;
@@ -953,12 +953,12 @@ impl ApiClient {
                 Ok(response) => return Ok(response),
                 Err(e) if retry_count < max_retries && self.should_retry(&e) => {
                     retry_count += 1;
-                    eprintln!("DEBUG: Z.AI request failed (attempt {}), retrying in {} seconds: {}", retry_count, 2 * retry_count, e);
+                    debug_print(&format!("DEBUG: Z.AI request failed (attempt {}), retrying in {} seconds: {}", retry_count, 2 * retry_count, e));
                     tokio::time::sleep(tokio::time::Duration::from_secs(2 * retry_count)).await;
                     continue;
                 }
                 Err(e) => {
-                    eprintln!("DEBUG: Z.AI request failed permanently after {} attempts: {}", retry_count, e);
+                    debug_print(&format!("DEBUG: Z.AI request failed permanently after {} attempts: {}", retry_count, e));
                     return Err(e);
                 }
             }
@@ -1021,8 +1021,8 @@ impl ApiClient {
         }
 
         if std::env::var("ARULA_DEBUG").is_ok() {
-            eprintln!("DEBUG: Sending Z.AI request to: {}/chat/completions", self.endpoint);
-            eprintln!("DEBUG: Request body size: {} bytes", serde_json::to_string(&request).unwrap_or_default().len());
+            debug_print(&format!("DEBUG: Sending Z.AI request to: {}/chat/completions", self.endpoint));
+            debug_print(&format!("DEBUG: Request body size: {} bytes", serde_json::to_string(&request).unwrap_or_default().len()));
         }
 
         let response = request_builder

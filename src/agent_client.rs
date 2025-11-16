@@ -13,6 +13,13 @@ use std::pin::Pin;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 
+/// Debug print helper that checks ARULA_DEBUG environment variable
+fn debug_print(msg: &str) {
+    if std::env::var("ARULA_DEBUG").is_ok() {
+        eprintln!("{}", msg);
+    }
+}
+
 /// Modern AI Agent Client
 pub struct AgentClient {
     api_client: ApiClient,
@@ -216,16 +223,16 @@ impl AgentClient {
                     // Parse and execute the tool
                     let raw_args = &tool_call.function.arguments;
                     if debug {
-                        eprintln!("DEBUG: Raw tool args for '{}': {}", tool_name, raw_args);
+                        debug_print(&format!("DEBUG: Raw tool args for '{}': {}", tool_name, raw_args));
                     }
                     match serde_json::from_str::<serde_json::Value>(raw_args) {
                         Ok(args) => {
                             if debug {
-                                eprintln!("DEBUG: Parsed tool args for '{}': {}", tool_name, serde_json::to_string_pretty(&args).unwrap_or_else(|_| "Invalid JSON".to_string()));
+                                debug_print(&format!("DEBUG: Parsed tool args for '{}': {}", tool_name, serde_json::to_string_pretty(&args).unwrap_or_else(|_| "Invalid JSON".to_string())));
                             }
                             if let Some(result) = tool_registry.execute_tool(&tool_name, args).await {
                                 if debug {
-                                    eprintln!("DEBUG: Tool '{}' result: success={}, data={:?}", tool_name, result.success, result.data);
+                                    debug_print(&format!("DEBUG: Tool '{}' result: success={}, data={:?}", tool_name, result.success, result.data));
                                 }
                                 let result_json = if result.success {
                                     json!({
@@ -241,12 +248,12 @@ impl AgentClient {
 
                                 if debug {
                                     let json_str = serde_json::to_string_pretty(&result_json).unwrap_or_else(|_| "Invalid JSON".to_string());
-                                    eprintln!("DEBUG: Tool result JSON size: {} bytes", json_str.len());
+                                    debug_print(&format!("DEBUG: Tool result JSON size: {} bytes", json_str.len()));
                                     // Truncate for debug output
                                     if json_str.len() > 500 {
-                                        eprintln!("DEBUG: Tool result JSON (truncated): {}", &json_str[..500]);
+                                        debug_print(&format!("DEBUG: Tool result JSON (truncated): {}", &json_str[..500]));
                                     } else {
-                                        eprintln!("DEBUG: Tool result JSON: {}", json_str);
+                                        debug_print(&format!("DEBUG: Tool result JSON: {}", json_str));
                                     }
                                 }
 
@@ -303,12 +310,12 @@ impl AgentClient {
 
                 // Continue conversation to get AI's response to tool results
                 if debug {
-                    eprintln!("DEBUG: About to make continuation API call with {} messages", current_messages.len());
+                    debug_print(&format!("DEBUG: About to make continuation API call with {} messages", current_messages.len()));
                     // Check total message size
                     let total_size: usize = current_messages.iter()
                         .map(|msg| serde_json::to_string(msg).unwrap_or_default().len())
                         .sum();
-                    eprintln!("DEBUG: Total message payload size: {} bytes", total_size);
+                    debug_print(&format!("DEBUG: Total message payload size: {} bytes", total_size));
                 }
                 continue;
             } else {

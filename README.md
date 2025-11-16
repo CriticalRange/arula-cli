@@ -1,6 +1,6 @@
 # 🚀 ARULA CLI
 
-A modern autonomous AI CLI built with Rust and Ratatui, featuring a professional chat-style interface for autonomous task processing and code generation.
+A modern autonomous AI CLI built with Rust, featuring a professional chat-style interface for autonomous task processing and code generation.
 
 ## Features
 
@@ -86,8 +86,9 @@ Then type commands like:
 
 ### Dependencies
 
-- **ratatui**: Modern terminal UI framework
+- **rustyline**: Readline-style input with history and completion
 - **crossterm**: Cross-platform terminal handling
+- **console**: Colored output with rich styling options
 - **tokio**: Async runtime
 - **serde**: Serialization/deserialization
 - **chrono**: Date/time handling
@@ -108,14 +109,21 @@ Then type commands like:
 ```
 arula/
 ├── src/
-│   ├── main.rs      # Application entry point
-│   ├── app.rs       # Main application state
-│   ├── chat.rs      # Chat message types
-│   ├── art.rs       # Art generation
-│   └── config.rs    # Configuration management
-├── Cargo.toml       # Dependencies
-├── target/          # Compiled binaries
-└── README.md        # This file
+│   ├── main.rs           # Application entry point and rustyline input loop
+│   ├── app.rs            # Main application state and AI message handling
+│   ├── api.rs            # Traditional AI client with streaming support
+│   ├── agent.rs          # Modern AI agent framework with type-safe tool calling
+│   ├── agent_client.rs   # Client for agent-based AI interactions
+│   ├── tools.rs          # Modern tool implementations (BashTool, etc.)
+│   ├── output.rs         # Colored terminal output to stdout
+│   ├── overlay_menu.rs   # Crossterm-based overlay menu system
+│   ├── tool_call.rs      # Legacy bash command extraction from AI responses
+│   ├── config.rs         # YAML-based configuration management
+│   └── chat.rs           # Chat message types and data structures
+├── Cargo.toml            # Dependencies
+├── CLAUDE.md             # Development documentation and architecture guide
+├── target/               # Compiled binaries
+└── README.md             # This file
 ```
 
 ### Building

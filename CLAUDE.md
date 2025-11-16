@@ -1,13 +1,20 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ARULA CLI - Autonomous AI command-line interface with native terminal scrollback.
 
 ## Development Commands
 
 ```bash
 cargo build && cargo run         # Build and run
-cargo clippy && cargo fmt        # Code quality
+cargo build --release           # Optimized release build
 cargo test                       # Run tests
+cargo test -- <test_name>       # Run specific test
+cargo clippy && cargo fmt        # Code quality
+cargo check                      # Quick compile check
+cargo run -- --help             # Show CLI options
+cargo run -- --debug            # Run in debug mode
 ```
 
 ## Architecture
@@ -17,14 +24,26 @@ cargo test                       # Run tests
 **Key Modules**:
 - `app.rs`: Application state and AI message handling (~260 lines)
 - `main.rs`: Rustyline input loop, command handling, AI response processing
-- `api.rs`: AI client with streaming support
+- `api.rs`: Traditional AI client with streaming support
+- `agent.rs`: Modern AI agent framework with type-safe tool calling
+- `agent_client.rs`: Client for agent-based AI interactions
+- `tools.rs`: Modern tool implementations (BashTool, etc.)
 - `output.rs`: Colored terminal output to stdout
 - `overlay_menu.rs`: Crossterm-based overlay menu system
-- `tool_call.rs`: Bash command extraction from AI responses
+- `tool_call.rs`: Legacy bash command extraction from AI responses
+- `config.rs`: YAML-based configuration management
+- `chat.rs`: Chat message types and data structures
 
-**AI Streaming**: Uses `tokio::sync::mpsc::unbounded_channel()` for non-blocking responses.
+**Dual AI Architecture**:
+- **Legacy API**: Traditional streaming via `api.rs` for backward compatibility
+- **Modern Agent**: Type-safe tool calling via `agent.rs` and `tools.rs`
+- **AI Streaming**: Uses `tokio::sync::mpsc::unbounded_channel()` for non-blocking responses
+- **Terminal Design**: No alternate screen - all output flows to native scrollback buffer
 
-**Terminal Design**: No alternate screen - all output flows to native scrollback buffer.
+**CLI Interface**: Uses `clap` for command-line argument parsing with options:
+- `--verbose`: Verbose mode output
+- `--endpoint <url>`: API endpoint (default: http://localhost:8080)
+- `--debug`: Debug mode for development
 
 ## Design Principles
 
@@ -107,6 +126,31 @@ execute!(stdout(), terminal::Clear(terminal::ClearType::All), cursor::MoveTo(0, 
 3. Implement the option's logic (may call other methods)
 4. Use `show_confirm_dialog()` for confirmations
 
+**Tool Development Pattern**:
+```rust
+// Define tool parameters
+#[derive(Debug, Deserialize)]
+pub struct MyToolParams {
+    pub input: String,
+}
+
+// Implement the tool
+pub struct MyTool;
+impl MyTool {
+    pub async fn execute(params: MyToolParams) -> ToolResult {
+        // Tool implementation
+        ToolResult::success(json!({"result": "success"}))
+    }
+}
+```
+
+## Configuration
+
+Configuration is handled through YAML files in the user's config directory:
+- Loaded via `Config::load_or_default()` in `app.rs`
+- Supports API endpoints, model settings, and user preferences
+- Uses serde for serialization/deserialization
+
 ## Terminal Notes
 
 - Termux: `export TERM=xterm-256color`
@@ -114,26 +158,35 @@ execute!(stdout(), terminal::Clear(terminal::ClearType::All), cursor::MoveTo(0, 
 - Menu shortcuts: `m`, `menu`, or `/menu`
 - Ctrl+C shows exit confirmation (double press to exit)
 - All output uses console for consistent styling
+- CursorGuard ensures proper cursor cleanup on exit
 
 ## Key Libraries
 
-- **rustyline**: Readline-style input with history
+- **rustyline**: Readline-style input with history and completion
 - **crossterm**: Terminal manipulation (raw mode, cursor, styling)
 - **console**: Colored output with rich styling options
 - **dialoguer**: Interactive prompts (used in configuration menu)
 - **tokio**: Async runtime for AI streaming
-- **async-openai**: OpenAI API client with streaming
+- **reqwest**: HTTP client with rustls-tls (no OpenSSL dependency)
+- **clap**: Command-line argument parsing
+- **memmap2**: Memory-mapped file operations for tools
+- **walkdir + ignore**: File system traversal with gitignore support
+- **duct**: Command execution with proper I/O handling
+- **async-trait**: Async trait support for tool interfaces
+- **indicatif**: Progress bars and spinners for loading animations
+- **fastrand**: Simple and fast random number generation
+- **syntect**: Syntax highlighting for code blocks (supports many languages)
 
 ## TODO: Future Enhancements
 
 ### UI/UX Improvements
-- [ ] Progress indicators with spinners (using `indicatif` or console built-in)
-- [ ] Formatted code blocks with syntax highlighting
-- [ ] Syntax highlighting for AI responses (using `syntect`)
+- [x] Progress indicators with spinners (using `indicatif` or console built-in)
+- [x] Formatted code blocks with syntax highlighting (using `syntect`)
+- [x] Syntax highlighting for AI responses (using `syntect`)
 - [ ] Better markdown rendering (using `termimad` or `comrak`)
-- [ ] Multi-line input support (Shift+Enter for new line, Enter to send)
-- [ ] Enhanced input prompt with status indicators
-- [ ] Token count display
+- [x] Multi-line input support (Shift+Enter for new line, Enter to send)
+- [x] Enhanced input prompt with status indicators (⚡🔧▶ states)
+- [x] Token count display with color-coded warnings
 - [ ] Message history browser
 
 ### Features

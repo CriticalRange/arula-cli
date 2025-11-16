@@ -3,6 +3,13 @@ use clap::Parser;
 use rustyline::error::ReadlineError;
 use rustyline::{Editor, Config, CompletionType, EditMode};
 use rustyline::history::DefaultHistory;
+use crossterm::{
+    cursor::SetCursorStyle,
+    ExecutableCommand,
+    event::{self, Event, KeyCode, KeyEvent},
+    terminal::{self, disable_raw_mode, enable_raw_mode},
+};
+use std::io::Write;
 
 #[derive(Parser)]
 #[command(name = "arula")]
@@ -36,13 +43,16 @@ use app::App;
 use output::OutputHandler;
 use overlay_menu::OverlayMenu;
 
-/// Guard to ensure cursor is shown when the program exits
-struct CursorGuard;
+/// Guard to ensure cursor and terminal are properly restored when the program exits
+struct TerminalGuard;
 
-impl Drop for CursorGuard {
+impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        // Always show cursor on drop, regardless of how we exit
+        // Restore default cursor style on exit
+        let _ = restore_default_cursor();
         let _ = console::Term::stdout().show_cursor();
+        // Disable raw mode
+        let _ = disable_raw_mode();
     }
 }
 
@@ -51,8 +61,8 @@ async fn main() -> Result<()> {
     // Install color-eyre for better error reporting
     let _ = color_eyre::install();
 
-    // Create cursor guard to ensure cursor is restored on exit
-    let _cursor_guard = CursorGuard;
+    // Create terminal guard to ensure terminal state is restored on exit
+    let _terminal_guard = TerminalGuard;
 
     let cli = Cli::parse();
 
@@ -65,12 +75,15 @@ async fn main() -> Result<()> {
         std::env::set_var("ARULA_DEBUG", "1");
     }
 
+    // Enable raw mode for keyboard input detection
+    enable_raw_mode().unwrap();
+
     // Create output handler and app with debug flag
     let mut output = OutputHandler::new().with_debug(cli.debug);
     let mut app = App::new()?.with_debug(cli.debug);
 
     // Initialize AI client if configuration is valid
-    match app.initialize_api_client() {
+    match app.initialize_agent_client() {
         Ok(()) => {
             if cli.verbose {
                 println!("✅ AI client initialized successfully");
@@ -88,16 +101,20 @@ async fn main() -> Result<()> {
     output.print_banner()?;
     println!();
     println!("{}", console::style("💡 Tips:").cyan().bold());
-    println!("{}", console::style("  • Paste multi-line content, then press Enter on empty line to send").dim());
+    println!("{}", console::style("  • Type your message and press Enter to send").dim());
+    println!("{}", console::style("  • Use Shift+Enter for new lines, Enter on empty line to finish").dim());
+    println!("{}", console::style("  • Paste multi-line content, press Enter on empty line to finish").dim());
     println!("{}", console::style("  • End line with \\ to continue typing on next line").dim());
+    println!("{}", console::style("  • Cursor changed to steady bar for better visibility").dim());
     println!();
 
-    // Create rustyline editor with multi-line support and bracketed paste
+    // Create rustyline editor with enhanced multi-line support
     let config = Config::builder()
         .completion_type(CompletionType::List)
         .edit_mode(EditMode::Emacs)
         .auto_add_history(true)
         .bracketed_paste(true)  // Enable bracketed paste mode
+        .tab_stop(4)           // Set tab width for code blocks
         .build();
 
     let mut rl: Editor<(), DefaultHistory> = Editor::with_config(config)?;
@@ -114,68 +131,23 @@ async fn main() -> Result<()> {
 
     // Main input loop
     loop {
-        // Process all pending AI responses before blocking on readline
-        // Keep looping while we're waiting for a response
-        while app.is_waiting_for_response() {
+        // Only process AI responses if we're currently waiting for one
+        if app.is_waiting_for_response() {
+            // Check for ESC key press to cancel
+            if event::poll(std::time::Duration::from_millis(0)).unwrap_or(false) {
+                if let Ok(Event::Key(KeyEvent { code: KeyCode::Esc, .. })) = event::read() {
+                    output.stop_spinner();
+                    print!("\r\x1b[K"); // Clear spinner line
+                    std::io::stdout().flush()?;
+                    output.print_system("🛑 Request cancelled")?;
+                    app.cancel_request();
+                    continue;
+                }
+            }
+
             match app.check_ai_response_nonblocking() {
                 Some(response) => {
                     match response {
-                        app::AiResponse::StreamStart => {
-                            output.start_ai_message()?;
-                        }
-                        app::AiResponse::StreamChunk(chunk) => {
-                            output.print_streaming_chunk(&chunk)?;
-                        }
-                        app::AiResponse::StreamEnd(api_response_opt) => {
-                            output.end_line()?;
-
-                            // Print context usage if available
-                            if let Some(api_response) = &api_response_opt {
-                                output.print_context_usage(api_response.usage.as_ref())?;
-                            }
-                            // Execute tool calls if any from API response
-                            if let Some(api_response) = app.get_pending_api_response() {
-                                app.execute_tools_and_continue(&api_response).await?;
-                            } else if let Some(tool_calls) = app.get_pending_tool_calls() {
-                                app.execute_tools(tool_calls).await;
-                            }
-                            // Execute tool results if any
-                            if let Some(tool_results) = app.get_pending_tool_results() {
-                                for result in tool_results {
-                                    if result.success {
-                                        output.print_tool_call(&result.tool, "✅ Success")?;
-                                    } else {
-                                        output.print_tool_call(&result.tool, "❌ Failed")?;
-                                    }
-                                    output.print_tool_result(&result.output)?;
-                                }
-
-                                // For native OpenAI tool calls, we don't need to send results back to AI
-                                // The tool results are already included in the response
-                            }
-                            // Execute legacy bash commands if any
-                            if let Some(commands) = app.get_pending_bash_commands() {
-                                for cmd in commands {
-                                    output.print_system(&format!("Executing: {}", cmd))?;
-                                    match app.execute_bash_command(&cmd).await {
-                                        Ok(result) => {
-                                            output.print_tool_result(&result)?;
-                                        }
-                                        Err(e) => {
-                                            output.print_error(&format!("Command failed: {}", e))?;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        app::AiResponse::Success { response, usage, tool_calls: _ } => {
-                            output.print_ai_message(&response)?;
-                            output.print_context_usage(usage.as_ref())?;
-                        }
-                        app::AiResponse::Error(error_msg) => {
-                            output.print_error(&error_msg)?;
-                        }
-                        // New agent-based responses
                         app::AiResponse::AgentStreamStart => {
                             output.start_ai_message()?;
                         }
@@ -183,16 +155,16 @@ async fn main() -> Result<()> {
                             output.print_streaming_chunk(&text)?;
                         }
                         app::AiResponse::AgentToolCall { id: _, name, arguments } => {
-                            output.print_system(&format!("🔧 Tool call: {}({})", name, arguments))?;
+                            output.start_tool_execution(&name, &arguments)?;
                         }
-                        app::AiResponse::AgentToolResult { tool_call_id, success, result } => {
-                            let status = if success { "✅" } else { "❌" };
+                        app::AiResponse::AgentToolResult { tool_call_id: _, success, result } => {
                             let result_text = serde_json::to_string_pretty(&result)
                                 .unwrap_or_else(|_| result.to_string());
-                            output.print_system(&format!("{} Tool result: {}", status, tool_call_id))?;
-                            output.print_tool_result(&result_text)?;
+                            output.complete_tool_execution(&result_text, success)?;
                         }
                         app::AiResponse::AgentStreamEnd => {
+                            // Stop spinner and cleanup
+                            output.stop_spinner();
                             output.end_line()?;
                             // Show context usage for agent responses (no usage data available from agent system)
                             output.print_context_usage(None)?;
@@ -202,12 +174,13 @@ async fn main() -> Result<()> {
                 None => {
                     // No response yet, wait a bit and try again
                     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                    continue; // Skip to next iteration without reading user input
                 }
             }
         }
 
-        // Read user input with multi-line support
-        let readline = read_multiline_input(&mut rl);
+        // Only read user input if we're not waiting for a response
+        let readline = read_multiline_input(&mut rl, &app);
         match readline {
             Ok(input) => {
                 let input = input.trim();
@@ -237,10 +210,23 @@ async fn main() -> Result<()> {
                     // Handle CLI commands
                     handle_cli_command(input, &mut app, &mut output, &mut menu).await?;
                 } else {
-                    // Send to AI
-                    app.send_to_ai(input).await?;
-                    // Show loading indicator
-                    output.print_system("⏳ Waiting for response...")?;
+                    // User input is already shown in the prompt, don't duplicate
+
+                    // Check if we're already waiting for a response
+                    if !app.is_waiting_for_response() {
+                        // Send to AI
+                        app.send_to_ai(input).await?;
+
+                        // Show AI loading spinner
+                        print!("\n"); // Create space for spinner
+                        std::io::stdout().flush()?;
+                        output.start_spinner("Thinking...")?;
+                        // Give spinner time to start animating
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    } else {
+                        // Already waiting for a response, ignore this input
+                        output.print_system("⚠️  Already processing a request, please wait...")?;
+                    }
                 }
             }
             Err(ReadlineError::Interrupted) => {
@@ -270,28 +256,47 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn read_multiline_input(rl: &mut Editor<(), DefaultHistory>) -> Result<String, ReadlineError> {
+fn setup_bar_cursor() -> Result<(), Box<dyn std::error::Error>> {
+    // Set cursor to a steady bar cursor (not blinking)
+    std::io::stdout().execute(SetCursorStyle::SteadyBar)?;
+    Ok(())
+}
+
+fn restore_default_cursor() -> Result<(), Box<dyn std::error::Error>> {
+    // Restore cursor to default blinking line
+    std::io::stdout().execute(SetCursorStyle::DefaultUserShape)?;
+    Ok(())
+}
+
+fn read_multiline_input(rl: &mut Editor<(), DefaultHistory>, app: &App) -> Result<String, ReadlineError> {
     use console::style;
 
-    // Show prompt header
-    println!("{}", style("┌─[You]").cyan().dim());
+    // Setup bar cursor
+    let _ = setup_bar_cursor();
 
     let mut lines = Vec::new();
     let mut in_multiline = false;
 
     loop {
-        let prompt = "│ ";
+        // Enhanced prompt with animated loading states
+        let prompt = if lines.is_empty() {
+            // Show animated loading state
+            let is_loading = app.is_waiting_for_response() || app.has_pending_tool_calls();
+            format!("{} ", style("▶").cyan())
+        } else {
+            format!("{} ", style("│  ").cyan().dim())
+        };
 
-        match rl.readline(prompt) {
+        match rl.readline(&prompt) {
             Ok(line) => {
                 // Check if this is a bracketed paste (contains newlines)
                 if line.contains('\n') {
                     let pasted_lines: Vec<&str> = line.lines().collect();
                     let total_lines = pasted_lines.len();
 
-                    // Show preview
+                    // Show preview with cleaner formatting
                     if total_lines > 0 {
-                        println!("│ > {} lines pasted", style(total_lines).yellow());
+                        println!("  {}", style(format!("📋 {} lines pasted", total_lines)).yellow());
 
                         // Show first few lines as preview
                         for preview_line in pasted_lines.iter().take(3) {
@@ -300,11 +305,11 @@ fn read_multiline_input(rl: &mut Editor<(), DefaultHistory>) -> Result<String, R
                             } else {
                                 preview_line.to_string()
                             };
-                            println!("│   {}", style(truncated).dim());
+                            println!("  {} {}", style("│").cyan().dim(), style(truncated).dim());
                         }
 
                         if total_lines > 3 {
-                            println!("│   {}", style(format!("... and {} more lines", total_lines - 3)).dim());
+                            println!("  {} {}", style("│").cyan().dim(), style(format!("... and {} more lines", total_lines - 3)).dim());
                         }
                     }
 
@@ -327,14 +332,12 @@ fn read_multiline_input(rl: &mut Editor<(), DefaultHistory>) -> Result<String, R
                 if line.trim().is_empty() {
                     if lines.is_empty() {
                         // Empty first line - cancel
-                        println!("{}", style("└─>").cyan().dim());
                         return Err(ReadlineError::Interrupted);
                     } else if in_multiline {
                         // Empty line after paste/multiline - finish
                         break;
                     } else {
                         // Empty line on single input - cancel
-                        println!("{}", style("└─>").cyan().dim());
                         return Err(ReadlineError::Interrupted);
                     }
                 }
@@ -348,13 +351,11 @@ fn read_multiline_input(rl: &mut Editor<(), DefaultHistory>) -> Result<String, R
                 }
             }
             Err(e) => {
-                println!("{}", style("└─>").cyan().dim());
                 return Err(e);
             }
         }
     }
 
-    println!("{}", style("└─>").cyan().dim());
     Ok(lines.join("\n"))
 }
 
@@ -377,6 +378,8 @@ async fn handle_cli_command(
             output.print_system("  /help              - Show this help")?;
             output.print_system("  /menu              - Open interactive menu")?;
             output.print_system("  /clear             - Clear conversation history")?;
+            output.print_system("  /history           - Show message history")?;
+            output.print_system("  /summary           - Show conversation summary")?;
             output.print_system("  /config            - Show current configuration")?;
             output.print_system("  /model <name>      - Change AI model")?;
             output.print_system("  exit or quit       - Exit ARULA")?;
@@ -399,6 +402,14 @@ async fn handle_cli_command(
         "/clear" => {
             app.clear_conversation();
             output.print_system("Conversation cleared")?;
+        }
+        "/history" => {
+            let messages = app.get_message_history();
+            output.print_message_history(&messages, 0)?;
+        }
+        "/summary" => {
+            let messages = app.get_message_history();
+            output.print_conversation_summary(&messages)?;
         }
         "/config" => {
             let config = app.get_config();
