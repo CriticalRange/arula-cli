@@ -34,6 +34,8 @@ mod chat;
 mod config;
 mod custom_spinner;
 mod input_handler;
+mod inquire_input;
+mod modern_input;
 mod output;
 mod overlay_menu;
 mod tool_call;
@@ -123,9 +125,9 @@ async fn main() -> Result<()> {
     // NOW enable raw mode for keyboard input detection
     enable_raw_mode()?;
 
-    // Create custom input handler and spinner
+    // Create modern input handler with inquire styling and spinner
     let prompt = if cfg!(windows) { "▶ " } else { "▶ " };
-    let mut input_handler = input_handler::InputHandler::new(prompt);
+    let mut input_handler = modern_input::ModernInputHandler::new(prompt);
     let mut custom_spinner = custom_spinner::CustomSpinner::new();
 
     // Create overlay menu

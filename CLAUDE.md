@@ -19,11 +19,14 @@ cargo run -- --debug            # Run in debug mode
 
 ## Architecture
 
-**Core Flow**: `main()` → rustyline readline loop → `app.send_to_ai()` / `app.check_ai_response_nonblocking()`
+**Core Flow**: `main()` → modern input event loop → `app.send_to_ai()` / `app.check_ai_response_nonblocking()`
 
 **Key Modules**:
 - `app.rs`: Application state and AI message handling (~260 lines)
-- `main.rs`: Rustyline input loop, command handling, AI response processing
+- `main.rs`: Event loop, command handling, AI response processing
+- `modern_input.rs`: Modern input handler with inquire styling (CURRENT)
+- `input_handler.rs`: Legacy custom input handler (DEPRECATED)
+- `inquire_input.rs`: Inquire wrapper utilities for dialogs
 - `api.rs`: Traditional AI client with streaming support
 - `agent.rs`: Modern AI agent framework with type-safe tool calling
 - `agent_client.rs`: Client for agent-based AI interactions
@@ -60,8 +63,9 @@ cargo run -- --debug            # Run in debug mode
 
 3. **KISS Principle**
    - Keep code simple and straightforward
-   - Replaced complex ratatui TUI with simple rustyline readline loop
+   - Replaced complex ratatui TUI with simple event-driven input loop
    - Direct stdout printing instead of render buffers
+   - Modern inquire styling without blocking event handling
 
 4. **Command-Query-Separation (CQS)**
    - Commands perform actions: `send_to_ai()`, `execute_bash_command()`
@@ -162,7 +166,7 @@ Configuration is handled through YAML files in the user's config directory:
 
 ## Key Libraries
 
-- **rustyline**: Readline-style input with history and completion
+- **inquire**: Modern customizable terminal prompts with styling
 - **crossterm**: Terminal manipulation (raw mode, cursor, styling)
 - **console**: Colored output with rich styling options
 - **dialoguer**: Interactive prompts (used in configuration menu)

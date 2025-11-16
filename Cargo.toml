@@ -7,6 +7,7 @@ description = "Autonomous AI CLI with native terminal chat interface"
 
 [dependencies]
 rustyline = "14.0"
+inquire = "0.9"
 dialoguer = "0.11"
 console = "0.15"
 crossterm = "0.28"
