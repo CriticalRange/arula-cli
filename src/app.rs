@@ -299,57 +299,78 @@ The user will manually rebuild after exiting the application.
 
         // Send message using modern agent in background
         let msg = message.to_string();
+        let cancel_token = self.cancellation_token.clone();
         tokio::spawn(async move {
-            match agent_client.query(&msg, Some(api_messages)).await {
-                Ok(mut stream) => {
-                    let _ = tx.send(AiResponse::AgentStreamStart);
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    // Request was cancelled
+                    let _ = tx.send(AiResponse::AgentStreamEnd);
+                }
+                result = async {
+                    match agent_client.query(&msg, Some(api_messages)).await {
+                        Ok(mut stream) => {
+                            let _ = tx.send(AiResponse::AgentStreamStart);
 
-                    while let Some(content_block) = stream.next().await {
-                        match content_block {
-                            ContentBlock::Text { text } => {
-                                let _ = tx.send(AiResponse::AgentStreamText(text));
+                            loop {
+                                tokio::select! {
+                                    _ = cancel_token.cancelled() => {
+                                        // Cancelled during streaming
+                                        break;
+                                    }
+                                    content_block = stream.next() => {
+                                        match content_block {
+                                            Some(ContentBlock::Text { text }) => {
+                                                let _ = tx.send(AiResponse::AgentStreamText(text));
+                                            }
+                                            Some(ContentBlock::ToolCall {
+                                                id,
+                                                name,
+                                                arguments,
+                                            }) => {
+                                                let _ = tx.send(AiResponse::AgentToolCall {
+                                                    id,
+                                                    name,
+                                                    arguments,
+                                                });
+                                            }
+                                            Some(ContentBlock::ToolResult {
+                                                tool_call_id,
+                                                result,
+                                            }) => {
+                                                let _ = tx.send(AiResponse::AgentToolResult {
+                                                    tool_call_id,
+                                                    success: result.success,
+                                                    result: result.data,
+                                                });
+                                            }
+                                            Some(ContentBlock::Error { error }) => {
+                                                // Convert error to AgentStreamText to maintain compatibility
+                                                let _ = tx.send(AiResponse::AgentStreamText(format!(
+                                                    "[Error] {}",
+                                                    error
+                                                )));
+                                                break;
+                                            }
+                                            None => {
+                                                // Stream ended
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            ContentBlock::ToolCall {
-                                id,
-                                name,
-                                arguments,
-                            } => {
-                                let _ = tx.send(AiResponse::AgentToolCall {
-                                    id,
-                                    name,
-                                    arguments,
-                                });
-                            }
-                            ContentBlock::ToolResult {
-                                tool_call_id,
-                                result,
-                            } => {
-                                let _ = tx.send(AiResponse::AgentToolResult {
-                                    tool_call_id,
-                                    success: result.success,
-                                    result: result.data,
-                                });
-                            }
-                            ContentBlock::Error { error } => {
-                                // Convert error to AgentStreamText to maintain compatibility
-                                let _ = tx.send(AiResponse::AgentStreamText(format!(
-                                    "[Error] {}",
-                                    error
-                                )));
-                                break;
-                            }
+
+                            let _ = tx.send(AiResponse::AgentStreamEnd);
+                        }
+                        Err(e) => {
+                            let _ = tx.send(AiResponse::AgentStreamText(format!(
+                                "[Error] Failed to send message via agent: {}",
+                                e
+                            )));
+                            let _ = tx.send(AiResponse::AgentStreamEnd);
                         }
                     }
-
-                    let _ = tx.send(AiResponse::AgentStreamEnd);
-                }
-                Err(e) => {
-                    let _ = tx.send(AiResponse::AgentStreamText(format!(
-                        "[Error] Failed to send message via agent: {}",
-                        e
-                    )));
-                    let _ = tx.send(AiResponse::AgentStreamEnd);
-                }
+                } => {}
             }
         });
 

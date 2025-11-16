@@ -197,8 +197,9 @@ impl OutputHandler {
         mad_skin.bold.set_fg(TMColor::Yellow);
         mad_skin.italic.set_fg(TMColor::Cyan);
         mad_skin.code_block.set_bg(TMColor::AnsiValue(235)); // Dark gray background
-        mad_skin.inline_code.set_bg(TMColor::AnsiValue(235));
-        mad_skin.inline_code.set_fg(TMColor::Green);
+        // Purple inline code with dark purple background
+        mad_skin.inline_code.set_bg(TMColor::AnsiValue(54)); // Dark purple background
+        mad_skin.inline_code.set_fg(TMColor::Magenta); // Purple text
 
         Self {
             debug: false,
@@ -587,9 +588,8 @@ impl OutputHandler {
         // Show language tag if present
         if !self.code_block_lang.is_empty() {
             println!(
-                "┃ {} {}",
-                style("Language:").cyan().bold(),
-                style(&self.code_block_lang).green()
+                "┃ {}",
+                style(&self.code_block_lang).cyan().bold()
             );
             println!("{}", style("┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫").dim());
         }
@@ -630,6 +630,50 @@ impl OutputHandler {
         println!();
 
         Ok(())
+    }
+
+    /// Process buffer and extract complete markdown patterns for streaming
+    /// Uses termimad for proper markdown rendering
+    fn process_and_extract_complete_patterns(&self, buffer: &str, already_printed: usize) -> String {
+        if buffer.is_empty() || already_printed >= buffer.len() {
+            return String::new();
+        }
+
+        // Use termimad to render inline markdown
+        let processed = self.mad_skin.inline(buffer).to_string();
+
+        // On first call (already_printed == 0), just return processed text
+        if already_printed == 0 {
+            return processed;
+        }
+
+        // On subsequent calls, we need to figure out what changed
+        // Count visible chars (excluding ANSI codes) in already printed portion
+        let old_processed = self.mad_skin.inline(&buffer[..already_printed]).to_string();
+        let old_visible_len = self.count_visible_chars(&old_processed);
+
+        // Return: move cursor back, clear line, and reprint entire processed buffer
+        format!("\r\x1b[{}D\x1b[K{}", old_visible_len, processed)
+    }
+
+    /// Count visible characters (excluding ANSI escape codes)
+    fn count_visible_chars(&self, text: &str) -> usize {
+        let mut count = 0;
+        let mut in_escape = false;
+
+        for ch in text.chars() {
+            if ch == '\x1b' {
+                in_escape = true;
+            } else if in_escape {
+                if ch == 'm' {
+                    in_escape = false;
+                }
+            } else {
+                count += 1;
+            }
+        }
+
+        count
     }
 
     /// Process and print text with comprehensive markdown formatting (for streaming)
@@ -678,21 +722,13 @@ impl OutputHandler {
             self.last_printed_len = 0;
         }
 
-        // If there's remaining text in buffer (no newline yet), print raw and re-render
-        // This handles incomplete lines during streaming
+        // Process partial buffer for complete markdown patterns
         if !self.line_buffer.is_empty() && !self.in_code_block {
-            let buffer_len = self.line_buffer.len();
-            if buffer_len > self.last_printed_len {
-                // Move cursor to start of current line buffer content
-                if self.last_printed_len > 0 {
-                    // Calculate how many characters back we need to go
-                    print!("\r\x1b[K"); // Clear line
-                }
-
-                // Print the entire buffer with markdown processing
-                print!("{}", self.process_inline_markdown(&self.line_buffer));
+            let processed = self.process_and_extract_complete_patterns(&self.line_buffer, self.last_printed_len);
+            if !processed.is_empty() {
+                print!("{}", processed);
                 std::io::stdout().flush()?;
-                self.last_printed_len = buffer_len;
+                self.last_printed_len = self.line_buffer.len();
             }
         }
 
@@ -759,7 +795,7 @@ impl OutputHandler {
                 "{}  {} {}",
                 indent,
                 style("•").yellow(),
-                self.process_inline_markdown(&item)
+                self.mad_skin.inline(&item)
             );
             return Ok(());
         }
@@ -781,7 +817,7 @@ impl OutputHandler {
                     "{}  {}. {}",
                     indent,
                     style(num).cyan(),
-                    self.process_inline_markdown(item)
+                    self.mad_skin.inline(item)
                 );
                 return Ok(());
             }
@@ -810,7 +846,7 @@ impl OutputHandler {
                 }
             }
 
-            print!("{}{}", prefix, self.process_inline_markdown(remaining));
+            print!("{}{}", prefix, self.mad_skin.inline(remaining));
             return Ok(());
         }
 
@@ -834,8 +870,8 @@ impl OutputHandler {
             }
         }
 
-        // Regular line with inline markdown
-        print!("{}", self.process_inline_markdown(line));
+        // Regular line with inline markdown - use termimad
+        print!("{}", self.mad_skin.inline(line));
         Ok(())
     }
 
