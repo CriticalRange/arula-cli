@@ -250,6 +250,16 @@ The user will manually rebuild after exiting the application.
     }
 
     pub async fn send_to_ai(&mut self, message: &str) -> Result<()> {
+        // Check if agent client is initialized
+        if self.agent_client.is_none() {
+            if self.debug {
+                debug_print(&format!("DEBUG: send_to_ai - agent_client is None, returning error"));
+            }
+            return Err(anyhow::anyhow!(
+                "AI client not initialized. Please configure AI settings using the /config command or application menu."
+            ));
+        }
+
         // Add user message to history
         self.messages
             .push(ChatMessage::new(MessageType::User, message.to_string()));
