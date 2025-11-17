@@ -37,13 +37,17 @@ fastrand = "2.0"
 syntect = "5.0"
 termimad = "0.20"
 serde_yaml = "0.9"
-# Visioneer dependencies - Real implementations
-windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Console", "Win32_System_ProcessStatus", "Win32_UI_Accessibility", "Win32_UI_TextServices"] }
-image = "0.25"
-screenshots = "0.7"
-# Real OCR and UI Automation dependencies
+base64 = "0.22"
 rusty-tesseract = "1.1"
+# Visioneer dependencies - Real implementations (Windows only)
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Console", "Win32_System_ProcessStatus", "Win32_UI_Accessibility", "Win32_UI_TextServices"] }
 uiautomation = "0.13"
+screenshots = "0.7"
+
+# Cross-platform dependencies
+image = "0.25"
+base64 = "0.22"
+rusty-tesseract = "1.1"
 # OpenCV optional - comment out for easier build
 # opencv = { version = "0.88", features = ["imgproc", "imgcodecs", "objdetect", "highgui"] }
-base64 = "0.22"
