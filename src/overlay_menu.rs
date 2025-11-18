@@ -5,7 +5,7 @@ use std::io::{stdout, Write};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers, KeyEventKind},
     terminal::{self, size, EnterAlternateScreen, LeaveAlternateScreen},
-    cursor::{self, MoveTo, Show, Hide, SetCursorStyle},
+    cursor::{MoveTo, Show, Hide, SetCursorStyle},
     style::{Color, Print, SetForegroundColor, SetBackgroundColor, ResetColor},
     ExecutableCommand, QueueableCommand,
 };

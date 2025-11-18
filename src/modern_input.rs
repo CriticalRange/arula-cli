@@ -112,14 +112,14 @@ impl Highlighter for ArulaHelper {
         }
     }
 
-    fn highlight_char<'l>(&self, line: &'l str, _pos: usize, _forced: bool) -> bool {
+    fn highlight_char<'l>(&self, _line: &'l str, _pos: usize, _forced: bool) -> bool {
         // Let the default highlighter handle character highlighting
         false
     }
 }
 
 impl Validator for ArulaHelper {
-    fn validate(&self, ctx: &mut ValidationContext<'_>) -> RustylineResult<ValidationResult> {
+    fn validate(&self, _ctx: &mut ValidationContext<'_>) -> RustylineResult<ValidationResult> {
         // Always accept input immediately - never wait for more lines
         Ok(ValidationResult::Valid(None))
     }
@@ -163,7 +163,7 @@ impl ModernInputHandler {
     pub async fn get_input(&self) -> Result<Option<String>> {
         let prompt = format!("⚡{} ", self.prompt);
         let history = self.history.clone();
-        let config = self.editor_config;
+        let _config = self.editor_config;
 
         // Run blocking readline in a separate thread
         let result = tokio::task::spawn_blocking(move || {
@@ -418,7 +418,7 @@ pub mod dialogs {
         }
 
         impl Validator for AutoCompleteHelper {
-            fn validate(&self, ctx: &mut ValidationContext<'_>) -> RustylineResult<ValidationResult> {
+            fn validate(&self, _ctx: &mut ValidationContext<'_>) -> RustylineResult<ValidationResult> {
                 // Always accept input immediately
                 Ok(ValidationResult::Valid(None))
             }

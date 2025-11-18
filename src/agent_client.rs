@@ -3,15 +3,15 @@
 //! This module provides a high-level agent interface that uses the modern tool calling
 //! patterns while integrating with the existing reqwest-based API client.
 
-use crate::agent::{AgentOptions, ContentBlock, ToolRegistry, ToolResult};
+use crate::agent::{AgentOptions, ContentBlock, ToolRegistry};
 use crate::api::{ApiClient, ChatMessage, StreamingResponse};
 use crate::tools::create_default_tool_registry;
 use anyhow::Result;
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use serde_json::json;
 use std::pin::Pin;
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
+use tokio_stream::wrappers::UnboundedReceiverStream;
 
 /// Debug print helper that checks ARULA_DEBUG environment variable
 fn debug_print(msg: &str) {

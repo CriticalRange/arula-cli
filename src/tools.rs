@@ -1,12 +1,9 @@
 //! Modern tool implementations using the agent framework
 
-use crate::agent::{Tool, ToolResult, ToolSchema, ToolSchemaBuilder};
+use crate::agent::{Tool, ToolSchema, ToolSchemaBuilder};
 use async_trait::async_trait;
-use futures::StreamExt;
-use memmap2::{Mmap, MmapOptions};
+use memmap2::MmapOptions;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::process::Command;
 use tokio::process::Command as TokioCommand;
 
 /// Parameters for the bash tool
@@ -1479,8 +1476,7 @@ impl VisioneerTool {
         {
             use screenshots::Screen;
             use base64::{engine::general_purpose::STANDARD, Engine};
-            use image::{DynamicImage, ImageFormat, RgbImage, Rgb};
-            use std::fs;
+            use image::ImageFormat;
 
             let screen = Screen::all()
                 .map_err(|e| format!("Failed to get screens: {:?}", e))?
@@ -2330,7 +2326,7 @@ async fn get_dominant_color(&self, img: &Mat, rect: &Rect) -> Result<String, Str
 
     /// Find UI element coordinates using Windows UI Automation
     // Simplified element finding using OCR instead of UI Automation
-    async fn find_ui_element(&self, selector: &str, index: Option<u32>) -> Result<(u32, u32), String> {
+    async fn find_ui_element(&self, selector: &str, _index: Option<u32>) -> Result<(u32, u32), String> {
         // For now, use OCR-based text finding as a fallback
         // This can be enhanced with proper UI automation later
         self.find_text_coordinates(selector, None).await
@@ -2411,7 +2407,7 @@ async fn get_dominant_color(&self, img: &Mat, rect: &Rect) -> Result<String, Str
     }
 
     #[cfg(target_os = "windows")]
-    async fn check_text_exists(&self, text: &str) -> Result<bool, String> {
+    async fn check_text_exists(&self, _text: &str) -> Result<bool, String> {
         let _result = self.extract_text("screen_check", None, Some("eng".to_string())).await?;
         Ok(true)
     }
@@ -2423,12 +2419,12 @@ async fn get_dominant_color(&self, img: &Mat, rect: &Rect) -> Result<String, Str
     }
 
     #[cfg(target_os = "windows")]
-    async fn check_pixel_color(&self, x: u32, y: u32, color: &str) -> Result<bool, String> {
+    async fn check_pixel_color(&self, _x: u32, _y: u32, _color: &str) -> Result<bool, String> {
         Ok(true)
     }
 
     #[cfg(target_os = "windows")]
-    async fn check_idle_state(&self, idle_timeout: u32) -> Result<bool, String> {
+    async fn check_idle_state(&self, _idle_timeout: u32) -> Result<bool, String> {
         Ok(true)
     }
 }
@@ -2512,164 +2508,6 @@ impl Tool for VisioneerTool {
                 self.execute_navigate(&target, direction.clone(), distance.unwrap_or(100), steps.unwrap_or(1)).await
             }
         }
-    }
-}
-
-impl VisioneerTool {
-    /// Find text coordinates using OCR
-    #[cfg(target_os = "windows")]
-    async fn find_text_coordinates(&self, text: &str, region: Option<CaptureRegion>) -> Result<(u32, u32), String> {
-        use crate::visioneer::{TesseractOcrEngine, WindowsScreenCapture, ScreenCapture, OcrEngine, WindowHandle};
-        use rusty_tesseract::{Image, Args, image_to_data};
-        use std::collections::HashMap;
-
-        // Configure Tesseract path for Windows
-        let tesseract_path = if std::path::Path::new("C:\\Program Files\\Tesseract-OCR\\tesseract.exe").exists() {
-            Some("C:\\Program Files\\Tesseract-OCR")
-        } else if std::path::Path::new("C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe").exists() {
-            Some("C:\\Program Files (x86)\\Tesseract-OCR")
-        } else {
-            None // Try system PATH
-        };
-
-        // Set Tesseract data path if found
-        if let Some(path) = tesseract_path {
-            std::env::set_var("TESSDATA_PREFIX", format!("{}\\tessdata", path));
-        }
-
-        // Create a temporary capture for OCR
-        let temp_path = format!("temp_find_text_{}.png", chrono::Utc::now().timestamp());
-        let window_handle = WindowHandle::Windows("screen".to_string()); // Use entire screen
-        let screen_capture = WindowsScreenCapture::new();
-
-        let capture_result = screen_capture.capture(window_handle, region.clone(), Some(temp_path.clone()), false).await?;
-
-        // Load image for Tesseract
-        let image = Image::from_path(&temp_path)
-            .map_err(|e| format!("Failed to load image for text finding: {:?}", e))?;
-
-        // Configure Tesseract for detailed OCR data
-        let mut args = Args {
-            lang: "eng".to_string(),
-            config_variables: HashMap::from([
-                ("tessedit_char_whitelist".to_string(),
-                 "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .,!?-@#$%&*()+=[]{}|;:'\"<>/\\".to_string()),
-            ]),
-            dpi: Some(300),
-            psm: Some(6), // Assume a single uniform block of text
-            oem: Some(3), // Default OCR Engine Mode
-        };
-
-        // Add Tesseract path if found
-        if let Some(path) = tesseract_path {
-            args.config_variables.insert("tessedit_cmd_tesseract".to_string(),
-                format!("{}\\tesseract.exe", path));
-        }
-
-        // Extract detailed OCR data with confidence scores
-        let ocr_data = image_to_data(&image, &args)
-            .map_err(|e| format!("Tesseract OCR failed during text finding: {:?}", e))?;
-
-        // Clean up temporary file
-        let _ = std::fs::remove_file(&temp_path);
-
-        // Search for the target text in OCR results
-        for entry in ocr_data.data.iter() {
-            if !entry.text.is_empty() && entry.conf > 30.0 {
-                if entry.text.to_lowercase().contains(&text.to_lowercase()) {
-                    // Return center of the found text
-                    let center_x = entry.left + (entry.width / 2);
-                    let center_y = entry.top + (entry.height / 2);
-                    return Ok((center_x as u32, center_y as u32));
-                }
-            }
-        }
-
-        Err(format!("Text '{}' not found with confidence > 30%", text))
-    }
-
-    /// Find text coordinates using OCR (non-Windows stub)
-    #[cfg(not(target_os = "windows"))]
-    async fn find_text_coordinates(&self, _text: &str, _region: Option<CaptureRegion>) -> Result<(u32, u32), String> {
-        Err("Text finding not supported on this platform".to_string())
-    }
-
-    /// Execute wait condition
-    #[cfg(target_os = "windows")]
-    async fn execute_wait_condition(&self, condition: WaitCondition, timeout_ms: u32, check_interval_ms: u32) -> Result<VisioneerResult, String> {
-        let start_time = std::time::Instant::now();
-        let timeout_duration = std::time::Duration::from_millis(timeout_ms as u64);
-        let check_interval = std::time::Duration::from_millis(check_interval_ms as u64);
-
-        loop {
-            if start_time.elapsed() > timeout_duration {
-                return Ok(VisioneerResult {
-                    success: false,
-                    action_type: "wait".to_string(),
-                    message: "Wait condition timeout".to_string(),
-                    data: serde_json::json!({"timeout": true}),
-                    execution_time_ms: timeout_ms as u64,
-                    metadata: VisioneerMetadata {
-                        target: "wait_condition".to_string(),
-                        platform: std::env::consts::OS.to_string(),
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                        region: None,
-                    },
-                });
-            }
-
-            let condition_met = match &condition {
-                WaitCondition::Text { text, appears: Some(true) } => {
-                    // Check if text appears
-                    self.find_text_coordinates(text, None).await.is_ok()
-                }
-                WaitCondition::Text { text, appears: Some(false) } => {
-                    // Check if text disappears
-                    self.find_text_coordinates(text, None).await.is_err()
-                }
-                WaitCondition::Idle { timeout_ms: idle_timeout } => {
-                    // Simple idle check - would need more sophisticated implementation
-                    start_time.elapsed().as_millis() > *idle_timeout as u128
-                }
-                _ => false, // Not implemented
-            };
-
-            if condition_met {
-                return Ok(VisioneerResult {
-                    success: true,
-                    action_type: "wait".to_string(),
-                    message: "Wait condition met".to_string(),
-                    data: serde_json::json!({"condition_met": true}),
-                    execution_time_ms: start_time.elapsed().as_millis() as u64,
-                    metadata: VisioneerMetadata {
-                        target: "wait_condition".to_string(),
-                        platform: std::env::consts::OS.to_string(),
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                        region: None,
-                    },
-                });
-            }
-
-            tokio::time::sleep(check_interval).await;
-        }
-    }
-
-    /// Execute wait condition (non-Windows stub)
-    #[cfg(not(target_os = "windows"))]
-    async fn execute_wait_condition(&self, _condition: WaitCondition, _timeout_ms: u32, _check_interval_ms: u32) -> Result<VisioneerResult, String> {
-        Ok(VisioneerResult {
-            success: false,
-            action_type: "wait".to_string(),
-            message: "Wait conditions not supported on this platform".to_string(),
-            data: serde_json::json!({"error": "Wait conditions not supported on this platform"}),
-            execution_time_ms: 0,
-            metadata: VisioneerMetadata {
-                target: "wait_condition".to_string(),
-                platform: std::env::consts::OS.to_string(),
-                timestamp: chrono::Utc::now().to_rfc3339(),
-                region: None,
-            },
-        })
     }
 }
 

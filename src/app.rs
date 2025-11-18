@@ -1,4 +1,4 @@
-use crate::agent::{AgentOptions, AgentOptionsBuilder, ContentBlock};
+use crate::agent::{AgentOptionsBuilder, ContentBlock};
 use crate::agent_client::AgentClient;
 use crate::chat::{ChatMessage, MessageType};
 use crate::config::Config;
@@ -359,7 +359,7 @@ The user will manually rebuild after exiting the application.
                     // Request was cancelled
                     let _ = tx.send(AiResponse::AgentStreamEnd);
                 }
-                result = async {
+                _result = async {
                     match agent_client.query(&msg, Some(api_messages)).await {
                         Ok(mut stream) => {
                             let _ = tx.send(AiResponse::AgentStreamStart);

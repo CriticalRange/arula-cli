@@ -3,24 +3,13 @@
 //! Visioneer combines OCR, low-level pixel analysis, and vision-language models
 //! to understand UI and automate interactions with desktop applications and games.
 
-use crate::agent::{Tool, ToolResult, ToolSchema, ToolSchemaBuilder};
+use crate::agent::{Tool, ToolSchema, ToolSchemaBuilder};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use tokio::process::Command as TokioCommand;
-
-#[cfg(target_os = "windows")]
-use windows::core::HRESULT;
-#[cfg(target_os = "windows")]
-use windows::Win32::Foundation::HWND;
-#[cfg(target_os = "windows")]
-use windows::Win32::Graphics::Gdi::GetWindowDC;
-#[cfg(target_os = "windows")]
-use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowA,
-};
 
 /// Visioneer tool parameters
 #[derive(Debug, Deserialize)]
@@ -114,7 +103,7 @@ pub enum ClickButton {
 }
 
 /// Wait conditions
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum WaitCondition {
     Text { text: String, appears: Option<bool> },
@@ -466,7 +455,7 @@ impl VisioneerTool {
         region: Option<CaptureRegion>,
     ) -> Result<AnalyzeResult, String> {
         // Capture the screen first
-        let capture_result = self.capture_screen(window, region, None, true).await?;
+        let _capture_result = self.capture_screen(window, region, None, true).await?;
 
         // For now, return a mock analysis - in a real implementation, this would call a VLM API
         Ok(AnalyzeResult {
@@ -549,7 +538,7 @@ impl VisioneerTool {
         let temp_path = format!("temp_find_text_{}.png", chrono::Utc::now().timestamp());
         let window_handle = WindowHandle::Windows("screen".to_string()); // Use entire screen
 
-        let capture_result = self.capture_screen(window_handle, region.clone(), Some(temp_path.clone()), false).await?;
+        let _capture_result = self.capture_screen(window_handle, region.clone(), Some(temp_path.clone()), false).await?;
 
         // Load image for Tesseract
         let image = Image::from_path(&temp_path)
@@ -757,7 +746,7 @@ impl WindowsScreenCapture {
 impl ScreenCapture for WindowsScreenCapture {
     async fn capture(
         &self,
-        window: WindowHandle,
+        _window: WindowHandle,
         region: Option<CaptureRegion>,
         save_path: Option<String>,
         encode_base64: bool,

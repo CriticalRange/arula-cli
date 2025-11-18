@@ -1,10 +1,14 @@
+#![allow(dead_code)]
+#![allow(unreachable_code)]
+#![allow(private_interfaces)]
+
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    cursor::{self, MoveDown, MoveUp, SetCursorStyle},
+    cursor::{self, SetCursorStyle},
     event::{self, Event, KeyEventKind},
     execute,
-    terminal::{self, enable_raw_mode, disable_raw_mode, ClearType},
+    terminal::{self, enable_raw_mode, disable_raw_mode},
     ExecutableCommand,
 };
 use std::io::Write;
@@ -162,7 +166,7 @@ async fn main() -> Result<()> {
         // If AI is processing, check for responses and allow cancellation
         if app.is_waiting_for_response() {
             // Handle AI responses and cancellation
-            let mut spinner_running = false;
+            let _spinner_running = false;
             while app.is_waiting_for_response() {
                 // Check for ESC to cancel (non-blocking check)
                 if event::poll(std::time::Duration::from_millis(10))? {

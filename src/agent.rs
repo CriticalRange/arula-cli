@@ -4,11 +4,9 @@
 //! our existing reqwest-based infrastructure to avoid OpenSSL dependencies.
 
 use async_trait::async_trait;
-use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::pin::Pin;
 
 /// Tool execution result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,7 +181,7 @@ pub trait Tool: Send + Sync {
             Ok(typed_params) => match self.execute(typed_params).await {
                 Ok(result) => {
                     let json_result = serde_json::to_value(&result)
-                        .unwrap_or_else(|e| json!("Failed to serialize result"));
+                        .unwrap_or_else(|_e| json!("Failed to serialize result"));
                     ToolResult::success(json_result)
                 }
                 Err(error) => ToolResult::error(error),

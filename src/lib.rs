@@ -1,4 +1,6 @@
 // Library exports for ARULA CLI components
+#![allow(dead_code)]
+#![allow(private_interfaces)]
 
 pub mod agent;
 pub mod agent_client;

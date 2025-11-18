@@ -1,5 +1,4 @@
 use crate::api::Usage;
-use chrono::{DateTime, Local};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, Write};
@@ -7,11 +6,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use syntect::{
     easy::HighlightLines,
-    highlighting::{Style, ThemeSet},
+    highlighting::ThemeSet,
     parsing::SyntaxSet,
     util::as_24_bit_terminal_escaped,
 };
-use termimad::{MadSkin, StyledChar};
+use termimad::MadSkin;
 
 /// Animation utilities for cool visual effects
 mod animations {
@@ -1047,7 +1046,7 @@ impl OutputHandler {
         let closing_tag = format!("</{}>", tag_name);
         let closing_chars: Vec<char> = closing_tag.chars().collect();
 
-        let mut content_start = close_bracket + 1;
+        let content_start = close_bracket + 1;
         let mut content_end = content_start;
 
         while content_end < chars.len() {
