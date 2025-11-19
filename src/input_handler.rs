@@ -329,4 +329,10 @@ impl InputHandler {
         self.cursor_pos = 0;
         self.draw()
     }
+
+    /// Set the input buffer content
+    pub fn set_input(&mut self, input: &str) {
+        self.buffer = input.to_string();
+        self.cursor_pos = self.buffer.chars().count();
+    }
 }

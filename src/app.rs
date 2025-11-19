@@ -157,6 +157,21 @@ You have access to the following tools:
 
 When searching for code or text patterns, prefer using search_files over grep commands for better performance and gitignore support.
 For desktop automation tasks, use the Visioneer tool which can see, understand, and interact with any application.
+
+## Tool Usage Guidelines
+
+**Multiple Tool Calls**: You can call multiple tools in a single response when tasks require several operations. For example:
+- Reading multiple files at once
+- Running a command and then reading its output
+- Searching in multiple directories
+- Any combination of tools that would help complete the task efficiently
+
+When multiple operations are independent and can be done in parallel, call all relevant tools together. Results will be displayed sequentially.
+
+**Best Practices**:
+- Use multiple tool calls when they will provide comprehensive results faster
+- Combine read operations with search operations for thorough exploration
+- Chain related commands when one operation informs another
 "#.to_string());
 
         // Add development mode warning if running from cargo

@@ -3,7 +3,7 @@
 //! This module provides a high-level agent interface that uses the modern tool calling
 //! patterns while integrating with the existing reqwest-based API client.
 
-use crate::agent::{AgentOptions, ContentBlock, ToolRegistry};
+use crate::agent::{AgentOptions, ContentBlock, ToolRegistry, ToolResult};
 use crate::api::{ApiClient, ChatMessage, StreamingResponse};
 use crate::tools::create_default_tool_registry;
 use anyhow::Result;
@@ -292,7 +292,7 @@ impl AgentClient {
                                 let error_msg = format!("Tool '{}' not found", tool_name);
                                 let _ = tx.send(ContentBlock::tool_result(
                                     tool_call_id.clone(),
-                                    crate::agent::ToolResult::error(error_msg.clone()),
+                                    ToolResult::error(error_msg.clone()),
                                 ));
 
                                 current_messages.push(ChatMessage {
@@ -313,7 +313,7 @@ impl AgentClient {
                             let error_msg = format!("Failed to parse tool arguments: {}", err);
                             let _ = tx.send(ContentBlock::tool_result(
                                 tool_call_id.clone(),
-                                crate::agent::ToolResult::error(error_msg.clone()),
+                                ToolResult::error(error_msg.clone()),
                             ));
 
                             current_messages.push(ChatMessage {

@@ -99,3 +99,4 @@ test_search/
 # Banana test files
 banana.md*
 banana*.md*
+.claude-flow/

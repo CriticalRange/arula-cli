@@ -42,11 +42,13 @@ mod modern_input;
 mod output;
 mod overlay_menu;
 mod tool_call;
+mod tool_progress;
 mod tools;
 
 use app::App;
 use output::OutputHandler;
 use overlay_menu::OverlayMenu;
+use tool_progress::PersistentInput;
 
 /// Guard to ensure cursor and terminal are properly restored when the program exits
 struct TerminalGuard;
@@ -161,22 +163,62 @@ async fn main() -> Result<()> {
     // Create overlay menu
     let mut menu = OverlayMenu::new();
 
+    // Create persistent input for typing during AI response
+    let mut persistent_input = PersistentInput::new();
+    let mut buffered_input = String::new(); // Input typed during AI response
+
     // Main event loop
     'main_loop: loop {
-        // If AI is processing, check for responses and allow cancellation
+        // If AI is processing, check for responses and allow typing
         if app.is_waiting_for_response() {
-            // Handle AI responses and cancellation
+            // Handle AI responses while allowing user input
             let _spinner_running = false;
             while app.is_waiting_for_response() {
-                // Check for ESC to cancel (non-blocking check)
+                // Check for keyboard input (non-blocking)
                 if event::poll(std::time::Duration::from_millis(10))? {
                     if let Event::Key(key_event) = event::read()? {
-                        if key_event.kind == KeyEventKind::Press && key_event.code == crossterm::event::KeyCode::Esc {
-                            // ESC pressed, cancel AI request
-                            custom_spinner.stop();
-                            output.print_system("🛑 Request cancelled (ESC pressed)")?;
-                            app.cancel_request();
-                            break;
+                        if key_event.kind == KeyEventKind::Press {
+                            match key_event.code {
+                                crossterm::event::KeyCode::Esc => {
+                                    // ESC pressed, cancel AI request
+                                    custom_spinner.stop();
+                                    output.print_system("🛑 Request cancelled (ESC pressed)")?;
+                                    app.cancel_request();
+                                    break;
+                                }
+                                crossterm::event::KeyCode::Char(c) => {
+                                    // Buffer input while AI is responding
+                                    persistent_input.insert_char(c);
+                                    persistent_input.render()?;
+                                }
+                                crossterm::event::KeyCode::Backspace => {
+                                    persistent_input.backspace();
+                                    persistent_input.render()?;
+                                }
+                                crossterm::event::KeyCode::Enter => {
+                                    // Queue the input for processing after AI finishes
+                                    if !persistent_input.get_input().is_empty() {
+                                        buffered_input = persistent_input.take();
+                                        // Clear the input line visually
+                                        execute!(
+                                            std::io::stdout(),
+                                            cursor::MoveToColumn(0),
+                                            terminal::Clear(terminal::ClearType::CurrentLine)
+                                        )?;
+                                        print!("{} ", console::style("▶").cyan());
+                                        std::io::stdout().flush()?;
+                                    }
+                                }
+                                crossterm::event::KeyCode::Left => {
+                                    persistent_input.move_left();
+                                    persistent_input.render()?;
+                                }
+                                crossterm::event::KeyCode::Right => {
+                                    persistent_input.move_right();
+                                    persistent_input.render()?;
+                                }
+                                _ => {}
+                            }
                         }
                     }
                 }
@@ -188,24 +230,35 @@ async fn main() -> Result<()> {
                                 if custom_spinner.is_running() {
                                     custom_spinner.stop();
                                 }
-                                custom_spinner.start("")?;
+                                custom_spinner.start_above("")?;
                                 output.start_ai_message()?;
                             }
                             app::AiResponse::AgentStreamText(text) => {
-                                let is_first_chunk = custom_spinner.is_running();
-                                if is_first_chunk {
+                                // Always stop spinner first if running
+                                if custom_spinner.is_running() {
                                     custom_spinner.stop();
+                                    // Clear spinner line (above) and input line (current), go to spinner line
                                     execute!(
                                         std::io::stdout(),
                                         cursor::MoveToColumn(0),
+                                        terminal::Clear(terminal::ClearType::CurrentLine),
+                                        cursor::MoveUp(1),
+                                        cursor::MoveToColumn(0),
                                         terminal::Clear(terminal::ClearType::CurrentLine)
                                     )?;
-                                    print!(" ");
+                                    print!(" "); // Indent for AI response
                                     std::io::stdout().flush()?;
-                                    output.print_streaming_chunk(&text)?;
-                                } else {
-                                    output.print_streaming_chunk(&text)?;
                                 }
+
+                                // Print the chunk
+                                output.print_streaming_chunk(&text)?;
+
+                                // Set up for next chunk: end text line, spinner line, input prompt
+                                println!(); // End current text line
+                                println!(); // Line for spinner
+                                print!("{} ", console::style("▶").cyan());
+                                std::io::stdout().flush()?;
+                                custom_spinner.start_above("")?;
                             }
                             app::AiResponse::AgentToolCall {
                                 id: _,
@@ -213,34 +266,97 @@ async fn main() -> Result<()> {
                                 arguments,
                             } => {
                                 custom_spinner.stop();
+                                // Clear spinner/input lines before showing tool
+                                execute!(
+                                    std::io::stdout(),
+                                    cursor::MoveToColumn(0),
+                                    terminal::Clear(terminal::ClearType::CurrentLine),
+                                    cursor::MoveUp(1),
+                                    cursor::MoveToColumn(0),
+                                    terminal::Clear(terminal::ClearType::CurrentLine)
+                                )?;
                                 output.start_tool_execution(&name, &arguments)?;
+                                // Set up spinner above input prompt
+                                println!(); // Line for spinner
+                                print!("{} ", console::style("▶").cyan());
+                                std::io::stdout().flush()?;
+                                custom_spinner.start_above("")?;
                             }
                             app::AiResponse::AgentToolResult {
                                 tool_call_id: _,
                                 success,
                                 result,
                             } => {
+                                custom_spinner.stop();
+                                // Clear spinner and input lines before showing result
+                                execute!(
+                                    std::io::stdout(),
+                                    cursor::MoveToColumn(0),
+                                    terminal::Clear(terminal::ClearType::CurrentLine),
+                                    cursor::MoveUp(1),
+                                    cursor::MoveToColumn(0),
+                                    terminal::Clear(terminal::ClearType::CurrentLine)
+                                )?;
                                 let result_text = serde_json::to_string_pretty(&result)
                                     .unwrap_or_else(|_| result.to_string());
                                 output.complete_tool_execution(&result_text, success)?;
+                                // Restore spinner above input prompt
+                                println!(); // Line for spinner
+                                print!("{} ", console::style("▶").cyan());
+                                std::io::stdout().flush()?;
+                                custom_spinner.start_above("")?;
                             }
                             app::AiResponse::AgentStreamEnd => {
                                 custom_spinner.stop();
                                 output.stop_spinner();
+
+                                // Clear the spinner line and input line, then move up to remove blank lines
+                                execute!(
+                                    std::io::stdout(),
+                                    cursor::MoveToColumn(0),
+                                    terminal::Clear(terminal::ClearType::CurrentLine),
+                                    cursor::MoveUp(1),
+                                    cursor::MoveToColumn(0),
+                                    terminal::Clear(terminal::ClearType::CurrentLine),
+                                    cursor::MoveUp(1)
+                                )?;
+
                                 output.end_line()?;
                                 output.print_context_usage(None)?;
                                 println!();
+
+                                // Transfer any typed input to the input handler
+                                let typed_input = persistent_input.get_input().to_string();
+                                persistent_input.clear();
+                                if !typed_input.is_empty() {
+                                    input_handler.set_input(&typed_input);
+                                }
+
                                 break; // Exit the AI response loop
                             }
                         }
                     }
                     None => {
                         if !custom_spinner.is_running() {
-                            custom_spinner.start("")?;
+                            custom_spinner.start_above("")?;
                         }
                     }
                 }
             }
+
+            // Process buffered input if any
+            if !buffered_input.is_empty() {
+                let input = std::mem::take(&mut buffered_input);
+                input_handler.add_to_history(input.clone());
+                match app.send_to_ai(&input).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        output.print_error(&format!("Failed to send to AI: {}", e))?;
+                    }
+                }
+                continue 'main_loop;
+            }
+
             continue; // Continue to next iteration to get input
         }
 
@@ -335,8 +451,14 @@ async fn main() -> Result<()> {
                                         }
                                     }
 
-                                    // Clear input after sending
-                                    input_handler.clear()?;
+                                    // Clear input handler buffer (don't redraw, we'll set up our own layout)
+                                    input_handler.set_input("");
+
+                                    // Set up: spinner line, then input prompt
+                                    println!(); // Line for spinner (will be cleared when text arrives)
+                                    print!("{} ", console::style("▶").cyan());
+                                    std::io::stdout().flush()?;
+
                                     break; // Exit input loop to go to AI response handling
                                 }
                             }
