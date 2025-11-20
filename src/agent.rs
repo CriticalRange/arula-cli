@@ -35,6 +35,7 @@ impl ToolResult {
 }
 
 /// Tool parameter schema builder
+#[derive(Debug, PartialEq)]
 pub struct ToolSchemaBuilder {
     name: String,
     description: String,
@@ -42,7 +43,7 @@ pub struct ToolSchemaBuilder {
     required: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParameterSchema {
     pub param_type: String,
     pub description: String,
@@ -194,6 +195,20 @@ pub trait Tool: Send + Sync {
 /// Tool registry for managing available tools
 pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn Tool<Params = serde_json::Value, Result = serde_json::Value>>>,
+}
+
+impl std::fmt::Debug for ToolRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolRegistry")
+            .field("tool_count", &self.tools.len())
+            .finish()
+    }
+}
+
+impl PartialEq for ToolRegistry {
+    fn eq(&self, other: &Self) -> bool {
+        self.tools.len() == other.tools.len()
+    }
 }
 
 impl ToolRegistry {

@@ -163,7 +163,7 @@ struct HtmlTagResult {
 }
 
 /// States for the animated progress prompts
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum PromptState {
     Input,     // User is typing
     Loading,   // AI is processing
@@ -1088,19 +1088,44 @@ impl OutputHandler {
     pub fn print_banner(&mut self) -> io::Result<()> {
         println!(
             "{}",
-            style("╔═══════════════════════════════════════╗")
+            style("  █████╗ ██████╗ ██╗   ██╗██╗      █████╗")
                 .cyan()
                 .bold()
         );
         println!(
             "{}",
-            style("║      ARULA - Autonomous AI CLI        ║")
+            style(" ██╔══██╗██╔══██╗██║   ██║██║     ██╔══██╗")
                 .cyan()
                 .bold()
         );
         println!(
             "{}",
-            style("╚═══════════════════════════════════════╝")
+            style(" ███████║██████╔╝██║   ██║██║     ███████║")
+                .cyan()
+                .bold()
+        );
+        println!(
+            "{}",
+            style(" ██╔══██║██╔══██╗██║   ██║██║     ██╔══██║")
+                .cyan()
+                .bold()
+        );
+        println!(
+            "{}",
+            style(" ██║  ██║██║  ██║╚██████╔╝███████╗██║  ██║")
+                .cyan()
+                .bold()
+        );
+        println!(
+            "{}",
+            style(" ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝")
+                .cyan()
+                .bold()
+        );
+        println!();
+        println!(
+            "{}",
+            style("    Autonomous AI Command-Line Interface")
                 .cyan()
                 .bold()
         );
@@ -1633,5 +1658,633 @@ impl OutputHandler {
 impl Default for OutputHandler {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+    use std::time::Duration;
+
+    #[test]
+    fn test_output_handler_new() {
+        let handler = OutputHandler::new();
+        assert!(!handler.is_debug());
+        assert!(!handler.has_spinner());
+        assert!(!handler.is_spinner_active());
+    }
+
+    #[test]
+    fn test_output_handler_with_debug() {
+        let handler = OutputHandler::new().with_debug(true);
+        assert!(handler.is_debug());
+
+        let handler = OutputHandler::new().with_debug(false);
+        assert!(!handler.is_debug());
+    }
+
+    #[test]
+    fn test_debug_print() {
+        // Test with ARULA_DEBUG set
+        std::env::set_var("ARULA_DEBUG", "1");
+        debug_print("Test debug message");
+        std::env::remove_var("ARULA_DEBUG");
+
+        // Should not panic without ARULA_DEBUG
+        debug_print("Test message without debug");
+    }
+
+    #[test]
+    fn test_find_closing_pattern() {
+        let chars: Vec<char> = "hello world".chars().collect();
+
+        // Test with pattern that exists
+        let result = find_closing_pattern(&chars, "world");
+        assert_eq!(result, Some(6));
+
+        // Test with pattern that doesn't exist
+        let result = find_closing_pattern(&chars, "xyz");
+        assert_eq!(result, None);
+
+        // Test with empty pattern
+        let result = find_closing_pattern(&chars, "");
+        assert_eq!(result, None);
+
+        // Test with empty char slice
+        let empty_chars: Vec<char> = vec![];
+        let result = find_closing_pattern(&empty_chars, "test");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_prompt_state_display() {
+        // Test that all PromptState variants can be created
+        let states = [
+            PromptState::Input,
+            PromptState::Loading,
+            PromptState::Completed,
+            PromptState::Error,
+        ];
+
+        // Verify all states can be cloned (since they derive Copy)
+        for &state in &states {
+            let cloned_state = state;
+            assert_eq!(state, cloned_state);
+        }
+    }
+
+    #[test]
+    fn test_format_tool_name() {
+        let handler = OutputHandler::new();
+
+        // Test basic formatting
+        assert_eq!(handler.format_tool_name("bash_tool"), "Bash tool");
+        assert_eq!(handler.format_tool_name("read_file"), "Read file");
+        assert_eq!(handler.format_tool_name("edit_file"), "Edit file");
+
+        // Test with multiple underscores
+        assert_eq!(handler.format_tool_name("complex_tool_name"), "Complex tool name");
+
+        // Test with no underscores
+        assert_eq!(handler.format_tool_name("tool"), "Tool");
+
+        // Test empty string
+        assert_eq!(handler.format_tool_name(""), "");
+
+        // Test with leading/trailing underscores - the function capitalizes first word, then processes rest
+        assert_eq!(handler.format_tool_name("_tool_"), " tool "); // Leading underscore creates space, no capitalization
+    }
+
+    #[test]
+    fn test_smart_truncate() {
+        let handler = OutputHandler::new();
+
+        // Test with short text (no truncation)
+        let short = "short";
+        assert_eq!(handler.smart_truncate(short, 20), "short");
+
+        // Test with long text
+        let long = "This is a very long text that should be truncated";
+        let result = handler.smart_truncate(long, 20);
+        assert!(result.len() <= 23); // Original 20 + "..."
+        assert!(result.ends_with("..."));
+
+        // Test with newline - check it handles newlines properly
+        let text_with_newline = "First line\nSecond line";
+        let result = handler.smart_truncate(text_with_newline, 30);
+        // The function finds the last newline and truncates there if found
+        assert!(result.contains("First line"));
+        assert!(result.len() <= 33); // Allow for variations in implementation
+
+        // Test with sentence - it truncates at the last period before the limit
+        let text_with_period = "This is a sentence. This is another.";
+        let result = handler.smart_truncate(text_with_period, 25);
+        // It might not end with "sentence." if the truncation logic is different
+        assert!(result.len() <= 28); // Allow for "..." addition
+        assert!(result.contains("sentence"));
+
+        // Test with spaces
+        let text_with_spaces = "word1 word2 word3 word4";
+        let result = handler.smart_truncate(text_with_spaces, 15);
+        assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn test_truncate_output() {
+        let handler = OutputHandler::new();
+
+        // Test with few lines (no truncation)
+        let few_lines = "line1\nline2";
+        assert_eq!(handler.truncate_output(few_lines, 5), "line1\nline2");
+
+        // Test with many lines
+        let many_lines = (1..=10).map(|i| format!("line{}", i)).collect::<Vec<_>>().join("\n");
+        let result = handler.truncate_output(&many_lines, 3);
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 4); // 3 lines + truncation line
+        assert!(result.contains("... (7 more lines)"));
+    }
+
+    #[test]
+    fn test_count_visible_chars() {
+        let handler = OutputHandler::new();
+
+        // Test with plain text
+        assert_eq!(handler.count_visible_chars("hello"), 5);
+
+        // Test with ANSI escape codes
+        let with_ansi = "\x1b[31mhello\x1b[0m";
+        assert_eq!(handler.count_visible_chars(with_ansi), 5);
+
+        // Test with multiple escape codes
+        let with_multiple = "\x1b[31m\x1b[1mhello\x1b[0m";
+        assert_eq!(handler.count_visible_chars(with_multiple), 5);
+
+        // Test with empty string
+        assert_eq!(handler.count_visible_chars(""), 0);
+
+        // Test with incomplete escape sequence
+        let incomplete = "\x1b[31hello";
+        let actual_count = handler.count_visible_chars(incomplete);
+        // The function considers this as all being part of an incomplete escape sequence
+        assert_eq!(actual_count, 0); // No visible characters due to escape sequence
+    }
+
+    #[test]
+    fn test_process_inline_markdown() {
+        let handler = OutputHandler::new();
+
+        // Test bold formatting
+        let result = handler.process_inline_markdown("This is **bold** text");
+        assert!(result.contains("bold"));
+
+        // Test italic formatting
+        let result = handler.process_inline_markdown("This is *italic* text");
+        assert!(result.contains("italic"));
+
+        // Test inline code
+        let result = handler.process_inline_markdown("This is `code` text");
+        assert!(result.contains("code"));
+
+        // Test strikethrough
+        let result = handler.process_inline_markdown("This is ~~strikethrough~~ text");
+        assert!(result.contains("strikethrough"));
+
+        // Test escape sequences
+        let result = handler.process_inline_markdown(r"This is \*not bold\*");
+        assert!(result.contains("*"));
+
+        // Test links
+        let result = handler.process_inline_markdown("[link](url)");
+        assert!(result.contains("link"));
+        assert!(result.contains("url"));
+
+        // Test footnote references
+        let result = handler.process_inline_markdown("[^1]");
+        assert!(result.contains("[^1]"));
+    }
+
+    #[test]
+    fn test_parse_html_tag() {
+        let handler = OutputHandler::new();
+
+        // Test valid HTML tags
+        let chars: Vec<char> = "<strong>bold text</strong>".chars().collect();
+        let result = handler.parse_html_tag(&chars);
+        assert!(result.is_some());
+
+        // Test with unsupported tag
+        let chars: Vec<char> = "<unknown>text</unknown>".chars().collect();
+        let result = handler.parse_html_tag(&chars);
+        assert!(result.is_some());
+        let tag_result = result.unwrap();
+        assert_eq!(tag_result.rendered, "text");
+
+        // Test incomplete tag
+        let chars: Vec<char> = "<strong>incomplete".chars().collect();
+        let result = handler.parse_html_tag(&chars);
+        assert!(result.is_none());
+
+        // Test non-tag content
+        let chars: Vec<char> = "just plain text".chars().collect();
+        let result = handler.parse_html_tag(&chars);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_html_tag_styling() {
+        let handler = OutputHandler::new();
+
+        // Test that different HTML tags are handled
+        let test_cases = [
+            ("<mark>highlighted</mark>", "highlighted"),
+            ("<em>italic</em>", "italic"),
+            ("<strong>bold</strong>", "bold"),
+            ("<code>code</code>", "code"),
+            ("<u>underline</u>", "underline"),
+            ("<s>strikethrough</s>", "strikethrough"),
+        ];
+
+        for (html_input, expected_content) in test_cases {
+            let chars: Vec<char> = html_input.chars().collect();
+            let result = handler.parse_html_tag(&chars);
+            assert!(result.is_some(), "Failed to parse: {}", html_input);
+            let tag_result = result.unwrap();
+            assert!(tag_result.rendered.contains(expected_content));
+        }
+    }
+
+    #[test]
+    fn test_spinner_operations() -> io::Result<()> {
+        let mut handler = OutputHandler::new();
+
+        // Test initial state
+        assert!(!handler.has_spinner());
+        assert!(!handler.is_spinner_active());
+
+        // Test starting spinner
+        handler.start_spinner("Test message")?;
+        assert!(handler.has_spinner());
+        assert!(handler.is_spinner_active());
+
+        // Test updating spinner message
+        handler.update_spinner_message("New message")?;
+
+        // Test stopping spinner
+        handler.stop_spinner();
+        assert!(!handler.has_spinner());
+        assert!(!handler.is_spinner_active());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_spinner_starts() -> io::Result<()> {
+        let mut handler = OutputHandler::new();
+
+        // Start first spinner
+        handler.start_spinner("First")?;
+        assert!(handler.has_spinner());
+
+        // Starting second spinner should not create another
+        handler.start_spinner("Second")?;
+        assert!(handler.has_spinner());
+
+        // Should still be able to stop it
+        handler.stop_spinner();
+        assert!(!handler.has_spinner());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prompt_states() -> io::Result<()> {
+        let mut handler = OutputHandler::new();
+
+        let prefix = "Test";
+        let text = "Sample text";
+
+        // Test all prompt states
+        for state in [
+            PromptState::Input,
+            PromptState::Loading,
+            PromptState::Completed,
+            PromptState::Error,
+        ] {
+            handler.print_progress_prompt(prefix, text, state)?;
+            handler.update_progress_bar(prefix, text, state)?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_print_methods() -> io::Result<()> {
+        let mut handler = OutputHandler::new();
+
+        // Test all basic print methods
+        handler.print_user_message("Hello user")?;
+        handler.print_ai_message("Hello from AI")?;
+        handler.print_error("Error message")?;
+        handler.print_system("System message")?;
+
+        // Test tool call methods
+        handler.print_tool_call("test_tool", "arg1=value1")?;
+        handler.print_tool_result("Tool executed successfully")?;
+
+        // Test tool execution flow
+        handler.start_tool_execution("test_tool", "test input")?;
+        handler.complete_tool_execution("Success", true)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_debug_vs_non_debug_output() -> io::Result<()> {
+        let mut debug_handler = OutputHandler::new().with_debug(true);
+        let mut normal_handler = OutputHandler::new().with_debug(false);
+
+        // Test tool call output differences
+        debug_handler.print_tool_call("test_tool", "args")?;
+        normal_handler.print_tool_call("test_tool", "args")?;
+
+        // Test tool result output differences
+        debug_handler.print_tool_result("result")?;
+        normal_handler.print_tool_result("result")?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_streaming_functionality() -> io::Result<()> {
+        let mut handler = OutputHandler::new();
+
+        // Test streaming workflow
+        handler.start_ai_message()?;
+        handler.print_streaming_chunk("Hello ")?;
+        handler.print_streaming_chunk("world")?;
+        handler.end_line()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_markdown_rendering() -> io::Result<()> {
+        let handler = OutputHandler::new();
+
+        // Test markdown rendering
+        handler.render_markdown("# Header\n\nThis is **bold** text.")?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_code_block_rendering() -> io::Result<()> {
+        let mut handler = OutputHandler::new();
+
+        // Test code block with language
+        handler.print_code_block("fn main() {}", Some("rust"))?;
+
+        // Test code block without language
+        handler.print_code_block("print('Hello')", None)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_conversation_features() -> io::Result<()> {
+        let mut handler = OutputHandler::new();
+
+        // Create sample messages
+        let messages = vec![
+            crate::chat::ChatMessage::new_user_message("Hello"),
+            crate::chat::ChatMessage::new_arula_message("Hi there!"),
+        ];
+
+        // Test message history
+        handler.print_message_history(&messages, 0)?;
+
+        // Test conversation summary
+        handler.print_conversation_summary(&messages)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_context_usage_display() -> io::Result<()> {
+        let mut handler = OutputHandler::new();
+
+        // Create mock usage data
+        let usage = crate::api::Usage {
+            prompt_tokens: 1000,
+            completion_tokens: 500,
+            total_tokens: 1500,
+        };
+
+        // Test context usage display
+        handler.print_context_usage(Some(&usage))?;
+        handler.display_token_usage(Some(&usage))?;
+
+        // Test with None usage
+        handler.print_context_usage(None)?;
+        handler.display_token_usage(None)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_banner_display() -> io::Result<()> {
+        let mut handler = OutputHandler::new();
+
+        // Test banner display
+        handler.print_banner()?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_animated_progress() {
+        // Test the animated_progress function from animations module
+        let result = animations::animated_progress(5, 10, 20);
+        assert!(!result.is_empty());
+        assert!(result.len() <= 20 * 10); // Rough bound check
+    }
+
+    #[test]
+    fn test_animation_constants() {
+        // Test that all animation constants are accessible
+        assert!(!animations::SPINNER_FRAMES.is_empty());
+        assert!(!animations::LOADING_FRAMES.is_empty());
+        assert!(!animations::PULSE_FRAMES.is_empty());
+
+        // Verify spinner frames contain expected characters
+        assert!(animations::SPINNER_FRAMES.contains(&"⠋"));
+        assert!(animations::SPINNER_FRAMES.contains(&"○"));
+        assert!(animations::SPINNER_FRAMES.contains(&"●"));
+    }
+
+    #[test]
+    fn test_edge_cases() -> io::Result<()> {
+        let mut handler = OutputHandler::new();
+
+        // Test with empty strings
+        handler.print_user_message("")?;
+        handler.print_ai_message("")?;
+        handler.print_tool_call("", "")?;
+        handler.print_tool_result("")?;
+
+        // Test with very long strings
+        let long_string = "x".repeat(1000);
+        handler.print_user_message(&long_string)?;
+        handler.print_tool_result(&long_string)?;
+
+        // Test with special characters
+        let special_chars = "!@#$%^&*()[]{}|\\;:'\",<>?`\n\t";
+        handler.print_user_message(special_chars)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_unicode_handling() -> io::Result<()> {
+        let mut handler = OutputHandler::new();
+
+        // Test with Unicode characters
+        let unicode_text = "Hello 世界 🚀 藍色";
+        handler.print_user_message(unicode_text)?;
+
+        // Test with emojis
+        let emoji_text = "😀 😃 😄 😁 😆 😅";
+        handler.print_ai_message(emoji_text)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_concurrent_operations() -> io::Result<()> {
+        let mut handler = OutputHandler::new();
+
+        // Test starting/stopping spinner rapidly
+        for i in 0..5 {
+            handler.start_spinner(&format!("Iteration {}", i))?;
+            handler.update_spinner_message(&format!("Updated {}", i))?;
+            handler.stop_spinner();
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_error_handling() {
+        let handler = OutputHandler::new();
+
+        // Test that various markdown operations handle edge cases gracefully
+        let _ = handler.process_inline_markdown(""); // Empty string
+        let _ = handler.process_inline_markdown("*"); // Incomplete formatting
+        let _ = handler.process_inline_markdown("**bold"); // Unclosed bold
+        let _ = handler.process_inline_markdown("text with `unclosed code"); // Unclosed code
+
+        // Test HTML parsing with invalid input
+        let chars: Vec<char> = "<".chars().collect();
+        let result = handler.parse_html_tag(&chars);
+        assert!(result.is_none());
+
+        let chars: Vec<char> = "<unclosed".chars().collect();
+        let result = handler.parse_html_tag(&chars);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_complex_markdown_scenarios() {
+        let handler = OutputHandler::new();
+
+        // Test nested formatting
+        let nested = "This is **bold and *italic* within**";
+        let result = handler.process_inline_markdown(nested);
+        assert!(!result.is_empty());
+
+        // Test multiple links
+        let multiple_links = "[first](url1) and [second](url2)";
+        let result = handler.process_inline_markdown(multiple_links);
+        assert!(!result.is_empty());
+
+        // Test mixed formatting
+        let mixed = "`code` and **bold** and *italic*";
+        let result = handler.process_inline_markdown(mixed);
+        assert!(!result.is_empty());
+
+        // Test escape sequences with various characters
+        let escapes = r"\* \_ \` \~ \[ \] \( \) \# \\";
+        let result = handler.process_inline_markdown(escapes);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_large_input_handling() {
+        let handler = OutputHandler::new();
+
+        // Test with very large markdown input
+        let large_text = "word ".repeat(1000);
+        let _ = handler.process_inline_markdown(&large_text);
+
+        // Test smart truncation with large input
+        let very_large = "a".repeat(10000);
+        let result = handler.smart_truncate(&very_large, 100);
+        assert!(result.len() <= 103); // Account for "..."
+
+        // Test truncate output with many lines
+        let many_lines = "line\n".repeat(1000);
+        let result = handler.truncate_output(&many_lines, 50);
+        assert!(result.lines().count() <= 51); // 50 + truncation line
+    }
+
+    #[tokio::test]
+    async fn test_async_operations() -> io::Result<()> {
+        let mut handler = OutputHandler::new();
+
+        // Test spinner with async delay
+        handler.start_spinner("Async test")?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        handler.update_spinner_message("Updated")?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        handler.stop_spinner();
+
+        Ok(())
+    }
+
+    // Integration test style test that verifies the complete workflow
+    #[test]
+    fn test_complete_output_workflow() -> io::Result<()> {
+        let mut handler = OutputHandler::new().with_debug(false);
+
+        // Simulate a complete user interaction workflow
+        handler.print_banner()?;
+
+        // User message
+        handler.print_user_message("Help me with a Rust project")?;
+
+        // AI starts responding
+        handler.start_ai_message()?;
+        handler.print_streaming_chunk("I'll help you ")?;
+        handler.print_streaming_chunk("with your Rust project. ")?;
+
+        // AI calls a tool
+        handler.start_tool_execution("read_file", "Cargo.toml")?;
+        handler.complete_tool_execution("Successfully read file", true)?;
+
+        // AI continues responding
+        handler.print_streaming_chunk("Let me examine your project structure.")?;
+        handler.end_line()?;
+
+        // Show context usage
+        let usage = crate::api::Usage {
+            prompt_tokens: 50,
+            completion_tokens: 30,
+            total_tokens: 80,
+        };
+        handler.print_context_usage(Some(&usage))?;
+
+        Ok(())
     }
 }

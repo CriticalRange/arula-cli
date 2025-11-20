@@ -1,0 +1,199 @@
+//! Performance benchmarks for chat module operations
+
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use arula_cli::chat::{ChatMessage, MessageType, EnhancedChatMessage, ChatRole};
+use arula_cli::test_utils::ChatFactory;
+use chrono::{Local, Utc};
+
+fn bench_message_creation(c: &mut Criterion) {
+    c.bench_function("message_create_user", |b| {
+        b.iter(|| {
+            let message = ChatMessage::new_user_message(black_box("Hello, this is a test message"));
+            black_box(message);
+        });
+    });
+
+    c.bench_function("message_create_ai", |b| {
+        b.iter(|| {
+            let message = ChatMessage::new_arula_message(black_box("This is an AI response"));
+            black_box(message);
+        });
+    });
+
+    c.bench_function("message_create_tool_call", |b| {
+        b.iter(|| {
+            let message = ChatMessage::new_tool_call(
+                black_box("Execute command"),
+                black_box(r#"{"name": "bash_tool", "arguments": "echo hello"}"#),
+            );
+            black_box(message);
+        });
+    });
+
+    c.bench_function("enhanced_message_create_user", |b| {
+        b.iter(|| {
+            let message = EnhancedChatMessage {
+                role: black_box(ChatRole::User),
+                content: black_box("This is a test user message".to_string()),
+                timestamp: black_box(Utc::now()),
+                tool_calls: None,
+                tool_results: None,
+            };
+            black_box(message);
+        });
+    });
+}
+
+fn bench_message_serialization(c: &mut Criterion) {
+    let messages = vec![
+        ChatFactory::create_user_message("This is a user message with some content"),
+        ChatFactory::create_ai_message("This is an AI response with content"),
+        ChatFactory::create_tool_call("test_tool", "test_arguments"),
+    ];
+
+    c.bench_function("message_serialize_json", |b| {
+        b.iter(|| {
+            for message in &black_box(&messages) {
+                let json = serde_json::to_string(&message).unwrap();
+                black_box(json);
+            }
+        });
+    });
+
+    c.bench_function("message_serialize_yaml", |b| {
+        b.iter(|| {
+            for message in &black_box(&messages) {
+                let yaml = serde_yaml::to_string(&message).unwrap();
+                black_box(yaml);
+            }
+        });
+    });
+}
+
+fn bench_message_deserialization(c: &mut Criterion) {
+    let messages = vec![
+        ChatFactory::create_user_message("This is a user message"),
+        ChatFactory::create_ai_message("This is an AI response"),
+    ];
+
+    let json_strings: Vec<String> = messages.iter()
+        .map(|msg| serde_json::to_string(msg).unwrap())
+        .collect();
+
+    let yaml_strings: Vec<String> = messages.iter()
+        .map(|msg| serde_yaml::to_string(msg).unwrap())
+        .collect();
+
+    c.bench_function("message_deserialize_json", |b| {
+        b.iter(|| {
+            for json_str in &black_box(&json_strings) {
+                let parsed: ChatMessage = serde_json::from_str(json_str).unwrap();
+                black_box(parsed);
+            }
+        });
+    });
+
+    c.bench_function("message_deserialize_yaml", |b| {
+        b.iter(|| {
+            for yaml_str in &black_box(&yaml_strings) {
+                let parsed: ChatMessage = serde_yaml::from_str(yaml_str).unwrap();
+                black_box(parsed);
+            }
+        });
+    });
+}
+
+fn bench_large_message_serialization(c: &mut Criterion) {
+    let large_content = "x".repeat(10000);
+    let large_message = ChatMessage::new_user_message(&large_content);
+    let json_str = serde_json::to_string(&large_message).unwrap();
+    let yaml_str = serde_yaml::to_string(&large_message).unwrap();
+
+    c.bench_function("large_message_serialize_json", |b| {
+        b.iter(|| {
+            let json = serde_json::to_string(&black_box(&large_message)).unwrap();
+            black_box(json);
+        });
+    });
+
+    c.bench_function("large_message_deserialize_json", |b| {
+        b.iter(|| {
+            let parsed: ChatMessage = serde_json::from_str(&black_box(&json_str)).unwrap();
+            black_box(parsed);
+        });
+    });
+
+    c.bench_function("large_message_serialize_yaml", |b| {
+        b.iter(|| {
+            let yaml = serde_yaml::to_string(&black_box(&large_message)).unwrap();
+            black_box(yaml);
+        });
+    });
+
+    c.bench_function("large_message_deserialize_yaml", |b| {
+        b.iter(|| {
+            let parsed: ChatMessage = serde_yaml::from_str(&black_box(&yaml_str)).unwrap();
+            black_box(parsed);
+        });
+    });
+}
+
+fn bench_conversation_processing(c: &mut Criterion) {
+    // Create a realistic conversation with multiple messages
+    let mut conversation = Vec::new();
+
+    // System message
+    conversation.push(ChatMessage::new_system_message(
+        "You are a helpful AI assistant for coding tasks."
+    ));
+
+    // User message
+    conversation.push(ChatMessage::new_user_message(
+        "Can you help me debug this Rust code?"
+    ));
+
+    // AI response with tool call
+    conversation.push(ChatMessage::new_arula_message(
+        "I'll help you debug. Let me first check your current directory."
+    ));
+
+    // Tool call
+    conversation.push(ChatMessage::new_tool_call(
+        "List directory".to_string(),
+        r#"{"name": "list_directory", "arguments": "{\"path\": \".\"}"}"#.to_string(),
+    ));
+
+    // Tool result
+    conversation.push(ChatMessage::new_tool_result(
+        "Directory listing completed successfully"
+    ));
+
+    c.bench_function("conversation_serialize_all", |b| {
+        b.iter(|| {
+            for message in &black_box(&conversation) {
+                let json = serde_json::to_string(message).unwrap();
+                black_box(json);
+            }
+        });
+    });
+
+    c.bench_function("conversation_timestamp_processing", |b| {
+        b.iter(|| {
+            let now = Local::now();
+            for message in &black_box(&conversation) {
+                let _is_recent = now.signed_duration_since(message.timestamp).num_minutes() < 5;
+                black_box(_is_recent);
+            }
+        });
+    });
+}
+
+criterion_group!(
+    benches,
+    bench_message_creation,
+    bench_message_serialization,
+    bench_message_deserialization,
+    bench_large_message_serialization,
+    bench_conversation_processing
+);
+criterion_main!(benches);

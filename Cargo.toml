@@ -13,7 +13,6 @@ serde = { version = "1.0", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 color-eyre = "0.6"
-thiserror = "1.0"
 clap = { version = "4.5.51", features = ["derive"] }
 reqwest = { version = "0.12.24", features = ["json", "rustls-tls", "stream"], default-features = false }
 tokio = { version = "1.48.0", features = ["full"] }
@@ -23,10 +22,8 @@ tokio-util = "0.7"
 # Modern tool calling - implementing patterns from open-agent-sdk manually
 async-trait = "0.1"
 tokio-stream = "0.1"
-bytes = "1.0"
 dirs = "5.0"
 duct = "0.13"
-uuid = { version = "1.0", features = ["v4"] }
 memmap2 = "0.9"
 ignore = "0.4"
 globset = "0.4"
@@ -47,7 +44,26 @@ screenshots = "0.7"
 
 # Cross-platform dependencies
 image = "0.25"
-base64 = "0.22"
-rusty-tesseract = "1.1"
 # OpenCV optional - comment out for easier build
 # opencv = { version = "0.88", features = ["imgproc", "imgcodecs", "objdetect", "highgui"] }
+
+[dev-dependencies]
+mockall = "0.12"
+tempfile = "3.8"
+wiremock = "0.6"
+assert_matches = "1.5"
+pretty_assertions = "1.4"
+serial_test = "3.0"
+criterion = "0.5"
+
+[[bench]]
+name = "config_benchmarks"
+harness = false
+
+[[bench]]
+name = "chat_benchmarks"
+harness = false
+
+[[bench]]
+name = "tools_benchmarks"
+harness = false

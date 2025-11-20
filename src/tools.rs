@@ -2326,10 +2326,19 @@ async fn get_dominant_color(&self, img: &Mat, rect: &Rect) -> Result<String, Str
 
     /// Find UI element coordinates using Windows UI Automation
     // Simplified element finding using OCR instead of UI Automation
+    #[cfg(target_os = "windows")]
     async fn find_ui_element(&self, selector: &str, _index: Option<u32>) -> Result<(u32, u32), String> {
         // For now, use OCR-based text finding as a fallback
         // This can be enhanced with proper UI automation later
         self.find_text_coordinates(selector, None).await
+    }
+
+    /// Find UI element coordinates using Windows UI Automation
+    // Simplified element finding using OCR instead of UI Automation
+    #[cfg(not(target_os = "windows"))]
+    async fn find_ui_element(&self, selector: &str, _index: Option<u32>) -> Result<(u32, u32), String> {
+        // Non-Windows fallback implementation
+        Err("UI element finding not supported on this platform".to_string())
     }
 
     /// Real wait condition implementation
@@ -2495,6 +2504,7 @@ impl Tool for VisioneerTool {
             VisioneerAction::Hotkey { keys, hold_ms } => {
                 self.execute_hotkey(&keys, hold_ms.unwrap_or(100)).await
             }
+            #[cfg(target_os = "windows")]
             VisioneerAction::WaitFor { condition, timeout_ms, check_interval_ms } => {
                 let timeout = timeout_ms.unwrap_or_else(|| {
                     match &condition {
@@ -2503,6 +2513,10 @@ impl Tool for VisioneerTool {
                     }
                 });
                 self.execute_wait_condition(condition.clone(), timeout, check_interval_ms.unwrap_or(500)).await
+            }
+            #[cfg(not(target_os = "windows"))]
+            VisioneerAction::WaitFor { condition: _, timeout_ms: _, check_interval_ms: _ } => {
+                Err("WaitFor action not supported on this platform".to_string())
             }
             VisioneerAction::Navigate { direction, distance, steps } => {
                 self.execute_navigate(&target, direction.clone(), distance.unwrap_or(100), steps.unwrap_or(1)).await
