@@ -9,6 +9,7 @@ pub mod app;
 // Temporarily disabled due to compilation issues
 // pub mod app_testable;
 pub mod chat;
+pub mod colors;
 pub mod config;
 pub mod custom_spinner;
 pub mod input_handler;
@@ -27,5 +28,6 @@ pub mod visioneer;
 
 // Re-export commonly used types
 pub use app::App;
+pub use colors::{ColorTheme, helpers};
 pub use output::OutputHandler;
 pub use modern_input::ModernInputHandler;

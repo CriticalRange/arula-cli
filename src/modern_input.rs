@@ -1,4 +1,5 @@
 /// Modern input handler using rustyline for robust terminal input
+use crate::colors::{ColorTheme, helpers};
 use anyhow::Result;
 use rustyline::error::ReadlineError;
 use rustyline::{

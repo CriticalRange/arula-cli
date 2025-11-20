@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::colors::{ColorTheme, helpers};
 use crate::output::OutputHandler;
 use anyhow::Result;
 use std::io::{stdout, Write};
@@ -504,14 +505,17 @@ impl OverlayMenu {
         for (i, provider) in providers.iter().enumerate() {
             let y = start_y + 2 + i as u16;
             let prefix = if i == selected_idx { "▶ " } else { "  " };
-            let text = if i == selected_idx {
-                format!("{}{}", prefix, provider).yellow_bold()
+            let text = format!("{}{}", prefix, provider);
+            let color = if i == selected_idx {
+                SetForegroundColor(crossterm::style::Color::AnsiValue(crate::colors::PRIMARY_ANSI))
             } else {
-                format!("{}{}", prefix, provider)
+                SetForegroundColor(crossterm::style::Color::AnsiValue(crate::colors::MISC_ANSI))
             };
 
             stdout().queue(MoveTo(start_x + 2, y))?
-                  .queue(Print(text))?;
+                  .queue(color)?
+                  .queue(Print(text))?
+                  .queue(ResetColor)?;
         }
 
         stdout().flush()?;
@@ -601,9 +605,9 @@ impl OverlayMenu {
         // Draw input field
         let input_y = start_y + 2;
         let input_text = if input.is_empty() {
-            "← Type here...".dim()
+            ColorTheme::dim().apply_to("← Type here...")
         } else {
-            input.to_string()
+            helpers::tool_result().apply_to(input)
         };
 
         stdout().queue(MoveTo(start_x + 2, input_y))?
@@ -612,7 +616,7 @@ impl OverlayMenu {
         // Draw cursor
         let display_cursor_pos = if input.is_empty() { 0 } else { cursor_pos };
         stdout().queue(MoveTo(start_x + 2 + display_cursor_pos as u16, input_y))?
-              .queue(Print("█".yellow()))?;
+              .queue(Print(ColorTheme::primary().apply_to("█")))?;
 
         stdout().flush()?;
         Ok(())
@@ -831,15 +835,11 @@ impl OverlayMenu {
         let title_y = start_y + 1;
         let title = "?";
         stdout().queue(MoveTo(start_x + menu_width / 2 - 1, title_y))?
-              .queue(SetForegroundColor(Color::Yellow))?
-              .queue(Print(title.bold()))?
-              .queue(ResetColor)?;
+              .queue(Print(ColorTheme::primary().bold().apply_to(title)))?;
 
         // Message
         stdout().queue(MoveTo(start_x + 2, start_y + 3))?
-              .queue(SetForegroundColor(Color::White))?
-              .queue(Print(message))?
-              .queue(ResetColor)?;
+              .queue(Print(helpers::tool_result().apply_to(message)))?;
 
         // Modern styled options
         let no_text = "NO";
@@ -853,16 +853,16 @@ impl OverlayMenu {
         if !selected {
             // Unselected
             stdout().queue(MoveTo(no_x, options_y))?
-                  .queue(SetBackgroundColor(Color::DarkGrey))?
-                  .queue(SetForegroundColor(Color::White))?
+                  .queue(SetBackgroundColor(crossterm::style::Color::DarkGrey))?
+                  .queue(SetForegroundColor(crossterm::style::Color::White))?
                   .queue(Print(format!(" {} ", no_text)))?
                   .queue(ResetColor)?;
         } else {
             // Selected
             stdout().queue(MoveTo(no_x, options_y))?
-                  .queue(SetBackgroundColor(Color::Red))?
-                  .queue(SetForegroundColor(Color::White))?
-                  .queue(Print(format!(" {} ", no_text.bold())))?
+                  .queue(SetBackgroundColor(crossterm::style::Color::Red))?
+                  .queue(SetForegroundColor(crossterm::style::Color::White))?
+                  .queue(Print(format!(" {} ", no_text)))?
                   .queue(ResetColor)?;
         }
 
@@ -870,15 +870,15 @@ impl OverlayMenu {
         if selected {
             // Selected
             stdout().queue(MoveTo(yes_x, options_y))?
-                  .queue(SetBackgroundColor(Color::Green))?
-                  .queue(SetForegroundColor(Color::White))?
-                  .queue(Print(format!(" {} ", yes_text.bold())))?
+                  .queue(SetBackgroundColor(crossterm::style::Color::Green))?
+                  .queue(SetForegroundColor(crossterm::style::Color::White))?
+                  .queue(Print(format!(" {} ", yes_text)))?
                   .queue(ResetColor)?;
         } else {
             // Unselected
             stdout().queue(MoveTo(yes_x, options_y))?
-                  .queue(SetBackgroundColor(Color::DarkGrey))?
-                  .queue(SetForegroundColor(Color::White))?
+                  .queue(SetBackgroundColor(crossterm::style::Color::DarkGrey))?
+                  .queue(SetForegroundColor(crossterm::style::Color::White))?
                   .queue(Print(format!(" {} ", yes_text)))?
                   .queue(ResetColor)?;
         }
@@ -923,7 +923,7 @@ impl OverlayMenu {
             start_x + 1
         };
         stdout().queue(MoveTo(title_x, title_y))?
-              .queue(SetForegroundColor(Color::Cyan))?
+              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::colors::AI_HIGHLIGHT_ANSI)))?
               .queue(Print(title))?
               .queue(ResetColor)?;
 
@@ -938,9 +938,7 @@ impl OverlayMenu {
             } else {
                 // Unselected item with subtle styling
                 stdout().queue(MoveTo(start_x + 4, y))?
-                      .queue(SetForegroundColor(Color::DarkGrey))?
-                      .queue(Print(option))?
-                      .queue(ResetColor)?;
+                      .queue(Print(helpers::menu_unselected().apply_to(option)))?;
             }
         }
 
@@ -954,9 +952,7 @@ impl OverlayMenu {
             start_x + 1
         };
         stdout().queue(MoveTo(help_x, help_y))?
-              .queue(SetForegroundColor(Color::DarkGrey))?
-              .queue(Print(help_text))?
-              .queue(ResetColor)?;
+              .queue(Print(ColorTheme::dim().apply_to(help_text)))?;
 
         Ok(())
     }
@@ -998,7 +994,7 @@ impl OverlayMenu {
             start_x + 1
         };
         stdout().queue(MoveTo(title_x, title_y))?
-              .queue(SetForegroundColor(Color::Cyan))?
+              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::colors::AI_HIGHLIGHT_ANSI)))?
               .queue(Print(title))?
               .queue(ResetColor)?;
 
@@ -1013,9 +1009,7 @@ impl OverlayMenu {
             } else {
                 // Unselected item with subtle styling
                 stdout().queue(MoveTo(start_x + 4, y))?
-                      .queue(SetForegroundColor(Color::DarkGrey))?
-                      .queue(Print(option))?
-                      .queue(ResetColor)?;
+                      .queue(Print(helpers::menu_unselected().apply_to(option)))?;
             }
         }
 
@@ -1029,9 +1023,7 @@ impl OverlayMenu {
             start_x + 1
         };
         stdout().queue(MoveTo(help_x, help_y))?
-              .queue(SetForegroundColor(Color::DarkGrey))?
-              .queue(Print(help_text))?
-              .queue(ResetColor)?;
+              .queue(Print(ColorTheme::dim().apply_to(help_text)))?;
 
         Ok(())
     }
@@ -1121,10 +1113,7 @@ impl OverlayMenu {
         };
 
         stdout().queue(MoveTo(x + 2, y))?
-              .queue(SetBackgroundColor(Color::DarkBlue))?
-              .queue(SetForegroundColor(Color::White))?
-              .queue(Print(safe_text))?
-              .queue(ResetColor)?;
+              .queue(Print(helpers::menu_selected().apply_to(safe_text)))?;
 
         Ok(())
     }

@@ -1,5 +1,7 @@
 use crate::api::Usage;
+use crate::colors::{ColorTheme, helpers};
 use console::style;
+use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
@@ -226,24 +228,24 @@ impl OutputHandler {
     }
 
     pub fn print_user_message(&mut self, content: &str) -> io::Result<()> {
-        println!("{}", content);
+        println!("{}", helpers::user_message().apply_to(content));
         Ok(())
     }
 
     pub fn print_ai_message(&mut self, content: &str) -> io::Result<()> {
         println!();
-        println!("{} {}", style("▶ ARULA:").green().bold(), content);
+        println!("{} {}", helpers::ai_response().apply_to("▶ ARULA:"), content);
         println!();
         Ok(())
     }
 
     pub fn print_error(&mut self, content: &str) -> io::Result<()> {
-        println!("{} {}", style("Error:").red().bold(), content);
+        println!("{} {}", ColorTheme::error().apply_to("Error:"), content);
         Ok(())
     }
 
     pub fn print_system(&mut self, content: &str) -> io::Result<()> {
-        println!("{}", style(content).yellow().dim());
+        println!("{}", helpers::system_notification().apply_to(content));
         Ok(())
     }
 
@@ -251,11 +253,11 @@ impl OutputHandler {
         if self.debug {
             println!(
                 "{} {}",
-                style("🔧 Tool Call:").magenta().bold(),
-                style(name).magenta()
+                helpers::tool_call().apply_to("🔧 Tool Call:"),
+                ColorTheme::ai_highlight().apply_to(name)
             );
             if !args.is_empty() {
-                println!("   {}", style(format!("Args: {}", args)).dim());
+                println!("   {}", ColorTheme::dim().apply_to(format!("Args: {}", args)));
             }
         } else {
             // Show enhanced tool call box for non-debug mode
@@ -270,7 +272,7 @@ impl OutputHandler {
             let truncated_result = self.truncate_output(result, max_lines);
             println!(
                 "   {}",
-                style(format!("Result: {}", truncated_result)).blue()
+                helpers::tool_result().apply_to(format!("Result: {}", truncated_result))
             );
         } else {
             // Show enhanced result box for non-debug mode
@@ -292,20 +294,17 @@ impl OutputHandler {
             self.stop_spinner();
         }
 
-        // Special styling for edit_file tool with purple background
+        // Special styling for edit_file tool with background
         let tool_display = if tool_name == "edit_file" {
-            style(format!("📝 {}", formatted_name))
-                .on_magenta()
-                .white()
-                .bold()
+            ColorTheme::primary_on_background().apply_to(format!("📝 {}", formatted_name))
         } else {
-            style(format!("🛠️  {}", formatted_name)).cyan().bold()
+            helpers::tool_call().apply_to(format!("🛠️  {}", formatted_name))
         };
 
         // Compact single-line display with tool name and truncated input
         if !input.is_empty() {
             let truncated_args = self.smart_truncate(input, 60);
-            println!("{} · {}", tool_display, style(truncated_args).dim());
+            println!("{} · {}", tool_display, ColorTheme::dim().apply_to(truncated_args));
         } else {
             println!("{}", tool_display);
         }
@@ -331,20 +330,17 @@ impl OutputHandler {
         // Format tool name nicely
         let formatted_name = self.format_tool_name(name);
 
-        // Special styling for edit_file tool with purple background
+        // Special styling for edit_file tool with background
         let tool_display = if name == "edit_file" {
-            style(format!("📝 {}", formatted_name))
-                .on_magenta()
-                .white()
-                .bold()
+            ColorTheme::primary_on_background().apply_to(format!("📝 {}", formatted_name))
         } else {
-            style(format!("🛠️  {}", formatted_name)).cyan().bold()
+            helpers::tool_call().apply_to(format!("🛠️  {}", formatted_name))
         };
 
         // Compact single-line display
         if !args.is_empty() {
             let truncated_args = self.smart_truncate(args, 60);
-            println!("{} · {}", tool_display, style(truncated_args).dim());
+            println!("{} · {}", tool_display, ColorTheme::dim().apply_to(truncated_args));
         } else {
             println!("{}", tool_display);
         }
@@ -386,9 +382,9 @@ impl OutputHandler {
 
             println!(
                 "│ {} {} lines, {} chars",
-                style("Output:").yellow().bold(),
-                style(line_count).cyan(),
-                style(char_count).cyan()
+                ColorTheme::primary().apply_to("Output:"),
+                helpers::misc().apply_to(line_count),
+                helpers::misc().apply_to(char_count)
             );
 
             // Show first few lines of result
@@ -401,7 +397,7 @@ impl OutputHandler {
                 } else {
                     "├─"
                 };
-                println!("│ {} {}", style(line_prefix).dim(), style(line).white());
+                println!("│ {} {}", ColorTheme::dim().apply_to(line_prefix), helpers::tool_result().apply_to(line));
             }
 
             // Show truncation indicator if content was cut
@@ -410,25 +406,23 @@ impl OutputHandler {
                 let remaining_chars = result.len().saturating_sub(300);
                 println!(
                     "│ └─ {} {} {} more lines, {} more chars",
-                    style("...").dim(),
-                    style("(hidden)").dim(),
-                    style(remaining_lines).dim(),
-                    style(remaining_chars).dim()
+                    ColorTheme::dim().apply_to("..."),
+                    ColorTheme::dim().apply_to("(hidden)"),
+                    ColorTheme::dim().apply_to(remaining_lines),
+                    ColorTheme::dim().apply_to(remaining_chars)
                 );
             }
         } else {
             println!(
                 "│ {} {}",
-                style("Output:").yellow().bold(),
-                style("(empty)").dim()
+                ColorTheme::primary().apply_to("Output:"),
+                ColorTheme::dim().apply_to("(empty)")
             );
         }
 
         println!(
             "{}",
-            style("└─────────────────────────────────────")
-                .cyan()
-                .bold()
+            ColorTheme::border().apply_to("└─────────────────────────────────────")
         );
         println!();
         Ok(())
@@ -940,7 +934,7 @@ impl OutputHandler {
                 if let Some(close_pos) = chars[(i + 1)..].iter().position(|&c| c == '`') {
                     let close_idx = i + 1 + close_pos;
                     let code: String = chars[(i + 1)..close_idx].iter().collect();
-                    result.push_str(&format!("{}", style(code).green().on_black()));
+                    result.push_str(&format!("{}", helpers::inline_code().apply_to(code)));
                     i = close_idx + 1;
                     continue;
                 }
@@ -1088,46 +1082,32 @@ impl OutputHandler {
     pub fn print_banner(&mut self) -> io::Result<()> {
         println!(
             "{}",
-            style("  █████╗ ██████╗ ██╗   ██╗██╗      █████╗")
-                .cyan()
-                .bold()
+            ColorTheme::primary().apply_to("  █████╗ ██████╗ ██╗   ██╗██╗      █████╗")
         );
         println!(
             "{}",
-            style(" ██╔══██╗██╔══██╗██║   ██║██║     ██╔══██╗")
-                .cyan()
-                .bold()
+            ColorTheme::primary().apply_to(" ██╔══██╗██╔══██╗██║   ██║██║     ██╔══██╗")
         );
         println!(
             "{}",
-            style(" ███████║██████╔╝██║   ██║██║     ███████║")
-                .cyan()
-                .bold()
+            ColorTheme::primary().apply_to(" ███████║██████╔╝██║   ██║██║     ███████║")
         );
         println!(
             "{}",
-            style(" ██╔══██║██╔══██╗██║   ██║██║     ██╔══██║")
-                .cyan()
-                .bold()
+            ColorTheme::primary().apply_to(" ██╔══██║██╔══██╗██║   ██║██║     ██╔══██║")
         );
         println!(
             "{}",
-            style(" ██║  ██║██║  ██║╚██████╔╝███████╗██║  ██║")
-                .cyan()
-                .bold()
+            ColorTheme::primary().apply_to(" ██║  ██║██║  ██║╚██████╔╝███████╗██║  ██║")
         );
         println!(
             "{}",
-            style(" ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝")
-                .cyan()
-                .bold()
+            ColorTheme::primary().apply_to(" ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝")
         );
         println!();
         println!(
             "{}",
-            style("    Autonomous AI Command-Line Interface")
-                .cyan()
-                .bold()
+            ColorTheme::primary().apply_to("    Autonomous AI Command-Line Interface")
         );
         Ok(())
     }
@@ -1142,11 +1122,11 @@ impl OutputHandler {
         // Stop any existing spinner first (shouldn't be needed, but just in case)
         self.stop_spinner();
 
-        // Create a new spinner with a clean style
+        // Create a new spinner with our custom color theme
         let spinner = ProgressBar::new_spinner();
         spinner.set_style(
             ProgressStyle::default_spinner()
-                .template("{spinner:.cyan} {msg}")
+                .template("{spinner:.bright.cyan} {msg}")
                 .unwrap()
                 .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
         );

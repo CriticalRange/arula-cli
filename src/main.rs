@@ -35,6 +35,7 @@ mod agent_client;
 mod api;
 mod app;
 mod chat;
+mod colors;
 mod config;
 mod custom_spinner;
 mod input_handler;
