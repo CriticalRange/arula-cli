@@ -1179,15 +1179,18 @@ impl OverlayMenu {
     fn cleanup_terminal(&self) -> Result<()> {
         let mut stdout = stdout();
 
-        // Reset terminal colors and attributes first
+        // Leave alternate screen FIRST to return to main terminal
+        stdout.execute(LeaveAlternateScreen)?;
+
+        // Reset terminal colors and attributes
         stdout.execute(crossterm::style::ResetColor)?;
 
         // Restore cursor visibility and style to match main app
         stdout.execute(Show)?;
         stdout.execute(SetCursorStyle::BlinkingBlock)?;
 
-        // Leave alternate screen to return to main terminal
-        stdout.execute(LeaveAlternateScreen)?;
+        // Move cursor to beginning of line for clean shell prompt
+        stdout.execute(crossterm::cursor::MoveToColumn(0))?;
 
         // Ensure all commands are sent to terminal
         stdout.flush()?;

@@ -51,35 +51,56 @@ use output::OutputHandler;
 use overlay_menu::OverlayMenu;
 use tool_progress::PersistentInput;
 
+/// Properly exit the application with terminal cleanup
+fn graceful_exit() -> ! {
+    // Restore terminal state before exiting
+    let _ = cleanup_terminal_and_exit();
+    std::process::exit(0);
+}
+
+/// Clean up terminal state and return success
+fn cleanup_terminal_and_exit() -> Result<()> {
+    // Order matters: disable raw mode first, then restore cursor and terminal settings
+
+    // First disable raw mode to return to normal terminal operation
+    let _ = disable_raw_mode();
+
+    // Move to beginning of line and ensure we're on a clean line for the shell prompt
+    let _ = execute!(
+        std::io::stdout(),
+        cursor::MoveToColumn(0),
+        terminal::Clear(terminal::ClearType::CurrentLine)
+    );
+
+    // Reset terminal to default state (this restores colors and attributes)
+    let _ = execute!(std::io::stdout(), crossterm::style::ResetColor);
+
+    // Restore cursor visibility and style to default user shape
+    let _ = execute!(
+        std::io::stdout(),
+        cursor::Show,
+        SetCursorStyle::DefaultUserShape
+    );
+
+    // Print a newline to ensure clean shell prompt separation
+    let _ = println!();
+
+    // Force flush all commands to terminal
+    let _ = std::io::stdout().flush();
+
+    // Additional backup using console library for maximum compatibility
+    let _ = console::Term::stdout().show_cursor();
+
+    Ok(())
+}
+
 /// Guard to ensure cursor and terminal are properly restored when the program exits
 struct TerminalGuard;
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        // Properly restore terminal state on exit
-        // Order matters: disable raw mode first, then restore cursor
-
-        // First disable raw mode to return to normal terminal operation
-        let _ = disable_raw_mode();
-
-        // Reset terminal to default state (this restores colors and attributes)
-        let _ = execute!(std::io::stdout(), crossterm::style::ResetColor);
-
-        // Restore cursor visibility and style
-        let _ = execute!(
-            std::io::stdout(),
-            cursor::Show,
-            SetCursorStyle::DefaultUserShape
-        );
-
-        // Move cursor to beginning of line for clean shell prompt
-        let _ = execute!(std::io::stdout(), cursor::MoveToColumn(0));
-
-        // Force flush all commands to terminal
-        let _ = std::io::stdout().flush();
-
-        // Additional backup using console library for maximum compatibility
-        let _ = console::Term::stdout().show_cursor();
+        // Use the same cleanup function as graceful_exit
+        let _ = cleanup_terminal_and_exit();
     }
 }
 
@@ -367,14 +388,13 @@ async fn main() -> Result<()> {
                                     // Ctrl+C pressed - show exit confirmation
                                     if menu.show_exit_confirmation(&mut output)? {
                                         output.print_system("Goodbye! 👋")?;
-                                        std::process::exit(0);
+                                        graceful_exit();
                                     }
                                     input_handler.clear()?;
                                     input_handler.draw()?;
                                     continue 'main_loop;
                                 } else if input == "__CTRL_D__" {
-                                    // Ctrl+D - EOF
-                                    output.print_system("Goodbye! 👋")?;
+                                    // Ctrl+D - EOF (no message here, handled at end)
                                     break;
                                 } else if input == "__ESC__" {
                                     // ESC pressed, continue
@@ -385,7 +405,7 @@ async fn main() -> Result<()> {
                                     // Menu shortcut
                                     if menu.show_main_menu(&mut app, &mut output)? {
                                         output.print_system("Goodbye! 👋")?;
-                                        std::process::exit(0);
+                                        graceful_exit();
                                     }
                                     input_handler.clear()?;
                                     input_handler.draw()?;
@@ -411,7 +431,7 @@ async fn main() -> Result<()> {
                                     if input == "exit" || input == "quit" {
                                         if menu.show_exit_confirmation(&mut output)? {
                                             output.print_system("Goodbye! 👋")?;
-                                            std::process::exit(0);
+                                            graceful_exit();
                                         }
                                         input_handler.clear()?;
                                         input_handler.draw()?;
@@ -470,7 +490,11 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Cursor will be automatically shown by CursorGuard's Drop implementation
+    // Explicit cleanup before natural exit (in addition to TerminalGuard)
+    output.print_system("Goodbye! 👋")?;
+
+    // Ensure clean terminal state
+    cleanup_terminal_and_exit()?;
 
     Ok(())
 }
@@ -520,7 +544,7 @@ async fn handle_cli_command(
             if menu.show_main_menu(app, output)? {
                 // Exit requested
                 output.print_system("Goodbye! 👋")?;
-                std::process::exit(0);
+                graceful_exit();
             }
         }
         "/clear" => {
@@ -540,7 +564,7 @@ async fn handle_cli_command(
             if menu.show_config_menu(app, output)? {
                 // Exit requested
                 output.print_system("Goodbye! 👋")?;
-                std::process::exit(0);
+                graceful_exit();
             }
         }
         "/model" => {
