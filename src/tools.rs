@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use memmap2::MmapOptions;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command as TokioCommand;
+use console::style;
 
 /// Parameters for the bash tool
 #[derive(Debug, Deserialize)]
@@ -541,6 +542,36 @@ pub struct FileEditResult {
     pub message: String,
     pub lines_changed: Option<usize>,
     pub backup_path: Option<String>,
+    pub diff: Option<String>,
+}
+
+/// Colored diff formatter using the diff crate (git-style format)
+fn format_colored_diff(old_content: &str, new_content: &str) -> String {
+    let mut output = String::new();
+
+    for diff_result in diff::lines(old_content, new_content) {
+        match diff_result {
+            diff::Result::Left(removed) => {
+                output.push_str(&format!(
+                    "{}{}\n",
+                    style("-").red().bright(),
+                    style(removed).red()
+                ));
+            }
+            diff::Result::Both(unchanged, _) => {
+                // Skip unchanged lines - only show actual changes
+            }
+            diff::Result::Right(added) => {
+                output.push_str(&format!(
+                    "{}{}\n",
+                    style("+").green().bright(),
+                    style(added).green()
+                ));
+            }
+        }
+    }
+
+    output
 }
 
 /// File editing tool using file-editor library
@@ -646,6 +677,14 @@ Examples:
             return Err(format!("File '{}' does not exist", path));
         }
 
+        // Read original content for diff generation (before any changes)
+        let original_content = if Path::new(&path).exists() {
+            fs::read_to_string(&path)
+                .map_err(|e| format!("Failed to read original file '{}': {}", path, e))?
+        } else {
+            String::new()
+        };
+
         // Create backup for safety
         let backup_path = if Path::new(&path).exists() {
             let backup = format!("{}.backup.{}", path, chrono::Utc::now().timestamp());
@@ -677,11 +716,16 @@ Examples:
                 fs::write(&path, &content).map_err(|e| format!("Failed to create file: {}", e))?;
 
                 let lines = content.lines().count();
+
+                // Generate colored diff
+                let colored_diff = format_colored_diff(&original_content, &content);
+
                 Ok(FileEditResult {
                     success: true,
                     message: format!("File '{}' created successfully with {} lines", path, lines),
                     lines_changed: Some(lines),
                     backup_path,
+                    diff: Some(colored_diff),
                 })
             }
 
@@ -694,14 +738,18 @@ Examples:
                     lines.insert(line - 1, &content);
                     let new_content = lines.join("\n");
 
-                    fs::write(&path, new_content)
+                    fs::write(&path, &new_content)
                         .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
+
+                    // Generate colored diff
+                    let colored_diff = format_colored_diff(&original_content, &new_content);
 
                     Ok(FileEditResult {
                         success: true,
                         message: format!("Inserted content at line {} in file '{}'", line, path),
                         lines_changed: Some(1),
                         backup_path,
+                        diff: Some(colored_diff),
                     })
                 } else {
                     Err(format!(
@@ -726,8 +774,11 @@ Examples:
                     lines.splice(start_line - 1..end_line, new_lines);
                     let new_content = lines.join("\n");
 
-                    fs::write(&path, new_content)
+                    fs::write(&path, &new_content)
                         .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
+
+                    // Generate colored diff
+                    let colored_diff = format_colored_diff(&original_content, &new_content);
 
                     Ok(FileEditResult {
                         success: true,
@@ -737,6 +788,7 @@ Examples:
                         ),
                         lines_changed: Some(end_line - start_line + 1),
                         backup_path,
+                        diff: Some(colored_diff),
                     })
                 } else {
                     Err(format!(
@@ -761,8 +813,11 @@ Examples:
                     lines.drain(start_line - 1..end_line);
                     let new_content = lines.join("\n");
 
-                    fs::write(&path, new_content)
+                    fs::write(&path, &new_content)
                         .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
+
+                    // Generate colored diff
+                    let colored_diff = format_colored_diff(&original_content, &new_content);
 
                     Ok(FileEditResult {
                         success: true,
@@ -772,6 +827,7 @@ Examples:
                         ),
                         lines_changed: Some(deleted_count),
                         backup_path,
+                        diff: Some(colored_diff),
                     })
                 } else {
                     Err(format!(
@@ -790,8 +846,11 @@ Examples:
 
                 let new_content = file_content.replace(&old_text, &new_text);
 
-                fs::write(&path, new_content)
+                fs::write(&path, &new_content)
                     .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
+
+                // Generate colored diff
+                let colored_diff = format_colored_diff(&original_content, &new_content);
 
                 Ok(FileEditResult {
                     success: true,
@@ -801,6 +860,7 @@ Examples:
                     ),
                     lines_changed: None,
                     backup_path,
+                    diff: Some(colored_diff),
                 })
             }
 
@@ -816,8 +876,11 @@ Examples:
                     lines.insert(line_number - 1, &content);
                     let new_content = lines.join("\n");
 
-                    fs::write(&path, new_content)
+                    fs::write(&path, &new_content)
                         .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
+
+                    // Generate colored diff
+                    let colored_diff = format_colored_diff(&original_content, &new_content);
 
                     Ok(FileEditResult {
                         success: true,
@@ -827,6 +890,7 @@ Examples:
                         ),
                         lines_changed: Some(1),
                         backup_path,
+                        diff: Some(colored_diff),
                     })
                 } else {
                     Err(format!(
@@ -850,8 +914,11 @@ Examples:
                     lines.drain(start_line - 1..end_line);
                     let new_content = lines.join("\n");
 
-                    fs::write(&path, new_content)
+                    fs::write(&path, &new_content)
                         .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
+
+                    // Generate colored diff
+                    let colored_diff = format_colored_diff(&original_content, &new_content);
 
                     Ok(FileEditResult {
                         success: true,
@@ -861,6 +928,7 @@ Examples:
                         ),
                         lines_changed: Some(deleted_count),
                         backup_path,
+                        diff: Some(colored_diff),
                     })
                 } else {
                     Err(format!(
@@ -882,15 +950,20 @@ Examples:
                 };
 
                 let new_content = format!("{}{}", existing_content, content);
-                fs::write(&path, new_content)
+                fs::write(&path, &new_content)
                     .map_err(|e| format!("Failed to append content: {}", e))?;
 
                 let lines_added = content.lines().count();
+
+                // Generate colored diff
+                let colored_diff = format_colored_diff(&original_content, &new_content);
+
                 Ok(FileEditResult {
                     success: true,
                     message: format!("Appended {} lines to file '{}'", lines_added, path),
                     lines_changed: Some(lines_added),
                     backup_path,
+                    diff: Some(colored_diff),
                 })
             }
 
@@ -903,15 +976,20 @@ Examples:
                 };
 
                 let new_content = format!("{}{}", content, existing_content);
-                fs::write(&path, new_content)
+                fs::write(&path, &new_content)
                     .map_err(|e| format!("Failed to prepend content: {}", e))?;
 
                 let lines_added = content.lines().count();
+
+                // Generate colored diff
+                let colored_diff = format_colored_diff(&original_content, &new_content);
+
                 Ok(FileEditResult {
                     success: true,
                     message: format!("Prepended {} lines to file '{}'", lines_added, path),
                     lines_changed: Some(lines_added),
                     backup_path,
+                    diff: Some(colored_diff),
                 })
             }
         };
@@ -2575,6 +2653,288 @@ impl Clone for VisioneerTool {
     }
 }
 
+/// Parameters for the web search tool
+#[derive(Debug, Deserialize)]
+pub struct WebSearchParams {
+    pub query: String,
+    pub max_results: Option<usize>,
+    pub safe_search: Option<String>, // "on", "moderate", "off"
+}
+
+/// DuckDuckGo search result structures
+#[derive(Debug, Deserialize)]
+struct DuckDuckGoResponse {
+    #[serde(rename = "AbstractText")]
+    abstract_text: String,
+    #[serde(rename = "AbstractSource")]
+    abstract_source: String,
+    #[serde(rename = "AbstractURL")]
+    abstract_url: String,
+    #[serde(rename = "RelatedTopics")]
+    related_topics: Option<Vec<serde_json::Value>>,
+    #[serde(rename = "Infobox")]
+    infobox: Option<serde_json::Value>,
+    #[serde(default)]
+    answer: String,
+    #[serde(default)]
+    answer_type: String,
+    #[serde(rename = "AnswerType")]
+    answer_type_field: Option<String>,
+    #[serde(default)]
+    definition: String,
+    #[serde(default)]
+    definition_source: String,
+    #[serde(default)]
+    definition_url: String,
+    #[serde(rename = "Results")]
+    results: Option<Vec<DuckDuckGoResult>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DuckDuckGoResult {
+    #[serde(rename = "Text")]
+    text: String,
+    #[serde(rename = "FirstURL")]
+    first_url: String,
+    #[serde(default)]
+    #[serde(rename = "Result")]
+    result: String,
+}
+
+/// Web search result entry
+#[derive(Debug, Clone, Serialize)]
+pub struct WebSearchResultEntry {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+    pub source: String,
+}
+
+/// Result from web search operation
+#[derive(Debug, Serialize)]
+pub struct WebSearchResult {
+    pub query: String,
+    pub results: Vec<WebSearchResultEntry>,
+    pub answer: Option<String>,
+    pub abstract_text: Option<String>,
+    pub definition: Option<String>,
+    pub total_results: usize,
+    pub success: bool,
+    pub response_time_ms: u64,
+    pub provider: String,
+}
+
+/// DuckDuckGo web search tool - no API key required
+pub struct WebSearchTool;
+
+impl WebSearchTool {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Parse DuckDuckGo related topics into result entries
+    fn parse_related_topics(&self, topics: &[serde_json::Value]) -> Vec<WebSearchResultEntry> {
+        let mut results = Vec::new();
+
+        for topic in topics.iter().take(10) { // Limit to first 10 topics
+            if let Some(topic_data) = topic.as_str() {
+                // DuckDuckGo topics are often in format "Title - Description URL"
+                if let Some(sep_pos) = topic_data.rfind("http") {
+                    let content = &topic_data[..sep_pos].trim();
+                    let url = &topic_data[sep_pos..];
+
+                    if let Some(title_end) = content.find(" - ") {
+                        let title = content[..title_end].trim();
+                        let snippet = content[title_end + 3..].trim();
+
+                        results.push(WebSearchResultEntry {
+                            title: title.to_string(),
+                            url: url.to_string(),
+                            snippet: snippet.to_string(),
+                            source: "DuckDuckGo Related".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Parse DuckDuckGo results into our format
+    fn parse_ddg_results(&self, ddg_results: &[DuckDuckGoResult]) -> Vec<WebSearchResultEntry> {
+        ddg_results.iter()
+            .take(10) // Limit results
+            .map(|result| {
+                WebSearchResultEntry {
+                    title: self.extract_title_from_text(&result.text),
+                    url: result.first_url.clone(),
+                    snippet: self.extract_snippet_from_text(&result.text),
+                    source: "DuckDuckGo".to_string(),
+                }
+            })
+            .collect()
+    }
+
+    /// Extract title from DuckDuckGo result text
+    fn extract_title_from_text(&self, text: &str) -> String {
+        // DuckDuckGo format is often "Title - Description"
+        text.split(" - ")
+            .next()
+            .unwrap_or(text)
+            .trim()
+            .to_string()
+    }
+
+    /// Extract snippet from DuckDuckGo result text
+    fn extract_snippet_from_text(&self, text: &str) -> String {
+        // DuckDuckGo format is often "Title - Description"
+        text.split(" - ")
+            .skip(1)
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    }
+}
+
+impl Default for WebSearchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Tool for WebSearchTool {
+    type Params = WebSearchParams;
+    type Result = WebSearchResult;
+
+    fn name(&self) -> &str {
+        "web_search"
+    }
+
+    fn description(&self) -> &str {
+        "Search the web using DuckDuckGo's Instant Answer API. No API key required. Returns instant answers, definitions, and related web results. Perfect for getting factual information, definitions, and quick overviews of topics."
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchemaBuilder::new(
+            "web_search",
+            "Search the web for information using DuckDuckGo (no API key required)",
+        )
+        .param("query", "string")
+        .description("query", "The search query to look up on the web. Use clear, specific terms for best results.")
+        .required("query")
+        .param("max_results", "integer")
+        .description("max_results", "Maximum number of results to return (default: 10, max: 20)")
+        .param("safe_search", "string")
+        .description("safe_search", "Safe search level: 'on', 'moderate', or 'off' (default: 'moderate')")
+        .build()
+    }
+
+    async fn execute(&self, params: Self::Params) -> Result<Self::Result, String> {
+        let start_time = std::time::Instant::now();
+
+        let WebSearchParams {
+            query,
+            max_results,
+            safe_search,
+        } = params;
+
+        // Validate query
+        if query.trim().is_empty() {
+            return Err("Search query cannot be empty. Please provide a valid search term.".to_string());
+        }
+
+        let max_results = max_results.unwrap_or(10).min(20); // Cap at 20 for performance
+        let safe_search = safe_search.unwrap_or_else(|| "moderate".to_string());
+
+        // Validate safe_search parameter
+        if !matches!(safe_search.as_str(), "on" | "moderate" | "off") {
+            return Err("Invalid safe_search value. Must be 'on', 'moderate', or 'off'.".to_string());
+        }
+
+        // Build DuckDuckGo API URL
+        let encoded_query = urlencoding::encode(&query);
+        let url = format!(
+            "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
+            encoded_query
+        );
+
+        // Make HTTP request to DuckDuckGo API
+        let response = reqwest::get(&url)
+            .await
+            .map_err(|e| format!("Failed to connect to DuckDuckGo API: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("DuckDuckGo API returned error: {}", response.status()));
+        }
+
+        // Parse JSON response
+        let ddg_response: DuckDuckGoResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse DuckDuckGo response: {}", e))?;
+
+        // Collect all results
+        let mut all_results = Vec::new();
+
+        // Add main results if available
+        if let Some(results) = &ddg_response.results {
+            all_results.extend(self.parse_ddg_results(results));
+        }
+
+        // Add related topics if available
+        if let Some(related_topics) = &ddg_response.related_topics {
+            all_results.extend(self.parse_related_topics(related_topics));
+        }
+
+        // Limit to requested max_results
+        all_results.truncate(max_results);
+
+        // Extract answer and definition
+        let answer = if !ddg_response.answer.is_empty() {
+            Some(ddg_response.answer)
+        } else if let Some(answer_type) = ddg_response.answer_type_field {
+            if !answer_type.is_empty() && !ddg_response.abstract_text.is_empty() {
+                Some(format!("{}: {}", answer_type, ddg_response.abstract_text))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let abstract_text = if !ddg_response.abstract_text.is_empty() {
+            Some(ddg_response.abstract_text)
+        } else {
+            None
+        };
+
+        let definition = if !ddg_response.definition.is_empty() {
+            Some(format!("{} - {}", ddg_response.definition, ddg_response.definition_source))
+        } else {
+            None
+        };
+
+        let response_time_ms = start_time.elapsed().as_millis() as u64;
+        let total_results = all_results.len();
+
+        // Return success even if no results found (empty search is still a valid operation)
+        Ok(WebSearchResult {
+            query,
+            results: all_results,
+            answer,
+            abstract_text,
+            definition,
+            total_results,
+            success: true,
+            response_time_ms,
+            provider: "DuckDuckGo Instant Answer API".to_string(),
+        })
+    }
+}
+
 /// Factory function to create a default tool registry with Visioneer enabled
 pub fn create_default_tool_registry() -> crate::agent::ToolRegistry {
     use crate::agent::ToolRegistry;
@@ -2588,6 +2948,7 @@ pub fn create_default_tool_registry() -> crate::agent::ToolRegistry {
     registry.register(WriteFileTool::new());
     registry.register(ListDirectoryTool::new());
     registry.register(SearchTool::new());
+    registry.register(WebSearchTool::new());
     registry.register(VisioneerTool::new());
 
     registry

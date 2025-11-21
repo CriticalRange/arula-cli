@@ -12,6 +12,7 @@ use crossterm::{
     ExecutableCommand,
 };
 use std::io::Write;
+use serde_json::Value;
 
 #[derive(Parser)]
 #[command(name = "arula")]
@@ -102,6 +103,97 @@ impl Drop for TerminalGuard {
         // Use the same cleanup function as graceful_exit
         let _ = cleanup_terminal_and_exit();
     }
+}
+
+/// Format tool result into human-readable text instead of raw JSON
+fn format_tool_result(result: &Value) -> String {
+    // Check if result has an "Ok" wrapper (common pattern)
+    let empty_map = serde_json::Map::new();
+    let result_clone = result.clone();
+    let actual_result = if let Some(ok_obj) = result_clone.get("Ok").and_then(|v| v.as_object()) {
+        ok_obj
+    } else {
+        result_clone.as_object().unwrap_or(&empty_map)
+    };
+
+    // Check if this is a file edit result with a diff
+    if let (Some(success), Some(diff)) = (actual_result.get("success").and_then(|v| v.as_bool()),
+                                                  actual_result.get("diff").and_then(|v| v.as_str())) {
+        if success && !diff.is_empty() {
+            return diff.to_string();
+        }
+    }
+
+        // Check if this is a bash command result
+        if let (Some(success), Some(stdout)) = (actual_result.get("success").and_then(|v| v.as_bool()),
+                                                  actual_result.get("stdout").and_then(|v| v.as_str())) {
+            if success {
+                if let Some(stderr) = actual_result.get("stderr").and_then(|v| v.as_str()) {
+                    if !stderr.is_empty() {
+                        return format!("{}\nStderr:\n{}", stdout, stderr);
+                    }
+                }
+                return stdout.to_string();
+            }
+        }
+
+        // Check if this is a file read result
+        if let (Some(success), Some(content)) = (actual_result.get("success").and_then(|v| v.as_bool()),
+                                                    actual_result.get("content").and_then(|v| v.as_str())) {
+            if success {
+                return content.to_string();
+            }
+        }
+
+        // Check if this is a web search result
+        if let (Some(success), Some(results)) = (actual_result.get("success").and_then(|v| v.as_bool()),
+                                                   actual_result.get("results").and_then(|v| v.as_array())) {
+            if success {
+                let mut output = String::new();
+                for (i, result) in results.iter().enumerate() {
+                    if let Some(title) = result.get("title").and_then(|v| v.as_str()) {
+                        if let Some(url) = result.get("url").and_then(|v| v.as_str()) {
+                            if let Some(snippet) = result.get("snippet").and_then(|v| v.as_str()) {
+                                output.push_str(&format!("{}. {}\n   {}\n   {}\n\n",
+                                    i + 1, title, url, snippet));
+                            }
+                        }
+                    }
+                }
+                return output;
+            }
+        }
+
+        // Check if this is a list directory result
+        if let (Some(success), Some(files)) = (actual_result.get("success").and_then(|v| v.as_bool()),
+                                                   actual_result.get("files").and_then(|v| v.as_array())) {
+            if success {
+                let mut output = String::new();
+                for file in files {
+                    if let Some(path) = file.as_str() {
+                        output.push_str(&format!("{}\n", path));
+                    }
+                }
+                return output;
+            }
+        }
+
+        // Check for a message field for generic results
+        if let Some(message) = actual_result.get("message").and_then(|v| v.as_str()) {
+            if !message.is_empty() {
+                return message.to_string();
+            }
+        }
+
+        // Check for an error field
+        if let Some(error) = actual_result.get("error").and_then(|v| v.as_str()) {
+            if !error.is_empty() {
+                return format!("Error: {}", error);
+            }
+        }
+
+    // Fallback to pretty JSON if we can't format it specially
+    serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string())
 }
 
 #[tokio::main]
@@ -310,9 +402,18 @@ async fn main() -> Result<()> {
                                     cursor::MoveToColumn(0),
                                     terminal::Clear(terminal::ClearType::CurrentLine)
                                 )?;
-                                let result_text = serde_json::to_string_pretty(&result)
-                                    .unwrap_or_else(|_| result.to_string());
-                                output.complete_tool_execution(&result_text, success)?;
+                                let result_text = format_tool_result(&result);
+
+                                // Check if this is a colored diff - if so, print it directly without box
+                                if result_text.contains("\u{1b}[") &&
+                                   (result_text.contains("\u{1b}[31m") || result_text.contains("\u{1b}[32m")) {
+                                    // This is a colored diff, print directly
+                                    println!("{}", result_text);
+                                } else {
+                                    // Regular tool result, use box formatting
+                                    output.complete_tool_execution(&result_text, success)?;
+                                }
+
                                 // Restore spinner above input prompt
                                 println!(); // Line for spinner
                                 print!("{} ", console::style("▶").cyan());

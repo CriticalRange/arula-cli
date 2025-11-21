@@ -1,2 +1,0 @@
-Testing write_file tool functionality
-Appended text via edit_file

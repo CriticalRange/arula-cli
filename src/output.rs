@@ -371,12 +371,9 @@ impl OutputHandler {
 
     /// Print tool result in a nice box format for non-debug mode
     fn print_tool_result_box(&mut self, result: &str) -> io::Result<()> {
-        // Smart truncation for result display
-        let truncated_result = self.smart_truncate(result, 300);
-
         if !result.is_empty() {
-            // Calculate display metrics
-            let result_lines: Vec<&str> = truncated_result.lines().collect();
+            // Always show full results - no truncation for complete visibility
+            let result_lines: Vec<&str> = result.lines().collect();
             let line_count = result_lines.len();
             let char_count = result.len();
 
@@ -387,30 +384,34 @@ impl OutputHandler {
                 helpers::misc().apply_to(char_count)
             );
 
-            // Show first few lines of result
-            let max_display_lines = 5;
-            for (i, line) in result_lines.iter().take(max_display_lines).enumerate() {
-                let line_prefix = if line_count > max_display_lines && i == max_display_lines - 1 {
-                    "├─"
-                } else if i == result_lines.len() - 1 || i == max_display_lines - 1 {
-                    "└─"
-                } else {
-                    "├─"
-                };
-                println!("│ {} {}", ColorTheme::dim().apply_to(line_prefix), helpers::tool_result().apply_to(line));
-            }
+            // Check if this is a colored diff (contains diff indicators)
+            let is_colored_diff = result.contains(" FILE CHANGES ") ||
+                                 result.contains("added") ||
+                                 result.contains("removed") ||
+                                 result.contains("unchanged") ||
+                                 result.contains("Summary:");
 
-            // Show truncation indicator if content was cut
-            if result.lines().count() > max_display_lines || result.len() > 300 {
-                let remaining_lines = result.lines().count().saturating_sub(max_display_lines);
-                let remaining_chars = result.len().saturating_sub(300);
-                println!(
-                    "│ └─ {} {} {} more lines, {} more chars",
-                    ColorTheme::dim().apply_to("..."),
-                    ColorTheme::dim().apply_to("(hidden)"),
-                    ColorTheme::dim().apply_to(remaining_lines),
-                    ColorTheme::dim().apply_to(remaining_chars)
-                );
+            if is_colored_diff {
+                // For colored diffs, print directly to preserve all ANSI formatting
+                println!("│ {}", result);
+            } else {
+                // Show all lines without any limit
+                for (i, line) in result_lines.iter().enumerate() {
+                    let line_prefix = if i == result_lines.len() - 1 {
+                        "└─"
+                    } else {
+                        "├─"
+                    };
+
+                    // Check if line contains ANSI escape codes
+                    if line.contains("\u{1b}[") {
+                        // Print directly to preserve ANSI colors
+                        println!("│ {} {}", ColorTheme::dim().apply_to(line_prefix), line);
+                    } else {
+                        // Apply styling for plain text
+                        println!("│ {} {}", ColorTheme::dim().apply_to(line_prefix), helpers::tool_result().apply_to(line));
+                    }
+                }
             }
         } else {
             println!(
@@ -444,22 +445,47 @@ impl OutputHandler {
             print!("  {}", status_icon);
         }
 
-        // Show compact result summary
+        // Show full result without truncation
         if !result.is_empty() {
             let line_count = result.lines().count();
             let char_count = result.len();
 
-            if line_count == 1 {
+            // Check if this is a colored diff (contains diff indicators)
+            let is_colored_diff = result.contains(" FILE CHANGES ") ||
+                                 result.contains("added") ||
+                                 result.contains("removed") ||
+                                 result.contains("unchanged") ||
+                                 result.contains("Summary:");
+
+            if line_count == 1 && !is_colored_diff {
                 // Single line result - show it inline
-                let truncated = self.smart_truncate(result, 80);
-                println!(" · {}", style(truncated).dim());
+                println!(" · {}", style(result).dim());
             } else {
-                // Multi-line result - show count
+                // Multi-line result - show count and then full content
                 println!(
                     " · {} lines, {} chars",
                     style(line_count).cyan(),
                     style(char_count).dim()
                 );
+
+                // Show full result content
+                if is_colored_diff {
+                    // For colored diffs, print directly to preserve all ANSI formatting
+                    println!();
+                    print!("{}", result);
+                } else {
+                    // For regular content, use normal formatting
+                    for line in result.lines() {
+                        // Check if line contains ANSI escape codes
+                        if line.contains("\u{1b}[") {
+                            // Print directly to preserve ANSI colors
+                            println!("  {}", line);
+                        } else {
+                            // Apply styling for plain text
+                            println!("  {}", style(line).dim());
+                        }
+                    }
+                }
             }
         } else {
             println!();
