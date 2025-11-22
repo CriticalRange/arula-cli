@@ -2935,6 +2935,545 @@ impl Tool for WebSearchTool {
     }
 }
 
+// ==================== QUESTION TOOL ====================
+
+/// Parameters for the question tool
+#[derive(Debug, Deserialize, Serialize)]
+pub struct QuestionParams {
+    pub question: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+    #[serde(default)]
+    pub allow_custom_response: bool,
+    #[serde(default = "default_question_type")]
+    pub question_type: QuestionType,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionType {
+    #[default]
+    MultipleChoice,
+    Confirmation,
+    TextInput,
+    Info,
+}
+
+fn default_question_type() -> QuestionType {
+    QuestionType::MultipleChoice
+}
+
+/// Result from asking a question
+#[derive(Debug, Serialize)]
+pub struct QuestionResult {
+    pub question: String,
+    pub response: String,
+    pub question_type: String,
+    pub was_custom: bool,
+    pub success: bool,
+}
+
+/// Interactive question tool with beautiful animated menu
+pub struct QuestionTool;
+
+impl QuestionTool {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Show a simple question dialog matching the existing menu style
+    fn show_question_dialog(&self, params: &QuestionParams) -> Result<String, String> {
+        use crossterm::{
+            cursor::{Hide, Show},
+            event::{self, Event, KeyCode, KeyEventKind},
+            style::{Color, Print, ResetColor, SetForegroundColor, SetBackgroundColor},
+            terminal::{self, Clear, ClearType},
+            ExecutableCommand, QueueableCommand,
+        };
+        use std::io::{stdout, Write};
+        use std::time::Duration;
+
+        let mut stdout = stdout();
+
+        // Get terminal size without alternate screen (like other dialogs)
+        let (cols, rows) = terminal::size().map_err(|e| format!("Failed to get terminal size: {}", e))?;
+
+        // Hide cursor (no alternate screen - we'll overlay on top of existing content)
+        if let Err(e) = stdout.execute(Hide) {
+            return Err(format!("Failed to hide cursor: {}", e));
+        }
+
+        // Calculate dialog dimensions
+        let dialog_width = 60.min(cols - 4);
+        let dialog_height = if params.options.is_empty() { 7 } else { 6 + params.options.len() as u16 };
+        let start_x = (cols - dialog_width) / 2;
+        let start_y = (rows - dialog_height) / 2;
+
+        // Initialize state
+        let mut selected_index = 0;
+        let mut show_custom_input = params.allow_custom_response && params.options.is_empty();
+        let mut input_text = String::new();
+
+        // Clear any pending events
+        std::thread::sleep(Duration::from_millis(50));
+        while event::poll(Duration::from_millis(0)).unwrap_or(false) {
+            let _ = event::read();
+        }
+
+        // Simple approach: just clear everything and show our dialog
+        if let Err(e) = stdout.execute(Clear(ClearType::All)) {
+            let _ = self.cleanup_terminal();
+            return Err(format!("Clear failed: {}", e));
+        }
+
+        // Add small delay to let any spinner output be cleared
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Main loop
+        loop {
+            // Clear and move to top-left each iteration to overwrite any background content
+            if let Err(e) = stdout.execute(Clear(ClearType::All)) {
+                let _ = self.cleanup_terminal();
+                return Err(format!("Loop clear failed: {}", e));
+            }
+
+            // Draw simple box (matching overlay_menu style)
+            if let Err(e) = self.draw_simple_box(&mut stdout, start_x, start_y, dialog_width, dialog_height) {
+                let _ = self.cleanup_terminal();
+                return Err(e);
+            }
+
+            // Draw question title
+            let icon = match params.question_type {
+                QuestionType::Confirmation => "❔",
+                QuestionType::TextInput => "✏️",
+                QuestionType::Info => "💡",
+                QuestionType::MultipleChoice => "🤔",
+            };
+
+            if let Err(e) = stdout.queue(crossterm::cursor::MoveTo(start_x + 2, start_y + 2)) {
+                let _ = self.cleanup_terminal();
+                return Err(format!("Move to question failed: {}", e));
+            }
+            if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::colors::MISC_ANSI))) {
+                let _ = self.cleanup_terminal();
+                return Err(format!("Set question color failed: {}", e));
+            }
+            if let Err(e) = stdout.queue(Print(format!("{} {}", icon, params.question))) {
+                let _ = self.cleanup_terminal();
+                return Err(format!("Print question failed: {}", e));
+            }
+            if let Err(e) = stdout.queue(ResetColor) {
+                let _ = self.cleanup_terminal();
+                return Err(format!("Reset question color failed: {}", e));
+            }
+
+            // Show custom input or options
+            if !params.options.is_empty() && !show_custom_input {
+                // Show options
+                for (i, option) in params.options.iter().enumerate() {
+                    let y = start_y + 4 + i as u16;
+                    let is_selected = i == selected_index;
+
+                    if is_selected {
+                        if let Err(e) = stdout.queue(crossterm::cursor::MoveTo(start_x + 2, y)) {
+                            let _ = self.cleanup_terminal();
+                            return Err(format!("Move to selected option failed: {}", e));
+                        }
+                        if let Err(e) = stdout.queue(SetBackgroundColor(Color::AnsiValue(crate::colors::AI_HIGHLIGHT_ANSI))) {
+                            let _ = self.cleanup_terminal();
+                            return Err(format!("Set selection background failed: {}", e));
+                        }
+                        if let Err(e) = stdout.queue(SetForegroundColor(Color::White)) {
+                            let _ = self.cleanup_terminal();
+                            return Err(format!("Set selection foreground failed: {}", e));
+                        }
+                        if let Err(e) = stdout.queue(Print(&format!(" {} ", option))) {
+                            let _ = self.cleanup_terminal();
+                            return Err(format!("Print selected option failed: {}", e));
+                        }
+                        // Fill the rest of the line
+                        let padding = dialog_width.saturating_sub(3 + option.len() as u16);
+                        if let Err(e) = stdout.queue(Print(&" ".repeat(padding as usize))) {
+                            let _ = self.cleanup_terminal();
+                            return Err(format!("Print selection padding failed: {}", e));
+                        }
+                        if let Err(e) = stdout.queue(ResetColor) {
+                            let _ = self.cleanup_terminal();
+                            return Err(format!("Reset selection color failed: {}", e));
+                        }
+                    } else {
+                        if let Err(e) = stdout.queue(crossterm::cursor::MoveTo(start_x + 3, y)) {
+                            let _ = self.cleanup_terminal();
+                            return Err(format!("Move to option failed: {}", e));
+                        }
+                        if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::colors::MISC_ANSI))) {
+                            let _ = self.cleanup_terminal();
+                            return Err(format!("Set option color failed: {}", e));
+                        }
+                        if let Err(e) = stdout.queue(Print(option)) {
+                            let _ = self.cleanup_terminal();
+                            return Err(format!("Print option failed: {}", e));
+                        }
+                        if let Err(e) = stdout.queue(ResetColor) {
+                            let _ = self.cleanup_terminal();
+                            return Err(format!("Reset option color failed: {}", e));
+                        }
+                    }
+                }
+            } else if show_custom_input || params.allow_custom_response {
+                // Show input field
+                let field_y = start_y + 4;
+
+                if let Err(e) = stdout.queue(crossterm::cursor::MoveTo(start_x + 2, field_y)) {
+                    let _ = self.cleanup_terminal();
+                    return Err(format!("Move to input label failed: {}", e));
+                }
+                if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::colors::MISC_ANSI))) {
+                    let _ = self.cleanup_terminal();
+                    return Err(format!("Set input label color failed: {}", e));
+                }
+                if let Err(e) = stdout.queue(Print("▸ ")) {
+                    let _ = self.cleanup_terminal();
+                    return Err(format!("Print input label failed: {}", e));
+                }
+                if let Err(e) = stdout.queue(Print("Your answer: ")) {
+                    let _ = self.cleanup_terminal();
+                    return Err(format!("Print input prompt failed: {}", e));
+                }
+                if let Err(e) = stdout.queue(ResetColor) {
+                    let _ = self.cleanup_terminal();
+                    return Err(format!("Reset input label color failed: {}", e));
+                }
+
+                // Input field background
+                let field_width = dialog_width - 15;
+                if let Err(e) = stdout.queue(crossterm::cursor::MoveTo(start_x + 15, field_y)) {
+                    let _ = self.cleanup_terminal();
+                    return Err(format!("Move to input field failed: {}", e));
+                }
+                if let Err(e) = stdout.queue(SetBackgroundColor(Color::AnsiValue(crate::colors::BACKGROUND_ANSI))) {
+                    let _ = self.cleanup_terminal();
+                    return Err(format!("Set input background failed: {}", e));
+                }
+                if let Err(e) = stdout.queue(Print(&format!("{:width$}", input_text, width = field_width as usize))) {
+                    let _ = self.cleanup_terminal();
+                    return Err(format!("Print input text failed: {}", e));
+                }
+                if let Err(e) = stdout.queue(ResetColor) {
+                    let _ = self.cleanup_terminal();
+                    return Err(format!("Reset input field color failed: {}", e));
+                }
+
+                // Show cursor in input field
+                if let Err(e) = stdout.queue(crossterm::cursor::MoveTo(start_x + 15 + input_text.len() as u16, field_y)) {
+                    let _ = self.cleanup_terminal();
+                    return Err(format!("Move cursor in input field failed: {}", e));
+                }
+            }
+
+            // Instructions
+            let instruction_y = start_y + dialog_height - 2;
+            let instruction = if !params.options.is_empty() && !show_custom_input {
+                if params.allow_custom_response {
+                    "↑↓ Navigate • Tab Custom input • Enter Select • Esc Cancel"
+                } else {
+                    "↑↓ Navigate • Enter Select • Esc Cancel"
+                }
+            } else {
+                "Type your answer • Enter Submit • Esc Cancel"
+            };
+
+            if let Err(e) = stdout.queue(crossterm::cursor::MoveTo(start_x + 2, instruction_y)) {
+                let _ = self.cleanup_terminal();
+                return Err(format!("Move to instructions failed: {}", e));
+            }
+            if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::colors::AI_HIGHLIGHT_ANSI))) {
+                let _ = self.cleanup_terminal();
+                return Err(format!("Set instruction color failed: {}", e));
+            }
+            if let Err(e) = stdout.queue(Print(instruction)) {
+                let _ = self.cleanup_terminal();
+                return Err(format!("Print instructions failed: {}", e));
+            }
+            if let Err(e) = stdout.queue(ResetColor) {
+                let _ = self.cleanup_terminal();
+                return Err(format!("Reset instruction color failed: {}", e));
+            }
+
+            if let Err(e) = stdout.flush() {
+                let _ = self.cleanup_terminal();
+                return Err(format!("Flush failed: {}", e));
+            }
+
+            // Handle input with more frequent polling to catch and cover any background content
+            if event::poll(Duration::from_millis(50)).map_err(|e| format!("Input poll failed: {}", e))? {
+                match event::read().map_err(|e| format!("Event read failed: {}", e))? {
+                    Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                        match key_event.code {
+                            KeyCode::Up | KeyCode::Char('k') if !show_custom_input && !params.options.is_empty() => {
+                                if selected_index > 0 {
+                                    selected_index -= 1;
+                                }
+                            }
+                            KeyCode::Down | KeyCode::Char('j') if !show_custom_input && !params.options.is_empty() => {
+                                if selected_index < params.options.len() - 1 {
+                                    selected_index += 1;
+                                }
+                            }
+                            KeyCode::Tab => {
+                                if params.allow_custom_response && !params.options.is_empty() {
+                                    show_custom_input = !show_custom_input;
+                                    if show_custom_input {
+                                        input_text.clear();
+                                    }
+                                }
+                            }
+                            KeyCode::Enter => {
+                                if show_custom_input || params.options.is_empty() {
+                                    let response = if input_text.trim().is_empty() {
+                                        "[No response provided]".to_string()
+                                    } else {
+                                        input_text.trim().to_string()
+                                    };
+                                    let _ = self.cleanup_terminal();
+                                    return Ok(response);
+                                } else if let Some(option) = params.options.get(selected_index) {
+                                    let _ = self.cleanup_terminal();
+                                    return Ok(option.clone());
+                                } else {
+                                    let _ = self.cleanup_terminal();
+                                    return Ok("[Acknowledged]".to_string());
+                                }
+                            }
+                            KeyCode::Char(c) if show_custom_input || params.options.is_empty() => {
+                                input_text.push(c);
+                            }
+                            KeyCode::Backspace if (show_custom_input || params.options.is_empty()) && !input_text.is_empty() => {
+                                input_text.pop();
+                            }
+                            KeyCode::Esc => {
+                                let _ = self.cleanup_terminal();
+                                return Err("Question cancelled by user".to_string());
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Simple terminal cleanup
+    fn cleanup_terminal(&self) -> Result<(), String> {
+        use crossterm::{
+            cursor::Show,
+            style::ResetColor,
+            terminal::{self, Clear, ClearType},
+            ExecutableCommand,
+        };
+        use std::io::{stdout, Write};
+
+        let mut stdout = stdout();
+
+        // Reset terminal colors and attributes
+        let _ = stdout.execute(ResetColor);
+
+        // Restore cursor visibility
+        let _ = stdout.execute(Show);
+
+        // Clear screen to restore clean state
+        let _ = stdout.execute(Clear(ClearType::All));
+
+        // Flush to ensure all commands are executed
+        let _ = stdout.flush();
+        Ok(())
+    }
+
+    /// Draw a simple box matching the overlay_menu style
+    fn draw_simple_box(&self, stdout: &mut std::io::Stdout, x: u16, y: u16, width: u16, height: u16) -> Result<(), String> {
+        use crossterm::{
+            cursor::MoveTo,
+            style::{Color, Print, ResetColor, SetForegroundColor},
+            QueueableCommand,
+        };
+        use std::io::Write;
+
+        // Simple box with rounded corners (matching overlay_menu)
+        let top_left = "╭";
+        let top_right = "╮";
+        let bottom_left = "╰";
+        let bottom_right = "╯";
+        let horizontal = "─";
+        let vertical = "│";
+
+        // Validate dimensions to prevent overflow
+        if width < 2 || height < 2 {
+            return Ok(());
+        }
+
+        // Draw borders using our AI highlight color (steel blue)
+        if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::colors::AI_HIGHLIGHT_ANSI))) {
+            return Err(format!("Set border color failed: {}", e));
+        }
+
+        // Draw vertical borders
+        for i in 0..height {
+            if let Err(e) = stdout.queue(MoveTo(x, y + i)) {
+                return Err(format!("Move to left border failed: {}", e));
+            }
+            if let Err(e) = stdout.queue(Print(vertical)) {
+                return Err(format!("Draw left border failed: {}", e));
+            }
+            if let Err(e) = stdout.queue(MoveTo(x + width.saturating_sub(1), y + i)) {
+                return Err(format!("Move to right border failed: {}", e));
+            }
+            if let Err(e) = stdout.queue(Print(vertical)) {
+                return Err(format!("Draw right border failed: {}", e));
+            }
+        }
+
+        // Top border
+        if let Err(e) = stdout.queue(MoveTo(x, y)) {
+            return Err(format!("Move to top-left corner failed: {}", e));
+        }
+        if let Err(e) = stdout.queue(Print(top_left)) {
+            return Err(format!("Draw top-left corner failed: {}", e));
+        }
+        for _i in 1..width.saturating_sub(1) {
+            if let Err(e) = stdout.queue(Print(horizontal)) {
+                return Err(format!("Draw top border failed: {}", e));
+            }
+        }
+        if let Err(e) = stdout.queue(Print(top_right)) {
+            return Err(format!("Draw top-right corner failed: {}", e));
+        }
+
+        // Bottom border
+        if let Err(e) = stdout.queue(MoveTo(x, y + height.saturating_sub(1))) {
+            return Err(format!("Move to bottom-left corner failed: {}", e));
+        }
+        if let Err(e) = stdout.queue(Print(bottom_left)) {
+            return Err(format!("Draw bottom-left corner failed: {}", e));
+        }
+        for _i in 1..width.saturating_sub(1) {
+            if let Err(e) = stdout.queue(Print(horizontal)) {
+                return Err(format!("Draw bottom border failed: {}", e));
+            }
+        }
+        if let Err(e) = stdout.queue(Print(bottom_right)) {
+            return Err(format!("Draw bottom-right corner failed: {}", e));
+        }
+
+        if let Err(e) = stdout.queue(ResetColor) {
+            return Err(format!("Reset box color failed: {}", e));
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for QuestionTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::agent::Tool for QuestionTool {
+    type Params = QuestionParams;
+    type Result = QuestionResult;
+
+    fn name(&self) -> &str {
+        "ask_question"
+    }
+
+    fn description(&self) -> &str {
+        "Ask the user a question through a beautiful animated dialog and get their response. Perfect for confirming actions, gathering preferences, or requesting clarification."
+    }
+
+    fn schema(&self) -> crate::agent::ToolSchema {
+        crate::agent::ToolSchemaBuilder::new(
+            "ask_question",
+            "Ask the user a question through a beautiful animated dialog and get their response",
+        )
+        .param("question", "string")
+        .description("question", "The question to ask the user")
+        .required("question")
+        .param("options", "array")
+        .description("options", "List of options for multiple choice questions (optional)")
+        .param("allow_custom_response", "boolean")
+        .description("allow_custom_response", "Whether to allow custom text input (default: false)")
+        .param("question_type", "string")
+        .description("question_type", "Type of question: multiple_choice, confirmation, text_input, info (default: multiple_choice)")
+        .build()
+    }
+
+    async fn execute(&self, params: Self::Params) -> Result<Self::Result, String> {
+        let question = params.question.clone();
+        let question_type_str = match params.question_type {
+            QuestionType::MultipleChoice => "multiple_choice",
+            QuestionType::Confirmation => "confirmation",
+            QuestionType::TextInput => "text_input",
+            QuestionType::Info => "info",
+        }.to_string();
+
+        // Validate inputs
+        if question.trim().is_empty() {
+            return Err("Question cannot be empty".to_string());
+        }
+
+        if params.options.is_empty() && !params.allow_custom_response && matches!(params.question_type, QuestionType::MultipleChoice) {
+            return Err("Multiple choice questions require either options or allow_custom_response=true".to_string());
+        }
+
+        // Check if we're in a non-interactive environment (like tests)
+        let is_non_interactive = std::env::var("CI").is_ok() ||
+                                std::env::var("TEST_MODE").is_ok() ||
+                                !crossterm::terminal::is_raw_mode_enabled().unwrap_or(false) &&
+                                std::env::var("TERM").unwrap_or_default().contains("dumb");
+
+        // Show the beautiful question dialog (or simulate response in test mode)
+        let response = if is_non_interactive {
+            // In non-interactive mode, return a default response
+            if !params.options.is_empty() {
+                params.options[0].clone() // Return first option
+            } else if params.allow_custom_response {
+                "[Test response]".to_string()
+            } else {
+                "[Acknowledged]".to_string()
+            }
+        } else {
+            // Show the actual dialog
+            match self.show_question_dialog(&params) {
+                Ok(response) => response,
+                Err(error) => {
+                    // Return a successful result with error information rather than failing
+                    return Ok(QuestionResult {
+                        question,
+                        response: format!("[Question cancelled: {}]", error),
+                        question_type: question_type_str,
+                        was_custom: false,
+                        success: false,
+                    });
+                }
+            }
+        };
+
+        let was_custom = params.allow_custom_response &&
+                        (params.options.is_empty() || !params.options.contains(&response));
+
+        Ok(QuestionResult {
+            question,
+            response,
+            question_type: question_type_str,
+            was_custom,
+            success: true,
+        })
+    }
+}
+
 /// Factory function to create a default tool registry with Visioneer enabled
 pub fn create_default_tool_registry() -> crate::agent::ToolRegistry {
     use crate::agent::ToolRegistry;
@@ -2950,6 +3489,7 @@ pub fn create_default_tool_registry() -> crate::agent::ToolRegistry {
     registry.register(SearchTool::new());
     registry.register(WebSearchTool::new());
     registry.register(VisioneerTool::new());
+    registry.register(QuestionTool::new());
 
     registry
 }
