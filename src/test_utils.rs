@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 pub mod factories {
-    use crate::config::{Config, AiConfig};
+    use crate::config::Config;
     use tempfile::TempDir;
 
     /// Test factory for creating test configurations
@@ -16,26 +16,12 @@ pub mod factories {
     impl ConfigFactory {
         /// Create a basic test configuration
         pub fn create_basic() -> Config {
-            Config {
-                ai: AiConfig {
-                    provider: "test-provider".to_string(),
-                    model: "test-model".to_string(),
-                    api_url: "https://test.api.com".to_string(),
-                    api_key: "test-key".to_string(),
-                },
-            }
+            Config::new_for_test("test-provider", "test-model", "https://test.api.com", "test-key")
         }
 
         /// Create a configuration with custom values
         pub fn create_custom(provider: &str, model: &str, api_url: &str, api_key: &str) -> Config {
-            Config {
-                ai: AiConfig {
-                    provider: provider.to_string(),
-                    model: model.to_string(),
-                    api_url: api_url.to_string(),
-                    api_key: api_key.to_string(),
-                },
-            }
+            Config::new_for_test(provider, model, api_url, api_key)
         }
 
         /// Create a test configuration and save it to a temporary directory
@@ -215,19 +201,19 @@ mod test_utilities_tests {
     #[test]
     fn test_config_factory_basic() {
         let config = ConfigFactory::create_basic();
-        assert_eq!(config.ai.provider, "test-provider");
-        assert_eq!(config.ai.model, "test-model");
-        assert_eq!(config.ai.api_url, "https://test.api.com");
-        assert_eq!(config.ai.api_key, "test-key");
+        assert_eq!(config.active_provider, "test-provider");
+        assert_eq!(config.get_model(), "test-model");
+        assert_eq!(config.get_api_url(), "https://test.api.com");
+        assert_eq!(config.get_api_key(), "test-key");
     }
 
     #[test]
     fn test_config_factory_custom() {
         let config = ConfigFactory::create_custom("custom", "model-v2", "https://api.test.com", "custom-key");
-        assert_eq!(config.ai.provider, "custom");
-        assert_eq!(config.ai.model, "model-v2");
-        assert_eq!(config.ai.api_url, "https://api.test.com");
-        assert_eq!(config.ai.api_key, "custom-key");
+        assert_eq!(config.active_provider, "custom");
+        assert_eq!(config.get_model(), "model-v2");
+        assert_eq!(config.get_api_url(), "https://api.test.com");
+        assert_eq!(config.get_api_key(), "custom-key");
     }
 
     #[test]
