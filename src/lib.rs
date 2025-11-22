@@ -8,6 +8,7 @@ pub mod api;
 pub mod app;
 // Temporarily disabled - depends on testing module
 // pub mod app_testable;
+pub mod changelog;
 pub mod chat;
 pub mod colors;
 pub mod config;

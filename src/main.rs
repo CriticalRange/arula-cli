@@ -35,6 +35,7 @@ mod agent;
 mod agent_client;
 mod api;
 mod app;
+mod changelog;
 mod chat;
 mod colors;
 mod config;
@@ -273,27 +274,9 @@ async fn main() -> Result<()> {
     // Print banner BEFORE enabling raw mode
     output.print_banner()?;
     println!();
-    println!("{}", console::style("💡 Tips:").cyan().bold());
-    println!(
-        "{}",
-        console::style("  • Type your message and press Enter to send").dim()
-    );
-    println!(
-        "{}",
-        console::style("  • Use Shift+Enter for new lines, Enter on empty line to finish").dim()
-    );
-    println!(
-        "{}",
-        console::style("  • Paste multi-line content, press Enter on empty line to finish").dim()
-    );
-    println!(
-        "{}",
-        console::style("  • End line with \\ to continue typing on next line").dim()
-    );
-    println!(
-        "{}",
-        console::style("  • Cursor changed to blinking block for better visibility").dim()
-    );
+
+    // Print real-time changelog
+    print_changelog()?;
     println!();
 
     // NOW enable raw mode for keyboard input detection
@@ -716,6 +699,50 @@ async fn handle_cli_command(
         _ => {
             output.print_error(&format!("Unknown command: {}", command))?;
             output.print_system("Type /help for available commands")?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Print changelog from remote git or local file
+fn print_changelog() -> Result<()> {
+    use changelog::Changelog;
+
+    // Fetch changelog (tries remote first, falls back to local)
+    let changelog = Changelog::fetch_from_remote().unwrap_or_else(|_| {
+        Changelog::fetch_local().unwrap_or_else(|_| Changelog::parse(&Changelog::default_changelog()))
+    });
+
+    // Detect actual build type from git
+    let build_type = Changelog::detect_build_type();
+    let type_label = match build_type {
+        changelog::ChangelogType::Release => "📦 Release",
+        changelog::ChangelogType::Custom => "🔧 Custom Build",
+        changelog::ChangelogType::Development => "⚙️  Development",
+    };
+
+    // Print header
+    println!(
+        "{} {}",
+        console::style("📋 What's New").cyan().bold(),
+        console::style(format!("({})", type_label)).dim()
+    );
+
+    // Get recent changes (limit to 5)
+    let changes = changelog.get_recent_changes(5);
+
+    if changes.is_empty() {
+        println!(
+            "{}",
+            console::style("  • No recent changes").dim()
+        );
+    } else {
+        for change in changes {
+            println!(
+                "{}",
+                console::style(format!("  {}", change)).dim()
+            );
         }
     }
 
