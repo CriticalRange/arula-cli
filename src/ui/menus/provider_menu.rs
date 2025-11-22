@@ -1,27 +1,27 @@
-//! Provider selection menu for ARULA CLI
+//! Provider selection menu for ARULA CLI (1:1 from overlay_menu.rs)
 
 use crate::app::App;
-use crate::output::OutputHandler;
-use crate::ui::menus::common::{MenuUtils, MenuState};
+use crate::ui::output::OutputHandler;
 use anyhow::Result;
 use console::style;
 use crossterm::{
-    event::KeyCode,
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     terminal,
-    ExecutableCommand,
+    cursor::MoveTo,
+    style::{SetForegroundColor, ResetColor, Print},
+    ExecutableCommand, QueueableCommand,
 };
 use std::io::{stdout, Write};
+use std::time::Duration;
 
 /// Provider menu handler
 pub struct ProviderMenu {
-    state: MenuState,
     providers: Vec<String>,
 }
 
 impl ProviderMenu {
     pub fn new() -> Self {
         Self {
-            state: MenuState::new(),
             providers: vec![
                 "openai".to_string(),
                 "anthropic".to_string(),
@@ -33,194 +33,251 @@ impl ProviderMenu {
         }
     }
 
-    /// Display and handle the provider selection menu
+    /// Display and handle the provider selection menu (1:1 from overlay_menu.rs)
     pub fn show(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
-        // Check terminal size
-        if !MenuUtils::check_terminal_size(30, 8)? {
-            output.print_system("Terminal too small for provider menu")?;
-            return Ok(());
-        }
-
-        // Get current provider index
-        let current_provider = app.get_config().active_provider.clone();
+        let current_config = app.get_config();
         let current_idx = self.providers
             .iter()
-            .position(|p| p == &current_provider)
+            .position(|p| p == &current_config.active_provider)
             .unwrap_or(0);
-        self.state.selected_index = current_idx;
 
-        // Setup terminal
-        MenuUtils::setup_terminal()?;
+        // Clear screen once when entering submenu to avoid artifacts (like original overlay_menu.rs)
+        stdout().execute(terminal::Clear(terminal::ClearType::All))?;
 
-        let result = self.run_provider_loop(app, output);
+        // Comprehensive event clearing before provider selector (like original)
+        std::thread::sleep(Duration::from_millis(20));
+        for _ in 0..3 {
+            while crossterm::event::poll(Duration::from_millis(0))? {
+                let _ = crossterm::event::read()?;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
 
-        // Restore terminal
-        MenuUtils::restore_terminal()?;
-
-        // Clear any pending events
-        self.clear_pending_events()?;
-
-        result
-    }
-
-    /// Provider selection event loop
-    fn run_provider_loop(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
+        // Create a temporary selection for provider (like original)
+        let mut selected_idx = current_idx;
         loop {
-            // Render provider menu
-            self.render(output)?;
+            self.render_provider_selector(selected_idx)?;
 
-            // Handle input
-            if self.handle_input(app)? {
-                break; // Selection made
+            if crossterm::event::poll(Duration::from_millis(100))? {
+                match crossterm::event::read()? {
+                    Event::Key(key_event) => {
+                        // Only handle key press events to avoid double-processing on Windows
+                        if key_event.kind != KeyEventKind::Press {
+                            continue;
+                        }
+
+                        // Only handle valid navigation keys (like original)
+                        match key_event.code {
+                            KeyCode::Up => {
+                                if selected_idx > 0 {
+                                    selected_idx -= 1;
+                                }
+                            }
+                            KeyCode::Down => {
+                                if selected_idx < self.providers.len() - 1 {
+                                    selected_idx += 1;
+                                }
+                            }
+                            KeyCode::Enter => {
+                                let new_provider = self.providers[selected_idx].clone();
+
+                                // Switch to the new provider
+                                let _ = app.config.switch_provider(&new_provider);
+
+                                // Show what changed (like original)
+                                output.print_system(&format!(
+                                    "🔄 Model automatically set to: {}",
+                                    app.config.get_model()
+                                ))?;
+                                output.print_system(&format!(
+                                    "🌐 API URL automatically set to: {}",
+                                    app.config.get_api_url()
+                                ))?;
+
+                                let _ = app.config.save();
+                                match app.initialize_agent_client() {
+                                    Ok(()) => {
+                                        output.print_system(&format!(
+                                            "✅ Provider set to: {} (AI client initialized)",
+                                            self.providers[selected_idx]
+                                        ))?;
+                                    }
+                                    Err(_) => {
+                                        output.print_system(&format!(
+                                            "✅ Provider set to: {} (AI client will initialize when configuration is complete)",
+                                            self.providers[selected_idx]
+                                        ))?;
+                                    }
+                                }
+                                break; // Selection made
+                            }
+                            KeyCode::Esc => {
+                                break; // Cancel selection
+                            }
+                            KeyCode::Char('c') if key_event.modifiers == KeyModifiers::CONTROL => {
+                                // Ctrl+C - close provider menu (will show exit confirmation)
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Event::Resize(_, _) => {
+                        // Continue loop to re-render
+                    }
+                    _ => {
+                        // Ignore all other event types
+                        continue;
+                    }
+                }
             }
         }
         Ok(())
     }
 
-    /// Render the provider selection menu with original styling
-    fn render(&self, _output: &mut OutputHandler) -> Result<()> {
+    /// Render the provider selector with original styling (1:1 from overlay_menu.rs)
+    fn render_provider_selector(&self, selected_idx: usize) -> Result<()> {
         let (cols, rows) = crossterm::terminal::size()?;
-        let menu_width = 45.min(cols);
-        let menu_height = 12;
 
-        // Clear entire screen before each render
-        stdout().execute(terminal::Clear(terminal::ClearType::All))?;
-        stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
+        // Don't clear entire screen - causes flicker (like original)
+        let menu_width = 50.min(cols.saturating_sub(4));
+        let menu_height = self.providers.len() + 6; // Added space for header and footer
+        let menu_height_u16 = menu_height as u16;
 
-        // Center the menu
-        let start_col = (cols - menu_width) / 2;
-        let start_row = (rows - menu_height) / 2;
+        // Ensure menu fits in terminal
+        let menu_width = menu_width.min(cols.saturating_sub(4));
+        let menu_height = if menu_height_u16 > rows.saturating_sub(4) {
+            rows.saturating_sub(4) as usize
+        } else {
+            menu_height
+        };
 
-        // Render menu frame
-        let frame = MenuUtils::render_box("AI Provider", menu_width, menu_height);
-        for (i, line) in frame.iter().enumerate() {
-            if i < menu_height as usize {
-                stdout().execute(crossterm::cursor::MoveTo(start_col, start_row + i as u16))?;
-                print!("{}", line);
-            }
-        }
+        let start_x = if cols > menu_width { cols.saturating_sub(menu_width) / 2 } else { 0 };
+        let start_y = if rows > menu_height as u16 { rows.saturating_sub(menu_height as u16) / 2 } else { 0 };
 
-        // Render provider options
-        let start_row = 2;
+        // Draw modern box using original function
+        self.draw_modern_box(start_x, start_y, menu_width, menu_height as u16, "AI PROVIDER")?;
+
+        // Draw title/header (like original)
+        let title_y = start_y + 1;
+        let title = "Select AI Provider";
+        let title_x = if menu_width > title.len() as u16 {
+            start_x + (menu_width - title.len() as u16) / 2
+        } else {
+            start_x + 1
+        };
+        stdout().queue(MoveTo(title_x, title_y))?
+              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::MISC_ANSI)))?
+              .queue(Print(style(title).bold()))?
+              .queue(ResetColor)?;
+
+        // Draw provider options (like original)
+        let items_start_y = start_y + 3;
         for (idx, provider) in self.providers.iter().enumerate() {
-            if idx >= menu_height as usize - 6 {
-                break;
-            }
-
-            let row = start_row + idx as u16;
-            stdout().execute(crossterm::cursor::MoveTo(start_col + 2, row))?;
-
-            let is_selected = idx == self.state.selected_index;
-            let formatted = MenuUtils::format_menu_item(provider, is_selected);
-
-            if is_selected {
-                print!("{}", style(&formatted).cyan());
+            let y = items_start_y + idx as u16;
+            if idx == selected_idx {
+                // Selected item with golden color (NO background)
+                self.draw_selected_item(start_x + 2, y, menu_width - 4, provider)?;
             } else {
-                print!("{}", &formatted);
+                // Unselected item with normal color
+                stdout().queue(MoveTo(start_x + 4, y))?
+                      .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::MISC_ANSI)))?
+                      .queue(Print(provider))?
+                      .queue(ResetColor)?;
             }
         }
 
-        // Render help text
-        let help_row = menu_height - 2;
-        stdout().execute(crossterm::cursor::MoveTo(start_col + 2, help_row))?;
-        print!("{}", style("↑↓ Navigate  │  Enter Select  │  ESC Cancel").dim());
+        // Draw help text (intercepting box border - like original)
+        let help_y = start_y + menu_height as u16 - 1;
+        let help_text = "↑↓ Navigate • Enter Select • ESC Cancel";
+        let help_len = help_text.len() as u16;
+        let help_x = if menu_width > help_len + 2 {
+            start_x + menu_width / 2 - help_len / 2
+        } else {
+            start_x + 1
+        };
+        stdout().queue(MoveTo(help_x, help_y))?
+              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
+              .queue(Print(help_text))?
+              .queue(ResetColor)?;
 
         stdout().flush()?;
         Ok(())
     }
 
-    /// Handle keyboard input for provider selection
-    fn handle_input(&mut self, app: &mut App) -> Result<bool> {
-        while let Some(key_event) = MenuUtils::read_key_event()? {
-            match key_event.code {
-                KeyCode::Up => {
-                    self.state.move_up(self.providers.len());
-                }
-                KeyCode::Down => {
-                    self.state.move_down(self.providers.len());
-                }
-                KeyCode::Enter => {
-                    if let Some(provider) = self.providers.get(self.state.selected_index).cloned() {
-                        self.select_provider(app, &provider)?;
-                        return Ok(true);
-                    }
-                }
-                KeyCode::Esc => {
-                    return Ok(true); // Cancel selection
-                }
-                _ => {}
-            }
-        }
-        Ok(false)
-    }
+    /// Draw modern box (1:1 from overlay_menu.rs)
+    fn draw_modern_box(&self, x: u16, y: u16, width: u16, height: u16, _title: &str) -> Result<()> {
+        // Modern box with rounded corners using our color theme
+        let top_left = "╭";
+        let top_right = "╮";
+        let bottom_left = "╰";
+        let bottom_right = "╯";
+        let horizontal = "─";
+        let vertical = "│";
 
-    /// Select and configure the provider
-    fn select_provider(&mut self, app: &mut App, provider: &str) -> Result<()> {
-        app.config.active_provider = provider.to_string();
-
-        // Set default values based on provider
-        match provider {
-            "openai" => {
-                if let Some(config) = app.config.get_active_provider_config_mut() {
-                    config.api_url = Some("https://api.openai.com/v1".to_string());
-                }
-                app.config.set_model("gpt-3.5-turbo");
-            }
-            "anthropic" => {
-                if let Some(config) = app.config.get_active_provider_config_mut() {
-                    config.api_url = Some("https://api.anthropic.com".to_string());
-                }
-                app.config.set_model("claude-3-sonnet-20240229");
-            }
-            "ollama" => {
-                if let Some(config) = app.config.get_active_provider_config_mut() {
-                    config.api_url = Some("http://localhost:11434".to_string());
-                }
-                app.config.set_model("llama2");
-            }
-            "z.ai coding plan" => {
-                if let Some(config) = app.config.get_active_provider_config_mut() {
-                    config.api_url = Some("https://z.ai/api".to_string());
-                }
-                app.config.set_model("coding-plan");
-            }
-            "openrouter" => {
-                if let Some(config) = app.config.get_active_provider_config_mut() {
-                    config.api_url = Some("https://openrouter.ai/api/v1".to_string());
-                }
-                app.config.set_model("anthropic/claude-3-sonnet");
-            }
-            "custom" => {
-                if let Some(config) = app.config.get_active_provider_config_mut() {
-                    config.api_url = None;
-                }
-                app.config.set_model("");
-            }
-            _ => {}
+        // Validate dimensions to prevent overflow
+        if width < 2 || height < 2 {
+            return Ok(());
         }
 
+        // Draw borders using our AI highlight color (steel blue)
+        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?;
+
+        // Draw vertical borders
+        for i in 0..height {
+            stdout().queue(MoveTo(x, y + i))?.queue(Print(vertical))?;
+            stdout().queue(MoveTo(x + width.saturating_sub(1), y + i))?.queue(Print(vertical))?;
+        }
+
+        // Top border
+        stdout().queue(MoveTo(x, y))?.queue(Print(top_left))?;
+        for _i in 1..width.saturating_sub(1) {
+            stdout().queue(Print(horizontal))?;
+        }
+        stdout().queue(Print(top_right))?;
+
+        // Bottom border
+        stdout().queue(MoveTo(x, y + height.saturating_sub(1)))?.queue(Print(bottom_left))?;
+        for _i in 1..width.saturating_sub(1) {
+            stdout().queue(Print(horizontal))?;
+        }
+        stdout().queue(Print(bottom_right))?;
+
+        stdout().queue(ResetColor)?;
         Ok(())
     }
 
-    /// Clear pending keyboard events
-    fn clear_pending_events(&self) -> Result<()> {
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        for _ in 0..3 {
-            while crossterm::event::poll(std::time::Duration::from_millis(0))? {
-                let _ = crossterm::event::read()?;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
+    /// Draw selected item (1:1 from overlay_menu.rs) - NO BACKGROUND
+    fn draw_selected_item(&self, x: u16, y: u16, width: u16, text: &str) -> Result<()> {
+        // Validate dimensions
+        if width < 3 {
+            return Ok(());
         }
+
+        // Draw text with proper spacing and primary color (NO background)
+        let display_text = format!("▶ {}", text);
+        let safe_text = if display_text.len() > width.saturating_sub(4) as usize {
+            // Truncate if too long - use character boundaries, not byte boundaries
+            let safe_len = width.saturating_sub(7) as usize;
+            // Use char_indices to get safe character boundaries
+            let char_end = text.char_indices().nth(safe_len)
+                .map(|(idx, _)| idx)
+                .unwrap_or(text.len());
+            format!("▶ {}...", &text[..char_end])
+        } else {
+            display_text
+        };
+
+        stdout().queue(MoveTo(x + 2, y))?
+              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::PRIMARY_ANSI)))?
+              .queue(Print(safe_text))?
+              .queue(ResetColor)?;
+
         Ok(())
     }
+}
 
-    /// Reset menu state
-    pub fn reset(&mut self) {
-        self.state.reset();
-    }
-
-    /// Get available providers
-    pub fn get_providers(&self) -> &[String] {
-        &self.providers
+impl Default for ProviderMenu {
+    fn default() -> Self {
+        Self::new()
     }
 }

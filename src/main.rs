@@ -6,10 +6,11 @@ use anyhow::Result;
 use clap::Parser;
 use crossterm::{
     cursor::{self, SetCursorStyle},
-    event::{self, Event, KeyEventKind},
+    event::{self, Event, KeyEventKind, KeyModifiers},
     execute,
     terminal::{self, enable_raw_mode, disable_raw_mode},
     ExecutableCommand,
+    QueueableCommand,
 };
 use std::io::Write;
 use serde_json::Value;
@@ -31,28 +32,241 @@ struct Cli {
     debug: bool,
 }
 
-mod agent;
-mod agent_client;
+// Module declarations for the organized folder structure
 mod api;
 mod app;
-mod changelog;
-mod chat;
-mod colors;
-mod config;
-mod custom_spinner;
-mod input_handler;
-mod reedline_input;
-mod output;
-mod overlay_menu;
-mod tool_call;
-mod tool_progress;
 mod tools;
 mod ui;
+mod utils;
 
+// Re-export for easier imports
 use app::App;
-use output::OutputHandler;
-use overlay_menu::OverlayMenu;
-use reedline_input::{ReedlineInput, AiState};
+use ui::output::OutputHandler;
+use ui::menus::{MainMenu, ConfigMenu};
+use ui::reedline_input::{ReedlineInput, AiState};
+use ui::custom_spinner;
+
+/// Compatibility wrapper for new menu system
+fn show_main_menu(main_menu: &mut MainMenu, app: &mut App, output: &mut OutputHandler, config_menu: &mut ConfigMenu) -> Result<bool> {
+    match main_menu.show(app, output)? {
+        ui::menus::common::MenuResult::Exit => Ok(true),
+        ui::menus::common::MenuResult::ClearChat => {
+            app.clear_conversation();
+            output.print_system("Conversation cleared")?;
+            Ok(false)
+        }
+        ui::menus::common::MenuResult::BackToMain => {
+            // This is the Settings selection - show config menu
+            show_config_menu(config_menu, app, output)?;
+            Ok(false)
+        }
+        ui::menus::common::MenuResult::Continue => Ok(false),
+        _ => Ok(false),
+    }
+}
+
+/// Compatibility wrapper for config menu
+fn show_config_menu(config_menu: &mut ConfigMenu, app: &mut App, output: &mut OutputHandler) -> Result<bool> {
+    match config_menu.show(app, output)? {
+        ui::menus::common::MenuResult::Exit => Ok(true),
+        _ => Ok(false), // BackToMain, ConfigurationUpdated -> don't exit
+    }
+}
+
+/// Original exit confirmation menu (Stay/Exit)
+fn show_exit_confirmation(output: &mut OutputHandler) -> Result<bool> {
+    use crossterm::{
+        event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+        terminal,
+        cursor::{Hide, MoveTo},
+        style::{SetForegroundColor, SetBackgroundColor, ResetColor, Print, Color},
+        ExecutableCommand,
+    };
+    use crate::utils::colors::{ColorTheme, helpers};
+    use std::io::stdout;
+    use std::time::Duration;
+
+    let (cols, rows) = terminal::size()?;
+
+    // Ensure minimum space for menu
+    if cols < 30 || rows < 8 {
+        output.print_system("Terminal too small for exit menu")?;
+        return Ok(false);
+    }
+
+    // Setup terminal for exit menu
+    terminal::enable_raw_mode()?;
+    stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+    stdout().execute(MoveTo(0, 0))?;
+    stdout().flush()?;
+
+    let mut selected_index = 0; // 0 = Stay, 1 = Exit
+    let options = vec![
+        "Stay in ARULA CLI".to_string(),
+        "Exit ARULA CLI".to_string(),
+    ];
+
+    loop {
+        // Clear screen
+        stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+
+        let menu_width = 40.min(cols.saturating_sub(4));
+        let menu_height = 8;
+        let start_x = (cols - menu_width) / 2;
+        let start_y = (rows - menu_height) / 2;
+
+        // Draw modern box
+        let top_left = "╭";
+        let top_right = "╮";
+        let bottom_left = "╰";
+        let bottom_right = "╯";
+        let horizontal = "─";
+        let vertical = "│";
+
+        // Top border
+        stdout().execute(MoveTo(start_x, start_y))?
+              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
+              .queue(Print(top_left))?;
+        for _ in 1..(menu_width - 1) {
+            stdout().queue(Print(horizontal))?;
+        }
+        stdout().queue(Print(top_right))?;
+        stdout().queue(ResetColor)?;
+
+        // Title line
+        stdout().execute(MoveTo(start_x, start_y + 1))?
+              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
+              .queue(Print(vertical))?;
+        let title = " Exit Confirmation ";
+        let title_x = start_x + 1;
+        for _ in 0..title.len().min(menu_width as usize - 2) {
+            stdout().queue(Print(" "))?;
+        }
+        stdout().execute(MoveTo(title_x, start_y + 1))?
+              .queue(Print(ColorTheme::primary().bold().apply_to(title)))?;
+        stdout().execute(MoveTo(start_x + menu_width - 1, start_y + 1))?
+              .queue(Print(vertical))?;
+        stdout().queue(ResetColor)?;
+
+        // Empty line
+        stdout().execute(MoveTo(start_x, start_y + 2))?
+              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
+              .queue(Print(vertical))?;
+        for _ in 0..(menu_width - 2) {
+            stdout().queue(Print(" "))?;
+        }
+        stdout().queue(Print(vertical))?;
+        stdout().queue(ResetColor)?;
+
+        // Options
+        for (i, option) in options.iter().enumerate() {
+            let y = start_y + 3 + i as u16;
+            stdout().execute(MoveTo(start_x, y))?
+                  .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
+                  .queue(Print(vertical))?;
+
+            if i == selected_index {
+                // Selected item with background
+                stdout().execute(MoveTo(start_x + 1, y))?;
+                for _ in 0..(menu_width - 2) {
+                    stdout().queue(SetBackgroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::BACKGROUND_ANSI)))?
+                          .queue(Print(" "))?;
+                }
+                stdout().queue(ResetColor)?;
+
+                let display_text = format!("▶ {}", option);
+                stdout().execute(MoveTo(start_x + 3, y))?
+                      .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::PRIMARY_ANSI)))?
+                      .queue(Print(display_text))?
+                      .queue(ResetColor)?;
+            } else {
+                // Unselected item
+                for _ in 0..(menu_width - 2) {
+                    stdout().queue(Print(" "))?;
+                }
+                stdout().execute(MoveTo(start_x + 3, y))?
+                      .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::MISC_ANSI)))?
+                      .queue(Print(option))?
+                      .queue(ResetColor)?;
+            }
+
+            stdout().execute(MoveTo(start_x + menu_width - 1, y))?
+                  .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
+                  .queue(Print(vertical))?
+                  .queue(ResetColor)?;
+        }
+
+        // Bottom border
+        stdout().execute(MoveTo(start_x, start_y + 5))?
+              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
+              .queue(Print(bottom_left))?;
+        for _ in 1..(menu_width - 1) {
+            stdout().queue(Print(horizontal))?;
+        }
+        stdout().queue(Print(bottom_right))?;
+        stdout().queue(ResetColor)?;
+
+        // Help text
+        let help_text = "↑↓ Navigate • Enter Select • ESC Cancel";
+        let help_x = start_x + (menu_width.saturating_sub(help_text.len() as u16)) / 2;
+        stdout().execute(MoveTo(help_x, start_y + 6))?
+              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
+              .queue(Print(help_text))?
+              .queue(ResetColor)?;
+
+        stdout().flush()?;
+
+        // Handle input
+        match event::read()? {
+            Event::Key(key_event) => {
+                if key_event.kind != KeyEventKind::Press {
+                    continue;
+                }
+
+                match key_event.code {
+                    KeyCode::Up => {
+                        selected_index = if selected_index == 0 { options.len() - 1 } else { selected_index - 1 };
+                    }
+                    KeyCode::Down => {
+                        selected_index = (selected_index + 1) % options.len();
+                    }
+                    KeyCode::Left => {
+                        selected_index = if selected_index == 0 { options.len() - 1 } else { selected_index - 1 };
+                    }
+                    KeyCode::Right => {
+                        selected_index = (selected_index + 1) % options.len();
+                    }
+                    KeyCode::Enter => {
+                        // Restore terminal and return result
+                        terminal::disable_raw_mode()?;
+                        stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                        stdout().execute(MoveTo(0, 0))?;
+                        stdout().flush()?;
+                        return Ok(selected_index == 1); // true if Exit selected
+                    }
+                    KeyCode::Esc => {
+                        // Restore terminal and return false (stay)
+                        terminal::disable_raw_mode()?;
+                        stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                        stdout().execute(MoveTo(0, 0))?;
+                        stdout().flush()?;
+                        return Ok(false);
+                    }
+                    KeyCode::Char('c') if key_event.modifiers == KeyModifiers::CONTROL => {
+                        // Ctrl+C in exit confirmation menu - exit immediately
+                        terminal::disable_raw_mode()?;
+                        stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                        stdout().execute(MoveTo(0, 0))?;
+                        stdout().flush()?;
+                        return Ok(true); // Exit immediately
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
 
 /// Properly exit the application with terminal cleanup
 fn graceful_exit() -> ! {
@@ -284,8 +498,9 @@ async fn main() -> Result<()> {
     let mut reedline_input = ReedlineInput::new()?;
     let mut custom_spinner = custom_spinner::CustomSpinner::new();
 
-    // Create overlay menu (for settings dialogs)
-    let mut menu = OverlayMenu::new();
+    // Create menus using the new modular system
+    let mut main_menu = MainMenu::new();
+    let mut config_menu = ConfigMenu::new();
 
     // Session ID for prompt
     let session_id = format!("{:x}", fastrand::u32(..));
@@ -434,7 +649,7 @@ async fn main() -> Result<()> {
 
                 if input == "__SHOW_MENU__" {
                     // Double ESC - show menu
-                    if menu.show_main_menu(&mut app, &mut output)? {
+                    if show_main_menu(&mut main_menu, &mut app, &mut output, &mut config_menu)? {
                         output.print_system("Goodbye! 👋")?;
                         graceful_exit();
                     }
@@ -443,7 +658,7 @@ async fn main() -> Result<()> {
 
                 if input == "__SHOW_EXIT_MENU__" {
                     // Ctrl+C - show exit menu
-                    if menu.show_exit_confirmation(&mut output)? {
+                    if show_exit_confirmation(&mut output)? {
                         output.print_system("Goodbye! 👋")?;
                         graceful_exit();
                     }
@@ -458,7 +673,7 @@ async fn main() -> Result<()> {
 
                 // Handle exit commands
                 if input == "exit" || input == "quit" {
-                    if menu.show_exit_confirmation(&mut output)? {
+                    if show_exit_confirmation(&mut output)? {
                         output.print_system("Goodbye! 👋")?;
                         graceful_exit();
                     }
@@ -467,7 +682,7 @@ async fn main() -> Result<()> {
 
                 // Handle menu shortcuts
                 if input == "m" || input == "menu" {
-                    if menu.show_main_menu(&mut app, &mut output)? {
+                    if show_main_menu(&mut main_menu, &mut app, &mut output, &mut config_menu)? {
                         output.print_system("Goodbye! 👋")?;
                         graceful_exit();
                     }
@@ -476,7 +691,7 @@ async fn main() -> Result<()> {
 
                 // Handle CLI commands (starting with /)
                 if input.starts_with('/') {
-                    handle_cli_command(&input, &mut app, &mut output, &mut menu).await?;
+                    handle_cli_command(&input, &mut app, &mut output, &mut main_menu, &mut config_menu).await?;
                     continue 'main_loop;
                 }
 
@@ -552,7 +767,8 @@ async fn handle_cli_command(
     input: &str,
     app: &mut App,
     output: &mut OutputHandler,
-    menu: &mut OverlayMenu,
+    main_menu: &mut MainMenu,
+    config_menu: &mut ConfigMenu,
 ) -> Result<()> {
     let parts: Vec<&str> = input.split_whitespace().collect();
     let command = parts[0];
@@ -583,7 +799,7 @@ async fn handle_cli_command(
         }
         "/menu" => {
             // Show menu
-            if menu.show_main_menu(app, output)? {
+            if show_main_menu(main_menu, app, output, config_menu)? {
                 // Exit requested
                 output.print_system("Goodbye! 👋")?;
                 graceful_exit();
@@ -603,7 +819,7 @@ async fn handle_cli_command(
         }
         "/config" => {
             // Open configuration menu directly
-            if menu.show_config_menu(app, output)? {
+            if show_config_menu(config_menu, app, output)? {
                 // Exit requested
                 output.print_system("Goodbye! 👋")?;
                 graceful_exit();
@@ -629,7 +845,7 @@ async fn handle_cli_command(
 
 /// Print changelog from remote git or local file
 fn print_changelog() -> Result<()> {
-    use changelog::Changelog;
+    use utils::changelog::Changelog;
 
     // Fetch changelog (tries remote first, falls back to local)
     let changelog = Changelog::fetch_from_remote().unwrap_or_else(|_| {
@@ -639,9 +855,9 @@ fn print_changelog() -> Result<()> {
     // Detect actual build type from git
     let build_type = Changelog::detect_build_type();
     let type_label = match build_type {
-        changelog::ChangelogType::Release => "📦 Release",
-        changelog::ChangelogType::Custom => "🔧 Custom Build",
-        changelog::ChangelogType::Development => "⚙️  Development",
+        utils::changelog::ChangelogType::Release => "📦 Release",
+        utils::changelog::ChangelogType::Custom => "🔧 Custom Build",
+        utils::changelog::ChangelogType::Development => "⚙️  Development",
     };
 
     // Print header
