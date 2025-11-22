@@ -3,7 +3,7 @@
 //! Visioneer combines OCR, low-level pixel analysis, and vision-language models
 //! to understand UI and automate interactions with desktop applications and games.
 
-use crate::agent::{Tool, ToolSchema, ToolSchemaBuilder};
+use crate::api::agent::{Tool, ToolSchema, ToolSchemaBuilder};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};

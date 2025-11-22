@@ -1,6 +1,6 @@
 //! Modern tool implementations using the agent framework
 
-use crate::agent::{Tool, ToolSchema, ToolSchemaBuilder};
+use crate::api::agent::{Tool, ToolSchema, ToolSchemaBuilder};
 use async_trait::async_trait;
 use memmap2::MmapOptions;
 use serde::{Deserialize, Serialize};
@@ -3099,7 +3099,7 @@ impl QuestionTool {
                 let _ = self.cleanup_terminal();
                 return Err(format!("Move to question failed: {}", e));
             }
-            if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::colors::MISC_ANSI))) {
+            if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::utils::colors::MISC_ANSI))) {
                 let _ = self.cleanup_terminal();
                 return Err(format!("Set question color failed: {}", e));
             }
@@ -3124,7 +3124,7 @@ impl QuestionTool {
                             let _ = self.cleanup_terminal();
                             return Err(format!("Move to selected option failed: {}", e));
                         }
-                        if let Err(e) = stdout.queue(SetBackgroundColor(Color::AnsiValue(crate::colors::AI_HIGHLIGHT_ANSI))) {
+                        if let Err(e) = stdout.queue(SetBackgroundColor(Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI))) {
                             let _ = self.cleanup_terminal();
                             return Err(format!("Set selection background failed: {}", e));
                         }
@@ -3151,7 +3151,7 @@ impl QuestionTool {
                             let _ = self.cleanup_terminal();
                             return Err(format!("Move to option failed: {}", e));
                         }
-                        if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::colors::MISC_ANSI))) {
+                        if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::utils::colors::MISC_ANSI))) {
                             let _ = self.cleanup_terminal();
                             return Err(format!("Set option color failed: {}", e));
                         }
@@ -3173,7 +3173,7 @@ impl QuestionTool {
                     let _ = self.cleanup_terminal();
                     return Err(format!("Move to input label failed: {}", e));
                 }
-                if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::colors::MISC_ANSI))) {
+                if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::utils::colors::MISC_ANSI))) {
                     let _ = self.cleanup_terminal();
                     return Err(format!("Set input label color failed: {}", e));
                 }
@@ -3196,7 +3196,7 @@ impl QuestionTool {
                     let _ = self.cleanup_terminal();
                     return Err(format!("Move to input field failed: {}", e));
                 }
-                if let Err(e) = stdout.queue(SetBackgroundColor(Color::AnsiValue(crate::colors::BACKGROUND_ANSI))) {
+                if let Err(e) = stdout.queue(SetBackgroundColor(Color::AnsiValue(crate::utils::colors::BACKGROUND_ANSI))) {
                     let _ = self.cleanup_terminal();
                     return Err(format!("Set input background failed: {}", e));
                 }
@@ -3232,7 +3232,7 @@ impl QuestionTool {
                 let _ = self.cleanup_terminal();
                 return Err(format!("Move to instructions failed: {}", e));
             }
-            if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::colors::AI_HIGHLIGHT_ANSI))) {
+            if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI))) {
                 let _ = self.cleanup_terminal();
                 return Err(format!("Set instruction color failed: {}", e));
             }
@@ -3363,7 +3363,7 @@ impl QuestionTool {
         }
 
         // Draw borders using our AI highlight color (steel blue)
-        if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::colors::AI_HIGHLIGHT_ANSI))) {
+        if let Err(e) = stdout.queue(SetForegroundColor(Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI))) {
             return Err(format!("Set border color failed: {}", e));
         }
 
@@ -3430,7 +3430,7 @@ impl Default for QuestionTool {
 }
 
 #[async_trait::async_trait]
-impl crate::agent::Tool for QuestionTool {
+impl crate::api::agent::Tool for QuestionTool {
     type Params = QuestionParams;
     type Result = QuestionResult;
 
@@ -3442,8 +3442,8 @@ impl crate::agent::Tool for QuestionTool {
         "Ask the user a question through a beautiful animated dialog and get their response. Perfect for confirming actions, gathering preferences, or requesting clarification."
     }
 
-    fn schema(&self) -> crate::agent::ToolSchema {
-        crate::agent::ToolSchemaBuilder::new(
+    fn schema(&self) -> crate::api::agent::ToolSchema {
+        crate::api::agent::ToolSchemaBuilder::new(
             "ask_question",
             "Ask the user a question through a beautiful animated dialog and get their response",
         )
@@ -3536,8 +3536,8 @@ impl crate::agent::Tool for QuestionTool {
 }
 
 /// Factory function to create a default tool registry with Visioneer enabled
-pub fn create_default_tool_registry() -> crate::agent::ToolRegistry {
-    use crate::agent::ToolRegistry;
+pub fn create_default_tool_registry() -> crate::api::agent::ToolRegistry {
+    use crate::api::agent::ToolRegistry;
 
     let mut registry = ToolRegistry::new();
 

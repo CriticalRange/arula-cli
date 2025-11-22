@@ -1,7 +1,7 @@
 //! Common utilities and types for the ARULA menu system
 
 use crate::app::App;
-use crate::output::OutputHandler;
+use crate::ui::output::OutputHandler;
 use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
@@ -30,6 +30,7 @@ pub enum MenuAction {
     Continue,     // Stay in menu
     CloseMenu,    // Exit menu, continue app
     ExitApp,      // Exit menu AND exit app
+    CtrlC,        // Ctrl+C pressed (close menu, show exit confirmation)
 }
 
 /// Common menu utilities
@@ -93,15 +94,25 @@ impl MenuUtils {
         }
     }
 
-    /// Render a box frame around content
+    /// Render a modern box frame with rounded corners (original style)
     pub fn render_box(title: &str, width: u16, height: u16) -> Vec<String> {
         let mut output = Vec::new();
+
+        // Original modern rounded box styling
+        let top_left = "╭";
+        let top_right = "╮";
+        let bottom_left = "╰";
+        let bottom_right = "╯";
+        let horizontal = "─";
+        let vertical = "│";
+
+        // Title with padding for centering
         let title_with_padding = format!(" {} ", title);
         let title_start = (width as usize / 2).saturating_sub(title_with_padding.len() / 2);
         let title_end = title_start + title_with_padding.len();
 
         // Top border with title
-        let mut top_border = "┌".to_string();
+        let mut top_border = top_left.to_string();
         for i in 1..(width - 1) {
             let i_usize = i as usize;
             if i_usize >= title_start && i_usize < title_end && title_end <= width as usize {
@@ -112,24 +123,29 @@ impl MenuUtils {
                     top_border.push('─');
                 }
             } else {
-                top_border.push('─');
+                top_border.push_str(horizontal);
             }
         }
-        top_border.push('┐');
+        top_border.push_str(top_right);
         output.push(top_border);
 
         // Side borders with empty content
         for _ in 1..(height - 1) {
-            output.push(format!("│{}│", " ".repeat(width as usize - 2)));
+            output.push(format!("{}{}{}", vertical, " ".repeat(width as usize - 2), vertical));
         }
 
         // Bottom border
-        output.push(format!("└{}┘", "─".repeat(width as usize - 2)));
+        let mut bottom_border = bottom_left.to_string();
+        for _ in 1..(width - 1) {
+            bottom_border.push_str(horizontal);
+        }
+        bottom_border.push_str(bottom_right);
+        output.push(bottom_border);
 
         output
     }
 
-    /// Format menu item with selection indicator
+    /// Format menu item with original selection indicator
     pub fn format_menu_item(item: &str, selected: bool) -> String {
         if selected {
             format!("▶ {}", item)

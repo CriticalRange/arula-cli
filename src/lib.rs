@@ -2,34 +2,14 @@
 #![allow(dead_code)]
 #![allow(private_interfaces)]
 
-pub mod agent;
-pub mod agent_client;
 pub mod api;
 pub mod app;
-// Temporarily disabled - depends on testing module
-// pub mod app_testable;
-pub mod changelog;
-pub mod chat;
-pub mod colors;
-pub mod config;
-pub mod custom_spinner;
-pub mod input_handler;
-pub mod reedline_input;
-pub mod ui;
-pub mod output;
-pub mod overlay_menu;
-pub mod test_utils;
-pub mod tool_call;
 pub mod tools;
-pub mod visioneer;
+pub mod ui;
+pub mod utils;
 
-// Testing infrastructure (only available during testing)
-// Temporarily disabled - complex trait issues
-// #[cfg(test)]
-// pub mod testing;
-
-// Re-export commonly used types
+// Re-export commonly used types from their new locations
 pub use app::App;
-pub use colors::{ColorTheme, helpers};
-pub use output::OutputHandler;
-pub use reedline_input::{ReedlineInput, AiState};
+pub use utils::colors::{ColorTheme, helpers};
+pub use ui::output::OutputHandler;
+pub use ui::reedline_input::{ReedlineInput, AiState};

@@ -1,5 +1,5 @@
-use crate::api::Usage;
-use crate::colors::{ColorTheme, helpers};
+use crate::api::api::Usage;
+use crate::utils::colors::{ColorTheme, helpers};
 use console::style;
 use console::Style;
 use crossterm::terminal;
@@ -1102,7 +1102,7 @@ impl OutputHandler {
     /// Print message history browser
     pub fn print_message_history(
         &mut self,
-        messages: &[crate::chat::ChatMessage],
+        messages: &[crate::utils::chat::ChatMessage],
         start_index: usize,
     ) -> io::Result<()> {
         println!();
@@ -1122,7 +1122,7 @@ impl OutputHandler {
                 let timestamp = msg.timestamp.format("%H:%M:%S");
 
                 match msg.message_type {
-                    crate::chat::MessageType::User => {
+                    crate::utils::chat::MessageType::User => {
                         println!(
                             "│ {} ▶ {} {}: {}",
                             style(msg_num).dim(),
@@ -1131,7 +1131,7 @@ impl OutputHandler {
                             style(&msg.content).white()
                         );
                     }
-                    crate::chat::MessageType::Arula => {
+                    crate::utils::chat::MessageType::Arula => {
                         println!(
                             "│ {} ◆ {}: {}",
                             style(msg_num).dim(),
@@ -1165,7 +1165,7 @@ impl OutputHandler {
     /// Print conversation summary
     pub fn print_conversation_summary(
         &mut self,
-        messages: &[crate::chat::ChatMessage],
+        messages: &[crate::utils::chat::ChatMessage],
     ) -> io::Result<()> {
         println!();
         println!("{}", style("┌─ 📊 Conversation Summary").white().bold());
@@ -1173,11 +1173,11 @@ impl OutputHandler {
         let total_messages = messages.len();
         let user_messages = messages
             .iter()
-            .filter(|m| matches!(m.message_type, crate::chat::MessageType::User))
+            .filter(|m| matches!(m.message_type, crate::utils::chat::MessageType::User))
             .count();
         let ai_messages = messages
             .iter()
-            .filter(|m| matches!(m.message_type, crate::chat::MessageType::Arula))
+            .filter(|m| matches!(m.message_type, crate::utils::chat::MessageType::Arula))
             .count();
 
         println!(
@@ -1717,8 +1717,8 @@ mod tests {
 
         // Create sample messages
         let messages = vec![
-            crate::chat::ChatMessage::new_user_message("Hello"),
-            crate::chat::ChatMessage::new_arula_message("Hi there!"),
+            crate::utils::chat::ChatMessage::new_user_message("Hello"),
+            crate::utils::chat::ChatMessage::new_arula_message("Hi there!"),
         ];
 
         // Test message history

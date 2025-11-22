@@ -1,8 +1,8 @@
-use crate::agent::{AgentOptionsBuilder, ContentBlock};
-use crate::agent_client::AgentClient;
-use crate::chat::{ChatMessage, MessageType};
-use crate::config::Config;
-use crate::tool_call::{execute_bash_tool, ToolCall, ToolCallResult};
+use crate::api::agent::{AgentOptionsBuilder, ContentBlock};
+use crate::api::agent_client::AgentClient;
+use crate::utils::chat::{ChatMessage, MessageType};
+use crate::utils::config::Config;
+use crate::utils::tool_call::{execute_bash_tool, ToolCall, ToolCallResult};
 use anyhow::Result;
 use futures::StreamExt;
 use serde_json::Value;
@@ -268,7 +268,7 @@ The user will manually rebuild after exiting the application.
         }
 
         // Convert chat messages to API format for agent
-        let api_messages: Vec<crate::api::ChatMessage> = self
+        let api_messages: Vec<crate::api::api::ChatMessage> = self
             .messages
             .iter()
             .filter(|m| {
@@ -280,7 +280,7 @@ The user will manually rebuild after exiting the application.
                     MessageType::Arula => "assistant".to_string(),
                     _ => "system".to_string(),
                 };
-                crate::api::ChatMessage {
+                crate::api::api::ChatMessage {
                     role,
                     content: Some(m.content.clone()),
                     tool_calls: None,
@@ -1088,7 +1088,7 @@ The user will manually rebuild after exiting the application.
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use crate::utils::config::Config;
     use serde_json::json;
 
     fn create_test_app() -> App {

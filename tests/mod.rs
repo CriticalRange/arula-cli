@@ -5,10 +5,11 @@
 
 pub mod mocks;
 pub mod test_helpers;
+pub mod test_utils;
 
 use async_trait::async_trait;
 use std::path::PathBuf;
-use crate::chat::{EnhancedChatMessage, ChatRole};
+use arula_cli::chat::{EnhancedChatMessage, ChatRole};
 
 /// Trait for terminal output operations
 #[async_trait]
@@ -23,8 +24,8 @@ pub trait OutputHandler: Send + Sync {
 /// Trait for configuration management
 #[async_trait]
 pub trait ConfigManager: Send + Sync {
-    async fn load_config(&self) -> Result<crate::config::Config, anyhow::Error>;
-    async fn save_config(&self, config: &crate::config::Config) -> Result<(), anyhow::Error>;
+    async fn load_config(&self) -> Result<arula_cli::utils::config::Config, anyhow::Error>;
+    async fn save_config(&self, config: &arula_cli::utils::config::Config) -> Result<(), anyhow::Error>;
     async fn get_default_endpoint(&self) -> Result<String, anyhow::Error>;
 }
 

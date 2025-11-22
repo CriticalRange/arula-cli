@@ -1,6 +1,6 @@
 //! Common dialog utilities for ARULA menu system
 
-use crate::output::OutputHandler;
+use crate::ui::output::OutputHandler;
 use crate::ui::menus::common::MenuUtils;
 use anyhow::Result;
 use console::style;

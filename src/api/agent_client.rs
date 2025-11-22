@@ -3,9 +3,9 @@
 //! This module provides a high-level agent interface that uses the modern tool calling
 //! patterns while integrating with the existing reqwest-based API client.
 
-use crate::agent::{AgentOptions, ContentBlock, ToolRegistry, ToolResult};
-use crate::api::{ApiClient, ChatMessage, StreamingResponse};
-use crate::tools::create_default_tool_registry;
+use crate::api::agent::{AgentOptions, ContentBlock, ToolRegistry, ToolResult};
+use crate::api::api::{ApiClient, ChatMessage, StreamingResponse};
+use crate::tools::tools::create_default_tool_registry;
 use anyhow::Result;
 use futures::Stream;
 use serde_json::json;
@@ -100,7 +100,7 @@ impl AgentClient {
     }
 
     /// Register additional tools
-    pub fn register_tool<T: crate::agent::Tool + 'static>(&mut self, tool: T) {
+    pub fn register_tool<T: crate::api::agent::Tool + 'static>(&mut self, tool: T) {
         self.tool_registry.register(tool);
     }
 
