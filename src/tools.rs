@@ -662,6 +662,12 @@ Examples:
 
         let FileEditParams { path, operation } = params;
 
+        // Debug output for edit_file operations
+        if std::env::var("ARULA_DEBUG").is_ok() {
+            println!("🔧 DEBUG: edit_file called with path='{}'", path);
+            println!("🔧 DEBUG: edit_file operation type: {:?}", operation);
+        }
+
         // Basic security check
         if path.trim().is_empty() {
             return Err("File path cannot be empty".to_string());
@@ -993,6 +999,19 @@ Examples:
                 })
             }
         };
+
+        // Debug output for edit_file completion
+        if std::env::var("ARULA_DEBUG").is_ok() {
+            match &result {
+                Ok(success_result) => {
+                    println!("🔧 DEBUG: edit_file completed successfully for '{}'", path);
+                    println!("🔧 DEBUG: edit_file result: {}", success_result.message);
+                }
+                Err(error_msg) => {
+                    println!("🔧 DEBUG: edit_file failed for '{}': {}", path, error_msg);
+                }
+            }
+        }
 
         result
     }
@@ -2995,6 +3014,14 @@ impl QuestionTool {
 
         let mut stdout = stdout();
 
+        // IMPORTANT: Stop any running spinner first to prevent artifacts
+        // This mimics how other dialogs handle spinner cleanup
+        print!("\r\x1b[K"); // Clear current line where spinner might be
+        let _ = stdout.flush();
+        
+        // Small delay to let spinner thread finish
+        std::thread::sleep(Duration::from_millis(100));
+
         // Get terminal size without alternate screen (like other dialogs)
         let (cols, rows) = terminal::size().map_err(|e| format!("Failed to get terminal size: {}", e))?;
 
@@ -3020,21 +3047,38 @@ impl QuestionTool {
             let _ = event::read();
         }
 
-        // Simple approach: just clear everything and show our dialog
-        if let Err(e) = stdout.execute(Clear(ClearType::All)) {
-            let _ = self.cleanup_terminal();
-            return Err(format!("Clear failed: {}", e));
+        // Initial setup: ensure we have a clean area for the dialog
+        // Only clear the area where our dialog will appear
+        for y in start_y..(start_y + dialog_height) {
+            if let Err(e) = stdout.queue(crossterm::cursor::MoveTo(start_x, y)) {
+                let _ = self.cleanup_terminal();
+                return Err(format!("Initial move to clear line {} failed: {}", y, e));
+            }
+            if let Err(e) = stdout.queue(crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine)) {
+                let _ = self.cleanup_terminal();
+                return Err(format!("Initial clear line {} failed: {}", y, e));
+            }
         }
-
-        // Add small delay to let any spinner output be cleared
-        std::thread::sleep(Duration::from_millis(50));
+        
+        // Flush the initial clear
+        if let Err(e) = stdout.flush() {
+            let _ = self.cleanup_terminal();
+            return Err(format!("Initial flush failed: {}", e));
+        }
 
         // Main loop
         loop {
-            // Clear and move to top-left each iteration to overwrite any background content
-            if let Err(e) = stdout.execute(Clear(ClearType::All)) {
-                let _ = self.cleanup_terminal();
-                return Err(format!("Loop clear failed: {}", e));
+            // Only clear the dialog area, not the entire screen
+            // This prevents artifacts and flickering
+            for y in start_y..(start_y + dialog_height) {
+                if let Err(e) = stdout.queue(crossterm::cursor::MoveTo(start_x, y)) {
+                    let _ = self.cleanup_terminal();
+                    return Err(format!("Move to clear line {} failed: {}", y, e));
+                }
+                if let Err(e) = stdout.queue(crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine)) {
+                    let _ = self.cleanup_terminal();
+                    return Err(format!("Clear line {} failed: {}", y, e));
+                }
             }
 
             // Draw simple box (matching overlay_menu style)
@@ -3254,7 +3298,7 @@ impl QuestionTool {
                             }
                             KeyCode::Esc => {
                                 let _ = self.cleanup_terminal();
-                                return Err("Question cancelled by user".to_string());
+                                return Ok("[USER_CANCELLED]".to_string());
                             }
                             _ => {}
                         }
@@ -3268,10 +3312,10 @@ impl QuestionTool {
     /// Simple terminal cleanup
     fn cleanup_terminal(&self) -> Result<(), String> {
         use crossterm::{
-            cursor::Show,
-            style::ResetColor,
-            terminal::{self, Clear, ClearType},
-            ExecutableCommand,
+            cursor::{Show, MoveTo},
+            style::{ResetColor, Print},
+            terminal::size,
+            ExecutableCommand, QueueableCommand,
         };
         use std::io::{stdout, Write};
 
@@ -3283,8 +3327,13 @@ impl QuestionTool {
         // Restore cursor visibility
         let _ = stdout.execute(Show);
 
-        // Clear screen to restore clean state
-        let _ = stdout.execute(Clear(ClearType::All));
+        // Move cursor to bottom-left to avoid overwriting existing content
+        if let Ok((_, rows)) = size() {
+            let _ = stdout.queue(MoveTo(0, rows.saturating_sub(1)));
+        }
+
+        // Clear current line and move to next line
+        let _ = stdout.queue(Print("\n"));
 
         // Flush to ensure all commands are executed
         let _ = stdout.flush();
@@ -3447,7 +3496,19 @@ impl crate::agent::Tool for QuestionTool {
         } else {
             // Show the actual dialog
             match self.show_question_dialog(&params) {
-                Ok(response) => response,
+                Ok(response) => {
+                    // Check if user cancelled via ESC
+                    if response == "[USER_CANCELLED]" {
+                        return Ok(QuestionResult {
+                            question,
+                            response: "User cancelled the request".to_string(),
+                            question_type: question_type_str,
+                            was_custom: false,
+                            success: false,
+                        });
+                    }
+                    response
+                },
                 Err(error) => {
                     // Return a successful result with error information rather than failing
                     return Ok(QuestionResult {
