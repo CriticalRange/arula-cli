@@ -5,7 +5,6 @@ use crate::app::App;
 use crate::ui::output::OutputHandler;
 use crate::ui::menus::dialogs::Dialogs;
 use anyhow::Result;
-use console::style;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     terminal,
@@ -325,12 +324,21 @@ impl ModelSelector {
                                         filtered_models[selected_idx]
                                     ))?;
                                 }
+                                // Clear screen before exiting
+                                stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                                stdout().flush()?;
                                 break;
                             }
                             KeyCode::Esc => {
+                                // Clear screen before exiting
+                                stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                                stdout().flush()?;
                                 break;
                             }
                             KeyCode::Char('c') if key_event.modifiers == KeyModifiers::CONTROL => {
+                                // Clear screen before exiting
+                                stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                                stdout().flush()?;
                                 // Ctrl+C - close model selector (will show exit confirmation)
                                 break;
                             }
@@ -518,9 +526,25 @@ impl ModelSelector {
         };
         self.draw_modern_box(start_x, start_y, menu_width, final_menu_height as u16, &title)?;
 
-        // Show search input
+        // Show search input with error state detection
         let search_y = start_y + 1;
-        let search_text = if loading {
+
+        // Check if models contain error messages
+        let has_error = !models.is_empty() && (
+            models[0].contains("error") ||
+            models[0].contains("Error") ||
+            models[0].contains("401") ||
+            models[0].contains("403") ||
+            models[0].contains("timeout") ||
+            models[0].contains("failed") ||
+            models[0].contains("Failed") ||
+            models[0].contains("⚠️")
+        );
+
+        let search_text = if has_error {
+            // Show error message from models[0]
+            models[0].clone()
+        } else if loading {
             "🔄 Fetching models...".to_string()
         } else if search_query.is_empty() {
             "🔍 Type to search models".to_string()
@@ -588,7 +612,7 @@ impl ModelSelector {
             }
         }
 
-        // Show navigation hint (intercepting box border)
+        // Show navigation hint (intercepting box border - left aligned)
         let nav_y = start_y + final_menu_height as u16 - 1;
         let nav_text = if models.is_empty() {
             "No results - Press ESC to go back".to_string()
@@ -601,12 +625,8 @@ impl ModelSelector {
                     viewport_start + 1, viewport_end, total_models)
         };
 
-        // Print navigation text (centered with overflow protection)
-        let nav_x = if menu_width > nav_text.len() as u16 {
-            start_x + menu_width / 2 - nav_text.len() as u16 / 2
-        } else {
-            start_x + 1 // Fallback to left-aligned with small padding
-        };
+        // Print navigation text (left aligned with padding)
+        let nav_x = start_x + 2;
         stdout().queue(MoveTo(nav_x, nav_y))?
               .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
               .queue(Print(&nav_text))?

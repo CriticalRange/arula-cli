@@ -2,14 +2,13 @@
 
 use crate::app::App;
 use crate::ui::output::OutputHandler;
-use crate::utils::colors::{ColorTheme, helpers};
-use crate::ui::menus::common::{MenuResult, MenuAction, MenuUtils, MenuState};
+use crate::utils::colors::ColorTheme;
+use crate::ui::menus::common::{MenuResult, MenuUtils, MenuState};
 use anyhow::Result;
-use console::style;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{Event, KeyCode, KeyEventKind, KeyModifiers},
     terminal,
-    cursor::{MoveTo},
+    cursor::MoveTo,
     style::{SetForegroundColor, ResetColor, Print},
     ExecutableCommand, QueueableCommand,
 };
@@ -98,9 +97,17 @@ impl MainMenu {
             std::thread::sleep(Duration::from_millis(10));
         }
 
+        // Track state for selective rendering
+        let mut last_selected_index = self.state.selected_index;
+        let mut needs_render = true; // Render first time
+
         loop {
-            // Render menu
-            self.render(output)?;
+            // Only render if state changed
+            if needs_render || last_selected_index != self.state.selected_index {
+                self.render(output)?;
+                last_selected_index = self.state.selected_index;
+                needs_render = false;
+            }
 
             // Wait for input event with timeout
             if crossterm::event::poll(Duration::from_millis(100))? {
@@ -114,17 +121,25 @@ impl MainMenu {
                         match key_event.code {
                             crossterm::event::KeyCode::Up => {
                                 self.state.move_up(self.items.len());
+                                needs_render = true;
                             }
                             crossterm::event::KeyCode::Down => {
                                 self.state.move_down(self.items.len());
+                                needs_render = true;
                             }
                             crossterm::event::KeyCode::Enter => {
                                 return self.handle_selection(app, output);
                             }
                             crossterm::event::KeyCode::Esc => {
+                                // Clear screen before exiting
+                                stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                                stdout().flush()?;
                                 return Ok(MenuResult::Continue);
                             }
                             crossterm::event::KeyCode::Char('c') if key_event.modifiers == KeyModifiers::CONTROL => {
+                                // Clear screen before exiting
+                                stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                                stdout().flush()?;
                                 // Ctrl+C - close menu
                                 return Ok(MenuResult::Continue);
                             }
@@ -132,7 +147,8 @@ impl MainMenu {
                         }
                     }
                     Event::Resize(_, _) => {
-                        // Continue loop to re-render
+                        // Re-render on resize
+                        needs_render = true;
                     }
                     _ => {
                         // Ignore all other event types
@@ -151,8 +167,8 @@ impl MainMenu {
         let start_x = if cols > menu_width { (cols - menu_width) / 2 } else { 0 };
         let start_y = if rows > menu_height { (rows - menu_height) / 2 } else { 0 };
 
-        // Clear screen (original behavior)
-        stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+        // Don't clear screen on every render - we're in alternate screen mode
+        // Only position cursor at top
         stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
 
         // Draw modern box using original styling
@@ -194,17 +210,12 @@ impl MainMenu {
             }
         }
 
-        // Draw modern help text (intercepting box border)
+        // Draw modern help text (intercepting box border - left aligned)
         let help_y = start_y + menu_height - 1;
         let help_text = "↑↓ Navigate • Enter Select • ESC Exit";
         let max_help_width = menu_width.saturating_sub(4) as usize;
         let display_help = MenuUtils::truncate_text(help_text, max_help_width);
-        let help_len = display_help.len() as u16;
-        let help_x = if menu_width > help_len + 2 {
-            start_x + menu_width / 2 - help_len / 2
-        } else {
-            start_x + 1
-        };
+        let help_x = start_x + 2; // Left aligned with padding
         stdout().queue(MoveTo(help_x, help_y))?
               .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
               .queue(Print(display_help))?
@@ -313,20 +324,35 @@ impl MainMenu {
         if let Some(selected_item) = self.items.get(self.state.selected_index) {
             match selected_item {
                 MainMenuItem::ContinueChat => {
+                    // Clear screen before exiting
+                    stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                    stdout().flush()?;
                     Ok(MenuResult::Continue)
                 }
                 MainMenuItem::Settings => {
+                    // Clear screen before exiting
+                    stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                    stdout().flush()?;
                     Ok(MenuResult::BackToMain)
                 }
                 MainMenuItem::InfoHelp => {
                     self.show_info_and_help(app, output)?;
+                    // Clear screen before exiting
+                    stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                    stdout().flush()?;
                     Ok(MenuResult::Continue)
                 }
                 MainMenuItem::ClearChat => {
+                    // Clear screen before exiting
+                    stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                    stdout().flush()?;
                     Ok(MenuResult::ClearChat)
                 }
             }
         } else {
+            // Clear screen before exiting
+            stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+            stdout().flush()?;
             Ok(MenuResult::Continue)
         }
     }
@@ -544,11 +570,8 @@ impl MainMenu {
             format!("{} • ↵ Continue • Esc Back", scroll_part)
         };
 
-        let nav_x = if menu_width > nav_text.len() as u16 {
-            start_x + (menu_width - nav_text.len() as u16) / 2
-        } else {
-            start_x + 1
-        };
+        // Left aligned with padding
+        let nav_x = start_x + 2;
 
         stdout().queue(MoveTo(nav_x, footer_y))?
               .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?

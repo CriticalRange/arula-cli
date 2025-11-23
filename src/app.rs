@@ -553,32 +553,25 @@ The user will manually rebuild after exiting the application.
         // Use Handle::current to get current runtime handle
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
-                // Fetch models in background without debug output
+                // Fetch models in background
                 let result = Self::fetch_openrouter_models_async(&api_key).await;
-                match result {
-                    Some(models) => {
-                        match models_cache.lock() {
-                            Ok(mut cache) => {
-                                *cache = Some(models);
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to lock OpenRouter models cache: {}", e);
-                            }
-                        }
-                    }
-                    None => {
-                        // Silent failure - don't set error state, let next retry attempt work fresh
+                match models_cache.lock() {
+                    Ok(mut cache) => *cache = Some(result),
+                    Err(_) => {
+                        // Cache lock failed
                     }
                 }
             });
         } else {
-            // No tokio runtime available, do nothing
-            eprintln!("Warning: No tokio runtime available for OpenRouter model fetching");
+            // No runtime - show error in cache
+            if let Ok(mut cache) = models_cache.lock() {
+                *cache = Some(vec!["⚠️ No tokio runtime available".to_string()]);
+            }
         }
     }
 
     /// Async function to fetch OpenRouter models
-    async fn fetch_openrouter_models_async(api_key: &str) -> Option<Vec<String>> {
+    async fn fetch_openrouter_models_async(api_key: &str) -> Vec<String> {
         use reqwest::Client;
         use std::time::Duration;
 
@@ -590,8 +583,7 @@ The user will manually rebuild after exiting the application.
         {
             Ok(client) => client,
             Err(e) => {
-                eprintln!("Failed to create HTTP client: {}", e);
-                return None;
+                return vec![format!("⚠️ Failed to create HTTP client: {}", e)];
             }
         };
 
@@ -606,7 +598,8 @@ The user will manually rebuild after exiting the application.
         // Make request
         match request.send().await {
             Ok(response) => {
-                if response.status().is_success() {
+                let status = response.status();
+                if status.is_success() {
                     match response.json::<Value>().await {
                         Ok(json) => {
                             let mut models = Vec::new();
@@ -632,21 +625,18 @@ The user will manually rebuild after exiting the application.
 
                             // Sort models alphabetically
                             models.sort();
-                            Some(models)
+                            models
                         }
                         Err(e) => {
-                            eprintln!("Failed to parse OpenRouter response: {}", e);
-                            None
+                            vec![format!("⚠️ Failed to parse OpenRouter response: {}", e)]
                         }
                     }
                 } else {
-                    eprintln!("OpenRouter API returned status: {}", response.status());
-                    None
+                    vec![format!("⚠️ OpenRouter API error: Status {}", status)]
                 }
             }
             Err(e) => {
-                eprintln!("Failed to fetch OpenRouter models: {}", e);
-                None
+                vec![format!("⚠️ Failed to fetch OpenRouter models: {}", e)]
             }
         }
     }
@@ -678,30 +668,28 @@ The user will manually rebuild after exiting the application.
     pub fn fetch_openai_models(&self) {
         let models_cache = self.openai_models.clone();
         let api_key = self.config.get_api_key();
-        
+
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
-                // Fetch models in background without debug output
+                // Fetch models in background
                 let result = Self::fetch_openai_models_async(&api_key).await;
-                match result {
-                    Some(models) => {
-                        match models_cache.lock() {
-                            Ok(mut cache) => *cache = Some(models),
-                            Err(e) => eprintln!("Failed to lock OpenAI models cache: {}", e),
-                        }
-                    }
-                    None => {
-                        // Silent failure - don't set error state, let next retry attempt work fresh
+                match models_cache.lock() {
+                    Ok(mut cache) => *cache = Some(result),
+                    Err(_) => {
+                        // Cache lock failed - show error
                     }
                 }
             });
         } else {
-            eprintln!("Warning: No tokio runtime available for OpenAI model fetching");
+            // No runtime - show error in cache
+            if let Ok(mut cache) = models_cache.lock() {
+                *cache = Some(vec!["⚠️ No tokio runtime available".to_string()]);
+            }
         }
     }
 
     /// Async function to fetch OpenAI models
-    async fn fetch_openai_models_async(api_key: &str) -> Option<Vec<String>> {
+    async fn fetch_openai_models_async(api_key: &str) -> Vec<String> {
         use reqwest::Client;
         use std::time::Duration;
 
@@ -712,8 +700,7 @@ The user will manually rebuild after exiting the application.
         {
             Ok(client) => client,
             Err(e) => {
-                eprintln!("Failed to create HTTP client: {}", e);
-                return None;
+                return vec![format!("⚠️ Failed to create HTTP client: {}", e)];
             }
         };
 
@@ -725,7 +712,8 @@ The user will manually rebuild after exiting the application.
 
         match request.send().await {
             Ok(response) => {
-                if response.status().is_success() {
+                let status = response.status();
+                if status.is_success() {
                     match response.json::<Value>().await {
                         Ok(json) => {
                             let mut models = Vec::new();
@@ -740,21 +728,18 @@ The user will manually rebuild after exiting the application.
                                 }
                             }
                             models.sort();
-                            Some(models)
+                            models
                         }
                         Err(e) => {
-                            eprintln!("Failed to parse OpenAI response: {}", e);
-                            None
+                            vec![format!("⚠️ Failed to parse OpenAI response: {}", e)]
                         }
                     }
                 } else {
-                    eprintln!("OpenAI API returned status: {}", response.status());
-                    None
+                    vec![format!("⚠️ OpenAI API error: Status {}", status)]
                 }
             }
             Err(e) => {
-                eprintln!("Failed to fetch OpenAI models: {}", e);
-                None
+                vec![format!("⚠️ Failed to fetch OpenAI models: {}", e)]
             }
         }
     }
@@ -786,39 +771,36 @@ The user will manually rebuild after exiting the application.
     pub fn fetch_anthropic_models(&self) {
         let models_cache = self.anthropic_models.clone();
         let api_key = self.config.get_api_key();
-        
+
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
-                // Fetch models in background without debug output
+                // Fetch models in background
                 let result = Self::fetch_anthropic_models_async(&api_key).await;
-                match result {
-                    Some(models) => {
-                        match models_cache.lock() {
-                            Ok(mut cache) => *cache = Some(models),
-                            Err(e) => eprintln!("Failed to lock Anthropic models cache: {}", e),
-                        }
-                    }
-                    None => {
-                        // Silent failure - don't set error state, let next retry attempt work fresh
+                match models_cache.lock() {
+                    Ok(mut cache) => *cache = Some(result),
+                    Err(_) => {
+                        // Cache lock failed
                     }
                 }
             });
         } else {
-            eprintln!("Warning: No tokio runtime available for Anthropic model fetching");
+            // No runtime - show error in cache
+            if let Ok(mut cache) = models_cache.lock() {
+                *cache = Some(vec!["⚠️ No tokio runtime available".to_string()]);
+            }
         }
     }
 
     /// Async function to fetch Anthropic models
-    async fn fetch_anthropic_models_async(api_key: &str) -> Option<Vec<String>> {
+    async fn fetch_anthropic_models_async(_api_key: &str) -> Vec<String> {
         // Anthropic doesn't have a public models endpoint, so return known models
-        let models = vec![
+        vec![
             "claude-3-5-sonnet-20241022".to_string(),
             "claude-3-5-haiku-20241022".to_string(),
             "claude-3-opus-20240229".to_string(),
             "claude-3-sonnet-20240229".to_string(),
             "claude-3-haiku-20240307".to_string(),
-        ];
-        Some(models)
+        ]
     }
 
     /// Get cached Ollama models, returning None if not cached
@@ -848,25 +830,23 @@ The user will manually rebuild after exiting the application.
     pub fn fetch_ollama_models(&self) {
         let models_cache = self.ollama_models.clone();
         let api_url = self.config.get_api_url();
-        
+
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
-                // Fetch models in background without debug output
+                // Fetch models in background
                 let result = Self::fetch_ollama_models_async(&api_url).await;
-                match result {
-                    Some(models) => {
-                        match models_cache.lock() {
-                            Ok(mut cache) => *cache = Some(models),
-                            Err(e) => eprintln!("Failed to lock Ollama models cache: {}", e),
-                        }
-                    }
-                    None => {
-                        // Silent failure - don't set error state, let next retry attempt work fresh
+                match models_cache.lock() {
+                    Ok(mut cache) => *cache = Some(result),
+                    Err(_) => {
+                        // Cache lock failed
                     }
                 }
             });
         } else {
-            eprintln!("Warning: No tokio runtime available for Ollama model fetching");
+            // No runtime - show error in cache
+            if let Ok(mut cache) = models_cache.lock() {
+                *cache = Some(vec!["⚠️ No tokio runtime available".to_string()]);
+            }
         }
     }
 
@@ -932,41 +912,38 @@ The user will manually rebuild after exiting the application.
     pub fn fetch_zai_models(&self) {
         let models_cache = self.zai_models.clone();
         let api_key = self.config.get_api_key();
-        
+
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
-                // Fetch models in background without debug output
+                // Fetch models in background
                 let result = Self::fetch_zai_models_async(&api_key).await;
-                match result {
-                    Some(models) => {
-                        match models_cache.lock() {
-                            Ok(mut cache) => *cache = Some(models),
-                            Err(e) => eprintln!("Failed to lock Z.AI models cache: {}", e),
-                        }
-                    }
-                    None => {
-                        // Silent failure - don't set error state, let next retry attempt work fresh
+                match models_cache.lock() {
+                    Ok(mut cache) => *cache = Some(result),
+                    Err(_) => {
+                        // Cache lock failed
                     }
                 }
             });
         } else {
-            eprintln!("Warning: No tokio runtime available for Z.AI model fetching");
+            // No runtime - show error in cache
+            if let Ok(mut cache) = models_cache.lock() {
+                *cache = Some(vec!["⚠️ No tokio runtime available".to_string()]);
+            }
         }
     }
 
     /// Async function to fetch Z.AI models
-    async fn fetch_zai_models_async(_api_key: &str) -> Option<Vec<String>> {
+    async fn fetch_zai_models_async(_api_key: &str) -> Vec<String> {
         // Z.AI doesn't have a public models endpoint, so return known models
-        let models = vec![
+        vec![
             "glm-4.6".to_string(),
             "glm-4.5".to_string(),
             "glm-4.5-air".to_string(),
-        ];
-        Some(models)
+        ]
     }
 
     /// Async function to fetch Ollama models
-    async fn fetch_ollama_models_async(api_url: &str) -> Option<Vec<String>> {
+    async fn fetch_ollama_models_async(api_url: &str) -> Vec<String> {
         use reqwest::Client;
         use std::time::Duration;
 
@@ -977,8 +954,7 @@ The user will manually rebuild after exiting the application.
         {
             Ok(client) => client,
             Err(e) => {
-                eprintln!("Failed to create HTTP client: {}", e);
-                return None;
+                return vec![format!("⚠️ Failed to create HTTP client: {}", e)];
             }
         };
 
@@ -986,7 +962,8 @@ The user will manually rebuild after exiting the application.
 
         match request.send().await {
             Ok(response) => {
-                if response.status().is_success() {
+                let status = response.status();
+                if status.is_success() {
                     match response.json::<Value>().await {
                         Ok(json) => {
                             let mut models = Vec::new();
@@ -998,21 +975,18 @@ The user will manually rebuild after exiting the application.
                                 }
                             }
                             models.sort();
-                            Some(models)
+                            models
                         }
                         Err(e) => {
-                            eprintln!("Failed to parse Ollama response: {}", e);
-                            None
+                            vec![format!("⚠️ Failed to parse Ollama response: {}", e)]
                         }
                     }
                 } else {
-                    eprintln!("Ollama API returned status: {}", response.status());
-                    None
+                    vec![format!("⚠️ Ollama API error: Status {}", status)]
                 }
             }
             Err(e) => {
-                eprintln!("Failed to fetch Ollama models: {}", e);
-                None
+                vec![format!("⚠️ Failed to fetch Ollama models: {}", e)]
             }
         }
     }

@@ -5,7 +5,7 @@ use crate::ui::output::OutputHandler;
 use anyhow::Result;
 use console::style;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{Event, KeyCode, KeyEventKind, KeyModifiers},
     terminal,
     cursor::MoveTo,
     style::{SetForegroundColor, ResetColor, Print},
@@ -55,8 +55,16 @@ impl ProviderMenu {
 
         // Create a temporary selection for provider (like original)
         let mut selected_idx = current_idx;
+        let mut last_selected_idx = selected_idx;
+        let mut needs_render = true; // Render first time
+
         loop {
-            self.render_provider_selector(selected_idx)?;
+            // Only render if state changed
+            if needs_render || last_selected_idx != selected_idx {
+                self.render_provider_selector(selected_idx)?;
+                last_selected_idx = selected_idx;
+                needs_render = false;
+            }
 
             if crossterm::event::poll(Duration::from_millis(100))? {
                 match crossterm::event::read()? {
@@ -71,11 +79,13 @@ impl ProviderMenu {
                             KeyCode::Up => {
                                 if selected_idx > 0 {
                                     selected_idx -= 1;
+                                    needs_render = true;
                                 }
                             }
                             KeyCode::Down => {
                                 if selected_idx < self.providers.len() - 1 {
                                     selected_idx += 1;
+                                    needs_render = true;
                                 }
                             }
                             KeyCode::Enter => {
@@ -83,46 +93,28 @@ impl ProviderMenu {
 
                                 // Switch to the new provider
                                 let _ = app.config.switch_provider(&new_provider);
-
-                                // Show what changed (like original)
-                                output.print_system(&format!(
-                                    "🔄 Model automatically set to: {}",
-                                    app.config.get_model()
-                                ))?;
-                                output.print_system(&format!(
-                                    "🌐 API URL automatically set to: {}",
-                                    app.config.get_api_url()
-                                ))?;
-
                                 let _ = app.config.save();
-                                match app.initialize_agent_client() {
-                                    Ok(()) => {
-                                        output.print_system(&format!(
-                                            "✅ Provider set to: {} (AI client initialized)",
-                                            self.providers[selected_idx]
-                                        ))?;
-                                    }
-                                    Err(_) => {
-                                        output.print_system(&format!(
-                                            "✅ Provider set to: {} (AI client will initialize when configuration is complete)",
-                                            self.providers[selected_idx]
-                                        ))?;
-                                    }
-                                }
+                                let _ = app.initialize_agent_client();
+
+                                // Don't print messages here - we're in alternate screen mode
+                                // The messages would be lost when we exit
+                                // Just exit the menu and return to config menu
                                 break; // Selection made
                             }
                             KeyCode::Esc => {
+                                // Exit without clearing - alternate screen handles it
                                 break; // Cancel selection
                             }
                             KeyCode::Char('c') if key_event.modifiers == KeyModifiers::CONTROL => {
-                                // Ctrl+C - close provider menu (will show exit confirmation)
+                                // Exit without clearing - alternate screen handles it
                                 break;
                             }
                             _ => {}
                         }
                     }
                     Event::Resize(_, _) => {
-                        // Continue loop to re-render
+                        // Re-render on resize
+                        needs_render = true;
                     }
                     _ => {
                         // Ignore all other event types
@@ -174,6 +166,13 @@ impl ProviderMenu {
         let items_start_y = start_y + 3;
         for (idx, provider) in self.providers.iter().enumerate() {
             let y = items_start_y + idx as u16;
+
+            // Clear the line first to remove any previous content
+            stdout().queue(MoveTo(start_x + 2, y))?;
+            for _ in 0..(menu_width.saturating_sub(4)) {
+                stdout().queue(Print(" "))?;
+            }
+
             if idx == selected_idx {
                 // Selected item with golden color (NO background)
                 self.draw_selected_item(start_x + 2, y, menu_width - 4, provider)?;
@@ -186,15 +185,10 @@ impl ProviderMenu {
             }
         }
 
-        // Draw help text (intercepting box border - like original)
+        // Draw help text (intercepting box border - left aligned)
         let help_y = start_y + menu_height as u16 - 1;
         let help_text = "↑↓ Navigate • Enter Select • ESC Cancel";
-        let help_len = help_text.len() as u16;
-        let help_x = if menu_width > help_len + 2 {
-            start_x + menu_width / 2 - help_len / 2
-        } else {
-            start_x + 1
-        };
+        let help_x = start_x + 2; // Left aligned with padding
         stdout().queue(MoveTo(help_x, help_y))?
               .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
               .queue(Print(help_text))?

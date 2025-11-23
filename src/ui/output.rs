@@ -1,7 +1,6 @@
 use crate::api::api::Usage;
 use crate::utils::colors::{ColorTheme, helpers};
 use console::style;
-use console::Style;
 use crossterm::terminal;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, Write};

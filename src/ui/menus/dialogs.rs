@@ -6,7 +6,7 @@ use anyhow::Result;
 use console::style;
 use crossterm::{
     event::KeyCode,
-    style::{SetBackgroundColor, ResetColor, Color as CrosstermColor},
+    style::Color,
     ExecutableCommand,
 };
 use std::io::{stdout, Write};
@@ -282,7 +282,7 @@ impl Dialogs {
 
         // Input field background
         let field_width = dialog_width - 4;
-        stdout().execute(crossterm::style::SetBackgroundColor(CrosstermColor::DarkGrey))?;
+        stdout().execute(crossterm::style::SetBackgroundColor(Color::DarkGrey))?;
         for _ in 0..field_width {
             println!("{}", " ");
         }
@@ -336,7 +336,7 @@ impl Dialogs {
 
         // Password field background
         let field_width = dialog_width - 4;
-        stdout().execute(crossterm::style::SetBackgroundColor(CrosstermColor::DarkGrey))?;
+        stdout().execute(crossterm::style::SetBackgroundColor(Color::DarkGrey))?;
         for _ in 0..field_width {
             println!("{}", " ");
         }

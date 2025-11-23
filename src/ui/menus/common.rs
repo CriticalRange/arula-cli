@@ -1,14 +1,11 @@
 //! Common utilities and types for the ARULA menu system
 
-use crate::app::App;
-use crate::ui::output::OutputHandler;
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     terminal::{self, size},
     cursor::{Hide, Show},
-    style::{Color, SetForegroundColor, SetBackgroundColor, ResetColor},
-    ExecutableCommand, QueueableCommand,
+    ExecutableCommand,
+    event::{self, Event, KeyEvent, KeyEventKind},
 };
 use std::io::{stdout, Write};
 use std::time::Duration;
@@ -52,9 +49,10 @@ impl MenuUtils {
         Ok(cols >= min_cols && rows >= min_rows)
     }
 
-    /// Setup terminal for menu display
+    /// Setup terminal for menu display (uses alternate screen to prevent scrollback pollution)
     pub fn setup_terminal() -> Result<()> {
         terminal::enable_raw_mode()?;
+        stdout().execute(terminal::EnterAlternateScreen)?;
         stdout().execute(Hide)?;
         stdout().execute(terminal::Clear(terminal::ClearType::All))?;
         stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
@@ -62,12 +60,11 @@ impl MenuUtils {
         Ok(())
     }
 
-    /// Restore terminal state after menu
+    /// Restore terminal state after menu (leaves alternate screen to return to conversation)
     pub fn restore_terminal() -> Result<()> {
         terminal::disable_raw_mode()?;
+        stdout().execute(terminal::LeaveAlternateScreen)?;
         stdout().execute(Show)?;
-        stdout().execute(terminal::Clear(terminal::ClearType::All))?;
-        stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
         stdout().flush()?;
         Ok(())
     }

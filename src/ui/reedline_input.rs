@@ -299,11 +299,15 @@ impl ReedlineInput {
             ReedlineEvent::Menu("completion_menu".to_string()),
         );
 
-        // ESC triggers CtrlC signal for double-ESC handling
+        // ESC handling: Clear buffer + track for double-ESC menu
+        // Use ExecuteHostCommand to handle ESC tracking outside reedline
         keybindings.add_binding(
             KeyModifiers::NONE,
             KeyCode::Esc,
-            ReedlineEvent::CtrlC,
+            ReedlineEvent::Multiple(vec![
+                ReedlineEvent::Edit(vec![EditCommand::Clear]),
+                ReedlineEvent::ExecuteHostCommand("__ESC_PRESSED__".to_string()),
+            ]),
         );
 
         // Bind Ctrl+C to a different signal type - let's try EndOfFile
@@ -436,7 +440,48 @@ impl ReedlineInput {
 
             match sig {
                 Signal::Success(buffer) => {
-                    // Check for ESC Menu event
+                    // Check for ESC tracking command from ExecuteHostCommand
+                    if buffer == "__ESC_PRESSED__" {
+                        // Check if AI is currently responding
+                        let is_ai_thinking = {
+                            let state = self.state.lock().unwrap();
+                            matches!(state.ai_state, AiState::Thinking)
+                        };
+
+                        // If AI is thinking, ESC should cancel the request
+                        if is_ai_thinking {
+                            self.reset_esc();
+                            return Ok(Some("__ESC__".to_string()));
+                        }
+
+                        // Track ESC press and handle double ESC logic
+                        let now = std::time::Instant::now();
+                        let should_show_menu = {
+                            let state = self.state.lock().unwrap();
+                            let elapsed = now.duration_since(state.last_esc_time);
+
+                            // If less than 500ms since last ESC, show menu (double ESC)
+                            elapsed.as_millis() <= 500 && state.esc_count >= 1
+                        };
+
+                        self.track_esc();
+
+                        if should_show_menu {
+                            self.reset_esc();
+                            return Ok(Some("__SHOW_MENU__".to_string()));
+                        } else {
+                            // Single ESC - buffer already cleared, just continue
+                            continue;
+                        }
+                    }
+
+                    // Check if buffer is empty (shouldn't happen now, but keep as fallback)
+                    if buffer.is_empty() {
+                        // Just continue waiting for real input
+                        continue;
+                    }
+
+                    // Check for ESC Menu event (legacy, might not be used anymore)
                     if buffer == "__ESC_EVENT__" {
                         // Track ESC press and handle double ESC logic
                         let now = std::time::Instant::now();
@@ -496,26 +541,8 @@ impl ReedlineInput {
                     return Ok(Some(processed));
                 }
                 Signal::CtrlC => {
-                    // ESC signal - handle double ESC logic
-                    let now = std::time::Instant::now();
-                    let should_show_main_menu = {
-                        let state = self.state.lock().unwrap();
-                        let elapsed_since_last_esc = now.duration_since(state.last_esc_time);
-
-                        // If recent ESC activity and count >= 1, treat as double ESC
-                        elapsed_since_last_esc.as_millis() <= 500 && state.esc_count >= 1
-                    };
-
-                    if should_show_main_menu {
-                        // Double ESC - show main menu
-                        self.reset_esc();
-                        return Ok(Some("__SHOW_MENU__".to_string()));
-                    }
-
-                    // Track this ESC press
-                    self.track_esc();
-
-                    // First ESC - just clear input and continue
+                    // This should not be triggered by ESC anymore (ESC uses ClearBuffer + Enter)
+                    // CtrlC might still be triggered by other means, so just continue
                     continue;
                 }
                                 Signal::CtrlD => {

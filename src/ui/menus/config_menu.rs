@@ -1,20 +1,18 @@
 //! Configuration menu functionality for ARULA CLI
 
 use crate::app::App;
-use crate::utils::config::ProviderField;
-use crate::utils::colors::{ColorTheme, helpers};
 use crate::ui::output::OutputHandler;
 use crate::ui::menus::common::{MenuResult, MenuAction, MenuUtils, MenuState};
 use crate::ui::menus::provider_menu::ProviderMenu;
 use crate::ui::menus::model_selector::ModelSelector;
+use crate::ui::menus::api_key_selector::ApiKeySelector;
 use crate::ui::menus::dialogs::Dialogs;
 use anyhow::Result;
 use console::style;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{Event, KeyCode, KeyEventKind, KeyModifiers},
     terminal,
-    cursor::{MoveTo},
-    style::{SetForegroundColor, ResetColor, SetBackgroundColor, Print},
+    style::{SetForegroundColor, ResetColor, Print},
     ExecutableCommand, QueueableCommand,
 };
 use std::io::{stdout, Write};
@@ -64,6 +62,7 @@ pub struct ConfigMenu {
     items: Vec<ConfigMenuItem>,
     provider_menu: ProviderMenu,
     model_selector: ModelSelector,
+    api_key_selector: ApiKeySelector,
     dialogs: Dialogs,
 }
 
@@ -74,6 +73,7 @@ impl ConfigMenu {
             items: ConfigMenuItem::all(),
             provider_menu: ProviderMenu::new(),
             model_selector: ModelSelector::new(),
+            api_key_selector: ApiKeySelector::new(),
             dialogs: Dialogs::new(),
         }
     }
@@ -108,6 +108,10 @@ impl ConfigMenu {
             std::thread::sleep(Duration::from_millis(10));
         }
 
+        // Track state for selective rendering
+        let mut last_selected_index = self.state.selected_index;
+        let mut needs_render = true; // Render first time
+
         loop {
             // Ensure we don't start on non-editable API URL (index 2)
             if self.state.selected_index == 2 && !app.config.is_field_editable(crate::utils::config::ProviderField::ApiUrl) {
@@ -118,8 +122,12 @@ impl ConfigMenu {
                 };
             }
 
-            // Render menu
-            self.render(app, output)?;
+            // Only render if state changed
+            if needs_render || last_selected_index != self.state.selected_index {
+                self.render(app, output)?;
+                last_selected_index = self.state.selected_index;
+                needs_render = false;
+            }
 
             // Wait for input event with timeout
             if crossterm::event::poll(Duration::from_millis(100))? {
@@ -145,6 +153,7 @@ impl ConfigMenu {
                                     }
                                 }
                                 self.state.selected_index = new_index as usize;
+                                needs_render = true;
                             }
                             KeyCode::Down => {
                                 // Custom navigation logic to skip non-editable API URL (index 2)
@@ -160,11 +169,13 @@ impl ConfigMenu {
                                     }
                                 }
                                 self.state.selected_index = new_index as usize;
+                                needs_render = true;
                             }
                             KeyCode::Enter => {
                                 match self.handle_selection(app, output)? {
                                     MenuAction::Continue => {
-                                        // Continue the config menu loop, don't exit
+                                        // Submenu exited, re-render config menu
+                                        needs_render = true;
                                     }
                                     MenuAction::CloseMenu => {
                                         return Ok(MenuResult::BackToMain);
@@ -178,16 +189,23 @@ impl ConfigMenu {
                                 }
                             }
                             KeyCode::Esc => {
+                                // Clear screen before exiting to remove menu display
+                                stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                                stdout().flush()?;
                                 return Ok(MenuResult::BackToMain);
                             }
                             KeyCode::Char('c') if key_event.modifiers == KeyModifiers::CONTROL => {
+                                // Clear screen before exiting to remove menu display
+                                stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                                stdout().flush()?;
                                 return Ok(MenuResult::Exit); // Ctrl+C - exit immediately (will show exit confirmation)
                             }
                             _ => {}
                         }
                     }
                     Event::Resize(_, _) => {
-                        // Continue loop to re-render
+                        // Re-render on resize
+                        needs_render = true;
                     }
                     _ => {
                         // Ignore all other event types
@@ -234,7 +252,7 @@ impl ConfigMenu {
         let start_x = (cols - menu_width) / 2;
         let start_y = (rows - menu_height) / 2;
 
-        // Clear entire screen before each render
+        // Clear screen before rendering to remove submenu remnants
         stdout().execute(terminal::Clear(terminal::ClearType::All))?;
         stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
 
@@ -289,15 +307,10 @@ impl ConfigMenu {
             }
         }
 
-        // Draw modern help text (intercepting box border)
+        // Draw modern help text (intercepting box border - left aligned)
         let help_y = start_y + menu_height - 1;
         let help_text = "↑↓ Edit • Enter Select • ESC Exit";
-        let help_len = help_text.len() as u16;
-        let help_x = if menu_width > help_len + 2 {
-            start_x + menu_width / 2 - help_len / 2
-        } else {
-            start_x + 1
-        };
+        let help_x = start_x + 2; // Left aligned with padding
         stdout().queue(crossterm::cursor::MoveTo(help_x, help_y))?
               .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
               .queue(Print(help_text))?
@@ -440,8 +453,6 @@ impl ConfigMenu {
                 }
                 ConfigMenuItem::AIModel => {
                     self.configure_model(app, output)?;
-                    // Clear screen to prepare for menu re-render (like original overlay_menu.rs)
-                    stdout().execute(terminal::Clear(terminal::ClearType::All))?;
                     // Clear any pending events that might have been generated during the model selector
                     while crossterm::event::poll(Duration::from_millis(0))? {
                         let _ = crossterm::event::read()?;
@@ -453,7 +464,11 @@ impl ConfigMenu {
                     Ok(MenuAction::Continue)
                 }
                 ConfigMenuItem::APIKey => {
-                    self.configure_api_key(app, output)?;
+                    self.api_key_selector.show(app, output)?;
+                    // Clear any pending events that might have been generated during the API key selector
+                    while crossterm::event::poll(Duration::from_millis(0))? {
+                        let _ = crossterm::event::read()?;
+                    }
                     Ok(MenuAction::Continue)
                 }
             }
@@ -489,25 +504,6 @@ impl ConfigMenu {
         Ok(())
     }
 
-    /// Configure API key
-    fn configure_api_key(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
-        let has_key = !app.config.get_api_key().is_empty();
-        let prompt = if has_key {
-            "Enter new API key (leave empty to keep current):"
-        } else {
-            "Enter API key:"
-        };
-
-        if let Some(new_key) = self.dialogs.password_dialog(prompt, output)? {
-            if !new_key.trim().is_empty() {
-                app.config.set_api_key(&new_key);
-                output.print_system("API key updated")?;
-            } else if !has_key {
-                output.print_error("API key cannot be empty")?;
-            }
-        }
-        Ok(())
-    }
 
     /// Reset menu state
     pub fn reset(&mut self) {

@@ -8,12 +8,12 @@ pub mod main_menu;
 pub mod config_menu;
 pub mod provider_menu;
 pub mod model_selector;
+pub mod api_key_selector;
+pub mod exit_menu;
 pub mod dialogs;
 
 // Re-export commonly used types for convenience
-pub use common::{MenuResult, MenuAction};
+pub use common::MenuResult;
 pub use main_menu::MainMenu;
 pub use config_menu::ConfigMenu;
-pub use provider_menu::ProviderMenu;
-pub use model_selector::ModelSelector;
-pub use dialogs::Dialogs;
+pub use exit_menu::ExitMenu;

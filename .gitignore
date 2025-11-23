@@ -19,7 +19,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+.claude-flow/
 # Virtual environments
 .env
 .venv
