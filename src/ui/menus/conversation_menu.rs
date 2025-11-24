@@ -11,6 +11,7 @@ use crossterm::{
 use std::io::{stdout, Write};
 use std::time::Duration;
 use console::style;
+use chrono::{DateTime, Utc};
 
 use crate::app::App;
 use crate::ui::output::OutputHandler;
@@ -32,8 +33,42 @@ impl ConversationMenu {
         }
     }
 
+    /// Format a timestamp as relative time (e.g., "2 hours ago", "just now")
+    fn format_relative_time(timestamp: DateTime<Utc>) -> String {
+        let now = Utc::now();
+        let duration = now.signed_duration_since(timestamp);
+
+        if duration.num_seconds() < 60 {
+            "just now".to_string()
+        } else if duration.num_minutes() < 60 {
+            let minutes = duration.num_minutes();
+            if minutes == 1 {
+                "1 minute ago".to_string()
+            } else {
+                format!("{} minutes ago", minutes)
+            }
+        } else if duration.num_hours() < 24 {
+            let hours = duration.num_hours();
+            if hours == 1 {
+                "1 hour ago".to_string()
+            } else {
+                format!("{} hours ago", hours)
+            }
+        } else if duration.num_days() < 7 {
+            let days = duration.num_days();
+            if days == 1 {
+                "yesterday".to_string()
+            } else {
+                format!("{} days ago", days)
+            }
+        } else {
+            // For older conversations, show the date
+            timestamp.format("%b %d, %Y").to_string()
+        }
+    }
+
     /// Show the conversation selector menu
-    pub fn show(&mut self, app: &mut App, _output: &mut OutputHandler) -> Result<MenuResult> {
+    pub fn show(&mut self, _app: &mut App, _output: &mut OutputHandler) -> Result<MenuResult> {
         // Load conversation list
         let current_dir = std::env::current_dir()?;
         self.conversations = Conversation::list_all(&current_dir)?;
@@ -258,11 +293,11 @@ impl ConversationMenu {
                 let y = items_start_y + i as u16;
                 let is_selected = actual_index == self.selected_index;
 
-                // Format: [Date] Title (N msgs, model)
-                let date = conv.updated_at.format("%Y-%m-%d %H:%M");
+                // Format: [Relative Time] Title (N msgs, model)
+                let relative_time = Self::format_relative_time(conv.updated_at);
                 let line = format!(
                     "[{}] {} ({} msgs, {})",
-                    date, conv.title, conv.message_count, conv.model
+                    relative_time, conv.title, conv.message_count, conv.model
                 );
 
                 // Truncate if too long
@@ -374,7 +409,7 @@ impl ConversationMenu {
 
     fn delete_conversation(&mut self, conversation_id: &str) -> Result<()> {
         // Show confirmation at bottom of menu
-        let (cols, rows) = terminal::size()?;
+        let (_cols, rows) = terminal::size()?;
         let confirm_y = rows - 2;
         let confirm_x = 2;
 

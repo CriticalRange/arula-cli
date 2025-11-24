@@ -4,8 +4,8 @@ use crate::utils::chat::{ChatMessage, MessageType};
 use crate::utils::config::Config;
 use crate::utils::tool_call::{execute_bash_tool, ToolCall, ToolCallResult};
 use anyhow::Result;
+use chrono::Utc;
 use futures::StreamExt;
-use nu_ansi_term::{Color, Style};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -195,6 +195,69 @@ fn summarize_tool_result(result_value: &Value) -> String {
 fn debug_print(msg: &str) {
     if std::env::var("ARULA_DEBUG").is_ok() {
         println!("🔧 DEBUG: {}", msg);
+    }
+}
+
+/// Log AI request/response to .arula/debug.log for debugging
+fn log_ai_interaction(request: &str, context: &[crate::api::api::ChatMessage], response_start: Option<&str>) {
+    let log_dir = Path::new(".arula");
+    if !log_dir.exists() {
+        let _ = std::fs::create_dir_all(log_dir);
+    }
+
+    let log_path = log_dir.join("ai_debug.log");
+
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        use std::io::Write;
+        let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+        let _ = writeln!(file, "\n=== AI Interaction at {} ===", timestamp);
+        let _ = writeln!(file, "USER REQUEST: {}", request);
+        let _ = writeln!(file, "CONTEXT MESSAGES ({} total):", context.len());
+
+        for (i, msg) in context.iter().enumerate() {
+            let _ = writeln!(file, "  [{}]: {} -> {}",
+                i, msg.role,
+                msg.content.as_ref().unwrap_or(&"(no content)".to_string())
+            );
+        }
+
+        if let Some(start) = response_start {
+            let _ = writeln!(file, "AI RESPONSE START: {}", start);
+        }
+        let _ = writeln!(file, "=====================================");
+    }
+}
+
+/// Log AI response chunks to .arula/debug.log
+fn log_ai_response_chunk(chunk: &str) {
+    let log_path = Path::new(".arula").join("ai_debug.log");
+
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "CHUNK: {}", chunk);
+    }
+}
+
+/// Log AI response completion to .arula/debug.log
+fn log_ai_response_complete(final_response: &str) {
+    let log_path = Path::new(".arula").join("ai_debug.log");
+
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "COMPLETE RESPONSE: {}", final_response);
+        let _ = writeln!(file, "=== END AI Interaction ===\n");
     }
 }
 
@@ -491,6 +554,22 @@ The user will manually rebuild after exiting the application.
         // All requests share the same receiver, so tracking commands are never lost
         let track_tx = self.tracking_tx.clone().expect("Tracking channel not initialized");
 
+        // Debug: Print current message count
+        debug_print(&format!("DEBUG: Total messages in self.messages: {}", self.messages.len()));
+        for (i, msg) in self.messages.iter().enumerate() {
+            debug_print(&format!("DEBUG: [{}] {:?} -> {}", i, msg.message_type,
+                if msg.content.len() > 50 {
+                    // Use char boundaries to safely truncate
+                    let safe_end = msg.content.char_indices().nth(50)
+                        .map(|(idx, _)| idx)
+                        .unwrap_or(msg.content.len());
+                    format!("{}...", &msg.content[..safe_end])
+                } else {
+                    msg.content.clone()
+                }
+            ));
+        }
+
         // Convert chat messages to API format for agent
         let api_messages: Vec<crate::api::api::ChatMessage> = self
             .messages
@@ -512,6 +591,11 @@ The user will manually rebuild after exiting the application.
                 }
             })
             .collect();
+
+        debug_print(&format!("DEBUG: API messages after filtering: {}", api_messages.len()));
+
+        // Log the AI interaction for debugging
+        log_ai_interaction(message, &api_messages, None);
 
         // Send message using modern agent in background
         let msg = message.to_string();
@@ -548,6 +632,9 @@ The user will manually rebuild after exiting the application.
                                             Some(ContentBlock::Text { text }) => {
                                                 // Accumulate text for tracking
                                                 accumulated_text.push_str(&text);
+
+                                                // Log response chunk
+                                                log_ai_response_chunk(&text);
 
                                                 let _ = tx.send(AiResponse::AgentStreamText(text.clone()));
                                                 if let Some(ref printer) = external_printer {
@@ -637,6 +724,9 @@ The user will manually rebuild after exiting the application.
                             // IMMEDIATELY save AI response to conversation (user's brilliant idea!)
                             // This happens BEFORE printing to ExternalPrinter, ensuring JSON is updated instantly
                             if !accumulated_text.is_empty() {
+                                // Log the complete response
+                                log_ai_response_complete(&accumulated_text);
+
                                 debug_print(&format!("DEBUG: Immediately saving assistant message to shared conversation ({} chars)", accumulated_text.len()));
 
                                 if let Ok(mut conv_guard) = shared_conv.lock() {

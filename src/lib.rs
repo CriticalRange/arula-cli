@@ -13,3 +13,4 @@ pub use app::App;
 pub use utils::colors::{ColorTheme, helpers};
 pub use ui::output::OutputHandler;
 pub use ui::reedline_input::{ReedlineInput, AiState};
+pub use api::api::Usage;

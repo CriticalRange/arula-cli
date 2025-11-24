@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use serde_json;
+use serde_yaml; // Only for migration
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -121,7 +123,7 @@ pub enum ProviderField {
 impl Config {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = fs::read_to_string(path)?;
-        let mut config: Config = serde_yaml::from_str(&content)?;
+        let mut config: Config = serde_json::from_str(&content)?;
 
         // Migrate legacy config if present
         config.migrate_legacy_config();
@@ -135,28 +137,53 @@ impl Config {
             fs::create_dir_all(parent)?;
         }
 
-        let content = serde_yaml::to_string(self)?;
+        let content = serde_json::to_string_pretty(self)?;
         fs::write(path, content)?;
         Ok(())
     }
 
     pub fn get_config_path() -> String {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        format!("{}/.arula/config.yaml", home)
+        format!("{}/.arula/config.json", home)
     }
 
     pub fn load_or_default() -> Result<Self> {
         let config_path = Self::get_config_path();
         let config_file = Path::new(&config_path);
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let old_yaml_path = format!("{}/.arula/config.yaml", home);
 
-        // Try to load existing config
+        // Try to load JSON config first
         if config_file.exists() {
             if let Ok(config) = Self::load_from_file(config_file) {
                 return Ok(config);
             }
         }
 
-        // Return default config if loading fails
+        // Check for old YAML config and migrate it
+        let old_yaml_file = Path::new(&old_yaml_path);
+        if old_yaml_file.exists() {
+            println!("🔄 Migrating config from YAML to JSON...");
+            if let Ok(yaml_content) = fs::read_to_string(&old_yaml_file) {
+                // Try to parse as YAML and convert to JSON
+                match serde_yaml::from_str::<Config>(&yaml_content) {
+                    Ok(config) => {
+                        // Save as JSON
+                        config.save_to_file(&config_path)?;
+                        println!("✅ Config migrated to JSON: {}", config_path);
+
+                        // Remove old YAML file
+                        let _ = fs::remove_file(&old_yaml_file);
+                        return Ok(config);
+                    }
+                    Err(e) => {
+                        println!("❌ Failed to migrate YAML config: {}", e);
+                    }
+                }
+            }
+        }
+
+        // Return default config if loading/migration fails
         Ok(Self::default())
     }
 
@@ -530,11 +557,11 @@ mod tests {
             "key-test-123"
         );
 
-        // Serialize to YAML
-        let yaml = serde_yaml::to_string(&original)?;
+        // Serialize to JSON
+        let json = serde_json::to_string(&original)?;
 
-        // Deserialize from YAML
-        let deserialized: Config = serde_yaml::from_str(&yaml)?;
+        // Deserialize from JSON
+        let deserialized: Config = serde_json::from_str(&json)?;
 
         assert_eq!(original.active_provider, deserialized.active_provider);
         assert_eq!(original.get_model(), deserialized.get_model());

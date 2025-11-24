@@ -190,7 +190,7 @@ impl Dialogs {
         &self,
         message: &str,
         selected_yes: bool,
-        output: &mut OutputHandler,
+        _output: &mut OutputHandler,
     ) -> Result<()> {
         let (cols, rows) = crossterm::terminal::size()?;
         let dialog_width = 40.min(cols);
@@ -251,7 +251,7 @@ impl Dialogs {
         prompt: &str,
         input: &str,
         cursor_pos: usize,
-        output: &mut OutputHandler,
+        _output: &mut OutputHandler,
     ) -> Result<()> {
         let (cols, rows) = crossterm::terminal::size()?;
         let dialog_width = 60.min(cols);
@@ -305,7 +305,7 @@ impl Dialogs {
         &self,
         prompt: &str,
         password_len: usize,
-        output: &mut OutputHandler,
+        _output: &mut OutputHandler,
     ) -> Result<()> {
         let (cols, rows) = crossterm::terminal::size()?;
         let dialog_width = 60.min(cols);
@@ -361,7 +361,7 @@ impl Dialogs {
         &self,
         title: &str,
         message: &str,
-        output: &mut OutputHandler,
+        _output: &mut OutputHandler,
     ) -> Result<()> {
         let (cols, rows) = crossterm::terminal::size()?;
         let dialog_width = 50.min(cols);

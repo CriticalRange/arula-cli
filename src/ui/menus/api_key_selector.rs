@@ -231,7 +231,7 @@ impl ApiKeySelector {
     }
 
     /// Input API key with inline rendering (modern pattern)
-    fn input_api_key(&self, has_existing: bool, output: &mut OutputHandler) -> Result<Option<String>> {
+    fn input_api_key(&self, has_existing: bool, _output: &mut OutputHandler) -> Result<Option<String>> {
         let prompt = if has_existing {
             "Enter new API key (leave empty to keep current):"
         } else {

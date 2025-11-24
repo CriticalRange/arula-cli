@@ -1,5 +1,6 @@
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
+use serde_json;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MessageType {
@@ -505,11 +506,11 @@ mod tests {
     }
 
     #[test]
-    fn test_yaml_serialization() {
-        let message = ChatMessage::new_user_message("YAML test");
+    fn test_json_serialization() {
+        let message = ChatMessage::new_user_message("JSON test");
 
-        let yaml_str = serde_yaml::to_string(&message).unwrap();
-        let deserialized: ChatMessage = serde_yaml::from_str(&yaml_str).unwrap();
+        let json_str = serde_json::to_string(&message).unwrap();
+        let deserialized: ChatMessage = serde_json::from_str(&json_str).unwrap();
 
         assert_eq!(message.message_type, deserialized.message_type);
         assert_eq!(message.content, deserialized.content);

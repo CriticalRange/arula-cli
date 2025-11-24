@@ -34,7 +34,7 @@ impl ProviderMenu {
     }
 
     /// Display and handle the provider selection menu (1:1 from overlay_menu.rs)
-    pub fn show(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
+    pub fn show(&mut self, app: &mut App, _output: &mut OutputHandler) -> Result<()> {
         let current_config = app.get_config();
         let current_idx = self.providers
             .iter()

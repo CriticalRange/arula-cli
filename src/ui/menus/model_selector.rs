@@ -412,31 +412,31 @@ impl ModelSelector {
     }
 
     /// Get OpenAI models with loading state
-    fn get_openai_models(&self, app: &App, output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
+    fn get_openai_models(&self, app: &App, _output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
         app.fetch_openai_models();
         Ok((vec!["Fetching models...".to_string()], true))
     }
 
     /// Get Anthropic models with loading state
-    fn get_anthropic_models(&self, app: &App, output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
+    fn get_anthropic_models(&self, app: &App, _output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
         app.fetch_anthropic_models();
         Ok((vec!["Fetching models...".to_string()], true))
     }
 
     /// Get Ollama models with loading state
-    fn get_ollama_models(&self, app: &App, output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
+    fn get_ollama_models(&self, app: &App, _output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
         app.fetch_ollama_models();
         Ok((vec!["Fetching models...".to_string()], true))
     }
 
     /// Get Z.AI models with loading state
-    fn get_zai_models(&self, app: &App, output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
+    fn get_zai_models(&self, app: &App, _output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
         app.fetch_zai_models();
         Ok((vec!["Fetching models...".to_string()], true))
     }
 
     /// Get OpenRouter models with loading state
-    fn get_openrouter_models(&self, app: &App, output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
+    fn get_openrouter_models(&self, app: &App, _output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
         app.fetch_openrouter_models();
         Ok((vec!["Fetching models...".to_string()], true))
     }

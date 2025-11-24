@@ -6,11 +6,9 @@ use anyhow::Result;
 use clap::Parser;
 use crossterm::{
     cursor::{self, SetCursorStyle},
-    event::{self, Event, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{self, enable_raw_mode, disable_raw_mode},
+    terminal::{self, disable_raw_mode},
     ExecutableCommand,
-    QueueableCommand,
 };
 use std::io::Write;
 use serde_json::Value;
@@ -78,7 +76,7 @@ fn show_main_menu(main_menu: &mut MainMenu, app: &mut App, output: &mut OutputHa
             // Load the selected conversation
             match app.load_conversation(&conversation_id) {
                 Ok(()) => {
-                    output.print_system(&format!("✓ Loaded conversation: {}", conversation_id))?;
+                    output.print_system("📚 Conversation loaded")?;
                     output.print_system("")?;
 
                     // Display all loaded messages

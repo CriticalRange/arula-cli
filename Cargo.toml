@@ -35,9 +35,10 @@ indicatif = "0.17"
 fastrand = "2.0"
 syntect = "5.0"
 termimad = "0.20"
-serde_yaml = "0.9"
 base64 = "0.22"
 rusty-tesseract = "1.1"
+# Temporary: for YAML to JSON migration (can be removed after migration)
+serde_yaml = "0.9"
 urlencoding = "2.1"
 diff = "0.1"
 # Visioneer dependencies - Real implementations (Windows only)

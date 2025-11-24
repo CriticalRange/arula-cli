@@ -197,6 +197,61 @@ impl Conversation {
         format!("msg_{:03}", self.messages.len() + 1)
     }
 
+    /// Generate a meaningful title from a user message
+    fn generate_title_from_message(content: &str) -> Option<String> {
+        let content = content.trim();
+
+        // Skip empty or very short messages
+        if content.len() < 3 {
+            return None;
+        }
+
+        // Common greetings that don't make good titles
+        let greetings = ["hi", "hello", "hey", "yo", "sup", "good morning", "good afternoon"];
+        if greetings.iter().any(|greeting| content.eq_ignore_ascii_case(greeting)) {
+            return None;
+        }
+
+        // Split into words and take first meaningful words
+        let words: Vec<&str> = content
+            .split_whitespace()
+            .take(6) // Take first 6 words max
+            .collect();
+
+        if words.is_empty() {
+            return None;
+        }
+
+        // Build title, ensuring it's not too long
+        let mut title = words.join(" ");
+
+        // Remove trailing punctuation that doesn't look good in titles
+        title = title.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':' | '!' | '?')).to_string();
+
+        // Ensure title is reasonable length
+        if title.len() > 60 {
+            if let Some(space_pos) = title.rfind(' ') {
+                title.truncate(space_pos);
+            } else {
+                title.truncate(57);
+                title.push_str("...");
+            }
+        }
+
+        // Capitalize first letter
+        if !title.is_empty() {
+            title = title.chars().enumerate().map(|(i, c)| {
+                if i == 0 {
+                    c.to_uppercase().collect::<String>()
+                } else {
+                    c.to_string()
+                }
+            }).collect();
+        }
+
+        Some(title)
+    }
+
     /// Add a user message
     pub fn add_user_message(&mut self, content: String) -> String {
         let msg_id = self.generate_message_id();
@@ -204,7 +259,7 @@ impl Conversation {
             id: msg_id.clone(),
             timestamp: Utc::now(),
             role: "user".to_string(),
-            content: Some(serde_json::Value::String(content)),
+            content: Some(serde_json::Value::String(content.clone())),
             tool_calls: None,
             tool_call_id: None,
             tool_name: None,
@@ -220,6 +275,13 @@ impl Conversation {
         self.metadata.message_count = self.messages.len();
         self.metadata.updated_at = Utc::now();
         self.statistics.total_user_messages += 1;
+
+        // Auto-generate title for first user message if still default
+        if self.messages.len() == 1 && self.metadata.title == "New Conversation" {
+            if let Some(generated_title) = Self::generate_title_from_message(&content) {
+                self.metadata.title = generated_title;
+            }
+        }
 
         msg_id
     }
