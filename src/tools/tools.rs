@@ -6,6 +6,7 @@ use memmap2::MmapOptions;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command as TokioCommand;
 use console::style;
+use base64::Engine;
 
 /// Parameters for the bash tool
 #[derive(Debug, Deserialize)]
@@ -2203,7 +2204,7 @@ async fn get_dominant_color(&self, img: &Mat, rect: &Rect) -> Result<String, Str
     }
 
     /// Real click execution with element finding using OCR and UI automation
-    async fn execute_click(&self, _target: &str, click_target: ClickTarget, button: Option<ClickButton>, double_click: bool) -> Result<VisioneerResult, String> {
+    async fn execute_click(&self, target: &str, click_target: ClickTarget, button: Option<ClickButton>, double_click: bool) -> Result<VisioneerResult, String> {
         let start_time = std::time::Instant::now();
 
         #[cfg(target_os = "windows")]
@@ -4311,8 +4312,9 @@ impl crate::api::agent::Tool for QuestionTool {
     }
 }
 
-/// Factory function to create a default tool registry with Visioneer enabled
-pub fn create_default_tool_registry() -> crate::api::agent::ToolRegistry {
+/// Factory function to create a default tool registry with Visioneer tools
+/// MCP tools are initialized separately to avoid runtime conflicts
+pub fn create_default_tool_registry(config: &crate::utils::config::Config) -> crate::api::agent::ToolRegistry {
     use crate::api::agent::ToolRegistry;
 
     let mut registry = ToolRegistry::new();
@@ -4328,5 +4330,31 @@ pub fn create_default_tool_registry() -> crate::api::agent::ToolRegistry {
     registry.register(VisioneerTool::new());
     registry.register(QuestionTool::new());
 
+    // Note: MCP tools are initialized separately in initialize_mcp_tools_async
+    // to avoid tokio runtime conflicts
+
     registry
+}
+
+/// Initialize MCP tools asynchronously and add them to the registry
+pub async fn initialize_mcp_tools(registry: &mut crate::api::agent::ToolRegistry, config: &crate::utils::config::Config) -> Result<(), String> {
+    use crate::tools::mcp_dynamic;
+
+    match mcp_dynamic::initialize_dynamic_mcp_tools(config).await {
+        Ok(tool_count) => {
+            eprintln!("✅ Discovered {} dynamic MCP tools", tool_count);
+            if let Err(e) = mcp_dynamic::register_dynamic_mcp_tools(registry).await {
+                eprintln!("⚠️ Failed to register dynamic MCP tools: {}", e);
+                return Err(e);
+            } else {
+                eprintln!("✅ Registered dynamic MCP tools successfully");
+            }
+        }
+        Err(e) => {
+            eprintln!("⚠️ Failed to initialize dynamic MCP tools: {}", e);
+            return Err(e);
+        }
+    }
+
+    Ok(())
 }

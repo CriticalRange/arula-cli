@@ -4,3 +4,5 @@
 
 pub mod tools;
 pub mod visioneer;
+pub mod mcp;
+pub mod mcp_dynamic;

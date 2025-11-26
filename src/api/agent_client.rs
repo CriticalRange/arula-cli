@@ -6,9 +6,10 @@
 use crate::api::agent::{AgentOptions, ContentBlock, ToolRegistry, ToolResult};
 use crate::api::api::{ApiClient, ChatMessage, StreamingResponse};
 use crate::tools::tools::create_default_tool_registry;
+use crate::utils::config::Config;
 use anyhow::Result;
 use futures::Stream;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::pin::Pin;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -25,14 +26,31 @@ pub struct AgentClient {
     api_client: ApiClient,
     tool_registry: ToolRegistry,
     options: AgentOptions,
+    config: crate::utils::config::Config,
 }
 
 impl Clone for AgentClient {
     fn clone(&self) -> Self {
+        // For Clone, we need to create a new registry but Clone is sync
+        // So we'll create a minimal registry without MCP tools for cloning
+        let mut registry = crate::api::agent::ToolRegistry::new();
+
+        // Register basic tools (non-MCP)
+        registry.register(crate::tools::tools::BashTool::new());
+        registry.register(crate::tools::tools::FileReadTool::new());
+        registry.register(crate::tools::tools::FileEditTool::new());
+        registry.register(crate::tools::tools::WriteFileTool::new());
+        registry.register(crate::tools::tools::ListDirectoryTool::new());
+        registry.register(crate::tools::tools::SearchTool::new());
+        registry.register(crate::tools::tools::WebSearchTool::new());
+        registry.register(crate::tools::tools::VisioneerTool::new());
+        registry.register(crate::tools::tools::QuestionTool::new());
+
         Self {
             api_client: self.api_client.clone(),
-            tool_registry: create_default_tool_registry(), // Recreate registry
+            tool_registry: registry,
             options: self.options.clone(),
+            config: self.config.clone(),
         }
     }
 }
@@ -45,21 +63,24 @@ impl AgentClient {
         api_key: String,
         model: String,
         options: AgentOptions,
+        config: &crate::utils::config::Config,
     ) -> Self {
         let api_client = ApiClient::new(provider, endpoint, api_key, model);
-        let tool_registry = create_default_tool_registry();
+        let tool_registry = create_default_tool_registry(config);
 
         Self {
             api_client,
             tool_registry,
             options,
+            config: config.clone(),
         }
     }
 
     /// Create an agent client from existing config
     pub fn from_config(provider: String, endpoint: String, api_key: String, model: String) -> Self {
         let options = AgentOptions::default();
-        Self::new(provider, endpoint, api_key, model, options)
+        let config = Config::default(); // Create default config for MCP discovery
+        Self::new(provider, endpoint, api_key, model, options, &config)
     }
 
     /// Send a message and get a streaming response
@@ -74,11 +95,31 @@ impl AgentClient {
         // Start streaming request with tools
         let (tx, rx) = mpsc::unbounded_channel();
         let api_client = self.api_client.clone();
-        let tools = self.tool_registry.get_openai_tools();
+        // Filter tools to only include working MCP servers
+        let all_tools = self.tool_registry.get_openai_tools();
+        let tools: Vec<Value> = all_tools.into_iter().filter(|tool| {
+            if let Some(function) = tool.get("function") {
+                if let Some(name) = function.get("name").and_then(|n| n.as_str()) {
+                    // Filter out legacy MCP tools
+                    if matches!(name, "mcp_call" | "mcp_list_tools") {
+                        return false;
+                    }
+
+                    // For now, filter out dynamic MCP tools to prevent broken tools from reaching AI
+                    // TODO: Implement proper validation in a future update
+                    if name.starts_with("mcp_") {
+                        eprintln!("⚠️ MCP Filtering: Excluding MCP tool '{}' to prevent broken tool calls", name);
+                        return false;
+                    }
+                }
+            }
+            true
+        }).collect();
         let auto_execute_tools = self.options.auto_execute_tools;
         let max_tool_iterations = self.options.max_tool_iterations;
 
         let debug = self.options.debug;
+        let config = self.config.clone();
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             if let Err(e) = Self::handle_streaming_response(
@@ -89,6 +130,7 @@ impl AgentClient {
                 auto_execute_tools,
                 max_tool_iterations,
                 debug,
+                &config,
             )
             .await
             {
@@ -104,8 +146,28 @@ impl AgentClient {
         self.tool_registry.register(tool);
     }
 
-    /// Get available tools
-    pub fn get_available_tools(&self) -> Vec<&str> {
+    /// Initialize MCP tools lazily (called when needed)
+    async fn ensure_mcp_tools_initialized(&mut self) {
+        // Check if MCP tools are already initialized by looking for MCP server tools
+        let has_mcp_tools = self.tool_registry.get_tools().iter().any(|tool| {
+            tool.starts_with("__mcp_") || tool.starts_with("mcp_")
+        });
+
+        if !has_mcp_tools {
+            if let Err(e) = crate::tools::tools::initialize_mcp_tools(&mut self.tool_registry, &self.config).await {
+                eprintln!("⚠️ Failed to initialize MCP tools: {}", e);
+            }
+        }
+    }
+
+    /// Get available tools (with lazy MCP initialization)
+    pub async fn get_available_tools(&mut self) -> Vec<String> {
+        self.ensure_mcp_tools_initialized().await;
+        self.tool_registry.get_tools().into_iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Get available tools (sync version without MCP initialization)
+    pub fn get_available_tools_sync(&self) -> Vec<&str> {
         self.tool_registry.get_tools()
     }
 
@@ -154,8 +216,37 @@ impl AgentClient {
         auto_execute_tools: bool,
         _max_tool_iterations: u32,
         debug: bool,
+        config: &crate::utils::config::Config,
     ) -> Result<()> {
-        let tool_registry = create_default_tool_registry();
+        let mut tool_registry = create_default_tool_registry(config);
+
+        // Initialize MCP tools if available
+        if let Err(e) = crate::tools::tools::initialize_mcp_tools(&mut tool_registry, config).await {
+            eprintln!("⚠️ Failed to initialize MCP tools in streaming response: {}", e);
+        }
+
+        // Filter tools to only include functional MCP servers
+        let all_tools = tool_registry.get_openai_tools();
+        let tools: Vec<Value> = all_tools.into_iter().filter(|tool| {
+            if let Some(function) = tool.get("function") {
+                if let Some(name) = function.get("name").and_then(|n| n.as_str()) {
+                    // Filter out legacy MCP tools
+                    if matches!(name, "mcp_call" | "mcp_list_tools") {
+                        return false;
+                    }
+
+                    // For dynamic MCP tools (mcp_server_name), verify they're actually functional
+                    if name.starts_with("mcp_") {
+                        // For now, skip MCP tools in streaming response to avoid complex validation
+                        // TODO: Implement async validation for streaming context
+                        eprintln!("⚠️ MCP Streaming: Skipping MCP tool '{}' in streaming context", name);
+                        return false;
+                    }
+                }
+            }
+            true
+        }).collect();
+
         let mut current_messages = messages;
 
         loop {

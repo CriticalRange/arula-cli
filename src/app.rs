@@ -371,7 +371,7 @@ impl App {
     }
 
     /// Build comprehensive system prompt from ARULA.md files
-    fn build_system_prompt() -> String {
+    fn build_system_prompt(&self) -> String {
         let mut prompt_parts = Vec::new();
 
         // Base ARULA personality
@@ -410,7 +410,60 @@ The user will manually rebuild after exiting the application.
             prompt_parts.push(format!("\n## Current Project Context\n{}", local_arula));
         }
 
+        // Add MCP tool information
+        prompt_parts.push(self.build_mcp_tool_info());
+
         prompt_parts.join("\n")
+    }
+
+    /// Build MCP tool information for the AI
+    fn build_mcp_tool_info(&self) -> String {
+        let mut info = String::new();
+
+        // MCP Tools section
+        info.push_str("\n## MCP (Model Context Protocol) Tools\n");
+        info.push_str("You have access to MCP servers for extended capabilities. Here are the available MCP tools:\n\n");
+
+        info.push_str("### 1. mcp_call - Call a tool from a configured MCP server\n");
+        info.push_str("**Usage:** `mcp_call(server=\"server_id\", action=\"tool_name\", parameters={...})`\n");
+        info.push_str("**Parameters:**\n");
+        info.push_str("- `server` (string, required): The MCP server ID (e.g., \"context7\")\n");
+        info.push_str("- `action` (string, required): The tool name to call on the MCP server\n");
+        info.push_str("- `parameters` (object, optional): Parameters for the tool call\n\n");
+
+        info.push_str("### 2. mcp_list_tools - List all available MCP tools\n");
+        info.push_str("**Usage:** `mcp_list_tools()`\n");
+        info.push_str("**Returns:** List of all available tools from configured MCP servers\n\n");
+
+        // Add information about configured servers
+        let mcp_servers = self.config.get_mcp_servers();
+        if !mcp_servers.is_empty() {
+            info.push_str("### Configured MCP Servers:\n");
+            for (server_id, _config) in mcp_servers {
+                match server_id.as_str() {
+                    "context7" => {
+                        info.push_str(&format!("- **{}**: Context7 library documentation server\n", server_id));
+                        info.push_str("  - Use for: Getting Rust library documentation, examples, and API information\n");
+                        info.push_str("  - Available tools:\n");
+                        info.push_str("    * resolve-library-id: Resolves a library name to Context7-compatible library ID\n");
+                        info.push_str("      - Parameters: {\"libraryName\": \"<library_name>\" (string, required)}\n");
+                        info.push_str("      - Example: mcp_call(server=\"context7\", action=\"resolve-library-id\", parameters={\"libraryName\": \"tokio\"})\n");
+                        info.push_str("    * get-library-docs: Fetches documentation for a specific library\n");
+                        info.push_str("      - Parameters: {\"context7CompatibleLibraryID\": \"<library_id>\" (string, required)}\n");
+                        info.push_str("      - Example: mcp_call(server=\"context7\", action=\"get-library-docs\", parameters={\"context7CompatibleLibraryID\": \"/tokio/tokio\"})\n");
+                        info.push_str("  - Recommended workflow: First call resolve-library-id, then use the returned ID with get-library-docs\n\n");
+                    }
+                    _ => {
+                        info.push_str(&format!("- **{}**: Custom MCP server\n", server_id));
+                        info.push_str("  - Use `mcp_list_tools()` to discover available tools\n\n");
+                    }
+                }
+            }
+        }
+
+        info.push_str("**Important:** Always check what tools are available on each server before calling them. Use `mcp_list_tools()` first to discover capabilities.");
+
+        info
     }
 
     /// Detect if running from cargo (development mode)
@@ -470,7 +523,7 @@ The user will manually rebuild after exiting the application.
     pub fn initialize_agent_client(&mut self) -> Result<()> {
         // Initialize modern agent client with default options
         let agent_options = AgentOptionsBuilder::new()
-            .system_prompt(&Self::build_system_prompt())
+            .system_prompt(&self.build_system_prompt())
             .model(&self.config.get_model())
             .auto_execute_tools(true)
             .max_tool_iterations(1000)
@@ -483,9 +536,25 @@ The user will manually rebuild after exiting the application.
             self.config.get_api_key(),
             self.config.get_model(),
             agent_options,
+            &self.config,
         ));
 
+        // Initialize MCP tools in background (non-blocking)
+        self.initialize_mcp_tools_async();
+
         Ok(())
+    }
+
+    fn initialize_mcp_tools_async(&mut self) {
+        use crate::tools::mcp::McpTool;
+
+        // Initialize global MCP manager in background
+        let config = self.config.clone();
+        tokio::spawn(async move {
+            McpTool::update_global_config(config).await;
+        });
+
+        // MCP tools will be initialized lazily when needed to avoid runtime conflicts
     }
 
     pub fn get_config(&self) -> &Config {

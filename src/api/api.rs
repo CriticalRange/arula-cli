@@ -225,6 +225,31 @@ impl ApiClient {
                     }
                 });
             }
+            AIProvider::OpenRouter => {
+                debug_print("DEBUG: Using OpenRouter provider in send_message_stream");
+                // Use OpenAI-compatible format for OpenRouter
+                let client = self.clone();
+                tokio::spawn(async move {
+                    match client.send_openai_request(messages).await {
+                        Ok(response) => {
+                            debug_print(&format!(
+                                "DEBUG: OpenRouter response with tool_calls: {:?}",
+                                response.tool_calls.is_some()
+                            ));
+                            let _ = tx.send(StreamingResponse::Start);
+                            let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
+                            let _ = tx.send(StreamingResponse::End(response));
+                        }
+                        Err(e) => {
+                            debug_print(&format!("DEBUG: OpenRouter request error: {}", e));
+                            let _ = tx.send(StreamingResponse::Error(format!(
+                                "OpenRouter request error: {}",
+                                e
+                            )));
+                        }
+                    }
+                });
+            }
             _ => {
                 // Fallback to non-streaming for other providers
                 let client = self.clone();
@@ -235,6 +260,7 @@ impl ApiClient {
                         AIProvider::Ollama => client.send_ollama_request(messages).await,
                         AIProvider::ZAiCoding => client.send_zai_request(messages).await,
                         AIProvider::Custom => client.send_custom_request(messages).await,
+                        AIProvider::OpenRouter => client.send_openai_request(messages).await, // OpenRouter uses OpenAI-compatible format
                         _ => Err(anyhow::anyhow!("Unsupported provider")),
                     };
 
@@ -301,6 +327,31 @@ impl ApiClient {
                     }
                 });
             }
+            AIProvider::OpenRouter => {
+                debug_print("DEBUG: Using OpenRouter provider in send_message_stream");
+                // Use OpenAI-compatible format for OpenRouter
+                let client = self.clone();
+                tokio::spawn(async move {
+                    match client.send_openai_request(messages).await {
+                        Ok(response) => {
+                            debug_print(&format!(
+                                "DEBUG: OpenRouter response with tool_calls: {:?}",
+                                response.tool_calls.is_some()
+                            ));
+                            let _ = tx.send(StreamingResponse::Start);
+                            let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
+                            let _ = tx.send(StreamingResponse::End(response));
+                        }
+                        Err(e) => {
+                            debug_print(&format!("DEBUG: OpenRouter request error: {}", e));
+                            let _ = tx.send(StreamingResponse::Error(format!(
+                                "OpenRouter request error: {}",
+                                e
+                            )));
+                        }
+                    }
+                });
+            }
             _ => {
                 // Fallback to non-streaming for other providers
                 let client = self.clone();
@@ -309,7 +360,7 @@ impl ApiClient {
                         AIProvider::Claude => client.send_claude_request(messages).await,
                         AIProvider::Ollama => client.send_ollama_request(messages).await,
                         AIProvider::ZAiCoding => client.send_zai_request(messages).await,
-                        AIProvider::OpenRouter => client.send_openrouter_request(messages).await,
+                        AIProvider::OpenRouter => client.send_openai_request(messages).await, // OpenRouter uses OpenAI-compatible format
                         AIProvider::Custom => client.send_custom_request(messages).await,
                         _ => Err(anyhow::anyhow!("Unsupported provider")),
                     };

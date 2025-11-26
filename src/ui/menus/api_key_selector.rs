@@ -93,7 +93,11 @@ impl ApiKeySelector {
                                         if let Some(new_key) = self.input_api_key(has_key, output)? {
                                             if !new_key.trim().is_empty() {
                                                 app.config.set_api_key(&new_key);
-                                                output.print_system("✅ API key updated successfully")?;
+                                                if let Err(e) = app.config.save() {
+                                                    output.print_error(&format!("Failed to save config: {}", e))?;
+                                                } else {
+                                                    output.print_system("✅ API key updated successfully")?;
+                                                }
                                             } else if !has_key {
                                                 output.print_error("⚠️ API key cannot be empty")?;
                                             }
@@ -103,7 +107,11 @@ impl ApiKeySelector {
                                         // Clear API Key (only available if has_key is true)
                                         if has_key {
                                             app.config.set_api_key("");
-                                            output.print_system("✅ API key cleared")?;
+                                            if let Err(e) = app.config.save() {
+                                                output.print_error(&format!("Failed to save config: {}", e))?;
+                                            } else {
+                                                output.print_system("✅ API key cleared")?;
+                                            }
                                         }
                                     }
                                     _ => {}

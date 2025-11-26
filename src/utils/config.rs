@@ -14,6 +14,11 @@ pub struct Config {
     /// Provider-specific configurations
     pub providers: HashMap<String, ProviderConfig>,
 
+    /// MCP server configurations
+    #[serde(skip_serializing_if = "HashMap::is_empty", default = "HashMap::new")]
+    #[serde(rename = "mcpServers")]
+    pub mcp_servers: HashMap<String, McpServerConfig>,
+
     /// Legacy field for backward compatibility (deprecated)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ai: Option<AiConfig>,
@@ -25,6 +30,17 @@ pub struct ProviderConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_url: Option<String>,
     pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    pub url: String,
+    #[serde(skip_serializing_if = "HashMap::is_empty", default = "HashMap::new")]
+    pub headers: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retries: Option<u32>,
 }
 
 /// Legacy config structure for backward compatibility
@@ -283,6 +299,33 @@ impl Config {
         names
     }
 
+    /// Get all configured MCP servers
+    pub fn get_mcp_servers(&self) -> &HashMap<String, McpServerConfig> {
+        &self.mcp_servers
+    }
+
+    /// Get specific MCP server configuration
+    pub fn get_mcp_server(&self, server_id: &str) -> Option<&McpServerConfig> {
+        self.mcp_servers.get(server_id)
+    }
+
+    /// Add or update an MCP server configuration
+    pub fn set_mcp_server(&mut self, server_id: &str, config: McpServerConfig) {
+        self.mcp_servers.insert(server_id.to_string(), config);
+    }
+
+    /// Remove an MCP server configuration
+    pub fn remove_mcp_server(&mut self, server_id: &str) -> Option<McpServerConfig> {
+        self.mcp_servers.remove(server_id)
+    }
+
+    /// Get list of all MCP server IDs
+    pub fn get_mcp_server_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.mcp_servers.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
     /// Check if a field is editable for the current provider
     pub fn is_field_editable(&self, field: ProviderField) -> bool {
         match self.active_provider.to_lowercase().as_str() {
@@ -332,6 +375,7 @@ impl Config {
         Self {
             active_provider: "openai".to_string(),
             providers,
+            mcp_servers: HashMap::new(),
             ai: None,
         }
     }
@@ -353,6 +397,7 @@ impl Config {
         Self {
             active_provider: "z.ai coding plan".to_string(),
             providers,
+            mcp_servers: HashMap::new(),
             ai: None,
         }
     }
@@ -372,6 +417,7 @@ impl Config {
         Self {
             active_provider: provider.to_string(),
             providers,
+            mcp_servers: HashMap::new(),
             ai: None,
         }
     }
