@@ -286,6 +286,13 @@ impl AgentClient {
                         if let Some(tool_calls) = api_response.tool_calls {
                             response_tools.extend(tool_calls);
                         }
+
+                        // Send reasoning content if available (for Z.AI thinking mode)
+                        if let Some(reasoning) = &api_response.reasoning_content {
+                            if !reasoning.is_empty() {
+                                let _ = tx.send(ContentBlock::reasoning(reasoning.clone()));
+                            }
+                        }
                         break;
                     }
                     StreamingResponse::Error(err) => {

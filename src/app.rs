@@ -266,6 +266,7 @@ fn log_ai_response_complete(final_response: &str) {
 pub enum AiResponse {
     AgentStreamStart,
     AgentStreamText(String),
+    AgentReasoningContent(String),
     AgentToolCall {
         id: String,
         name: String,
@@ -790,6 +791,21 @@ The user will manually rebuild after exiting the application.
                                                     }
                                                 }
                                             }
+                                            Some(ContentBlock::Reasoning { reasoning }) => {
+                                                // Send reasoning content to stream
+                                                let _ = tx.send(AiResponse::AgentReasoningContent(reasoning.clone()));
+
+                                                if let Some(ref printer) = external_printer {
+                                                    // Display reasoning with special formatting
+                                                    for line in reasoning.lines() {
+                                                        // Use cyan color and "🧠" prefix for thinking content
+                                                        let _ = printer.send(format!("{}{}\n",
+                                                            console::style("🧠 ").cyan(),
+                                                            console::style(line).cyan()
+                                                        ));
+                                                    }
+                                                }
+                                            }
                                             Some(ContentBlock::ToolCall {
                                                 id,
                                                 name,
@@ -989,6 +1005,12 @@ The user will manually rebuild after exiting the application.
                             if let Some(msg) = &mut self.current_streaming_message {
                                 msg.push_str(&text);
                             }
+                        }
+                        AiResponse::AgentReasoningContent(reasoning) => {
+                            // Store reasoning content for conversation history
+                            // Could be accumulated, but for now we'll just track it
+                            // Note: Reasoning content is displayed directly via external printer
+                            // but we may want to store it for conversation history
                         }
                         AiResponse::AgentToolCall {
                             id,

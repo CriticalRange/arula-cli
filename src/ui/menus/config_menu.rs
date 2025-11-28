@@ -246,7 +246,7 @@ impl ConfigMenu {
         let web_search_enabled = config.get_active_provider_config()
             .and_then(|c| c.web_search_enabled)
             .unwrap_or(false);
-        let web_search_provider = if web_search_enabled && config.active_provider == "zai" {
+        let web_search_provider = if web_search_enabled && config.active_provider.contains("z.ai") {
             "Z.AI"
         } else {
             "DuckDuckGo"
@@ -450,7 +450,7 @@ impl ConfigMenu {
                 let enabled = app.config.get_active_provider_config()
                     .and_then(|c| c.web_search_enabled)
                     .unwrap_or(false);
-                let provider = if enabled && app.config.active_provider == "zai" {
+                let provider = if enabled && app.config.active_provider.contains("z.ai") {
                     "Z.AI"
                 } else {
                     "DuckDuckGo"
@@ -555,7 +555,7 @@ impl ConfigMenu {
     /// Toggle thinking mode for Z.AI
     fn toggle_thinking_mode(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
         // Only allow thinking mode for Z.AI provider
-        if app.config.active_provider != "zai" {
+        if !app.config.active_provider.contains("z.ai") {
             output.print_system("💭 Thinking mode is only available for Z.AI provider")?;
             output.print_system("ℹ Please switch to Z.AI provider first")?;
             return Ok(());
@@ -569,6 +569,11 @@ impl ConfigMenu {
 
         if let Some(config) = app.config.get_active_provider_config_mut() {
             config.thinking_enabled = Some(new_enabled);
+        }
+
+        // Save the configuration to persist the change
+        if let Err(e) = app.config.save() {
+            output.print_error(&format!("Failed to save configuration: {}", e))?;
         }
 
         if new_enabled {
@@ -592,8 +597,13 @@ impl ConfigMenu {
             config.web_search_enabled = Some(new_enabled);
         }
 
+        // Save the configuration to persist the change
+        if let Err(e) = app.config.save() {
+            output.print_error(&format!("Failed to save configuration: {}", e))?;
+        }
+
         if new_enabled {
-            let provider = if app.config.active_provider == "zai" {
+            let provider = if app.config.active_provider.contains("z.ai") {
                 output.print_system("🔍 Web search enabled using Z.AI search")?;
                 "Z.AI"
             } else {

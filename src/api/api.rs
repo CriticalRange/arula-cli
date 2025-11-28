@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 // Z.AI specific error types
@@ -90,6 +90,7 @@ pub struct ApiResponse {
     pub tool_calls: Option<Vec<ToolCall>>,
     pub model: Option<String>,
     pub created: Option<u64>,
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -509,6 +510,7 @@ impl ApiClient {
                         tool_calls,
                         model: Some(self.model.clone()),
                         created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        reasoning_content: None,
                     })
                 } else {
                     Ok(ApiResponse {
@@ -519,6 +521,7 @@ impl ApiClient {
                         tool_calls: None,
                         model: Some(self.model.clone()),
                         created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        reasoning_content: None,
                     })
                 }
             } else {
@@ -528,6 +531,9 @@ impl ApiClient {
                     error: Some("No choices in response".to_string()),
                     usage: None,
                     tool_calls: None,
+                    model: Some(self.model.clone()),
+                    created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                    reasoning_content: None,
                 })
             }
         } else {
@@ -585,6 +591,7 @@ impl ApiClient {
                             tool_calls: None,
                             model: Some(self.model.clone()),
                             created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                            reasoning_content: None,
                         });
                     }
                 }
@@ -596,6 +603,9 @@ impl ApiClient {
                 error: Some("Could not parse Claude response".to_string()),
                 usage: None,
                 tool_calls: None,
+                model: Some(self.model.clone()),
+                created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                reasoning_content: None,
             })
         } else {
             let error_text = response
@@ -647,6 +657,9 @@ impl ApiClient {
                     error: None,
                     usage: None,
                     tool_calls: None,
+                    model: Some(self.model.clone()),
+                    created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                    reasoning_content: None,
                 })
             } else {
                 Ok(ApiResponse {
@@ -655,6 +668,9 @@ impl ApiClient {
                     error: Some("Could not parse Ollama response".to_string()),
                     usage: None,
                     tool_calls: None,
+                    model: Some(self.model.clone()),
+                    created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                    reasoning_content: None,
                 })
             }
         } else {
@@ -810,6 +826,7 @@ impl ApiClient {
                                     tool_calls,
                                     model: Some(self.model.clone()),
                                     created: response_json["created"].as_u64(),
+                                    reasoning_content: response_json["choices"][0]["message"]["reasoning_content"].as_str().map(|s| s.to_string()),
                                 });
                             }
                         }
@@ -832,7 +849,7 @@ impl ApiClient {
                         if attempt < max_retries {
                             eprintln!("🔄 Z.AI request failed (attempt {}/{}), retrying...: {}",
                                      attempt + 1, max_retries + 1, api_error);
-                            tokio::time::sleep(Duration::from_millis(1000 * (attempt + 1))).await;
+                            tokio::time::sleep(Duration::from_millis((1000 * (attempt + 1)) as u64)).await;
                             continue;
                         } else {
                             return Err(anyhow!("Z.AI API request failed after {} retries: {}", max_retries, api_error));
@@ -844,7 +861,7 @@ impl ApiClient {
                     if attempt < max_retries {
                         eprintln!("🔄 Z.AI network error (attempt {}/{}) retrying...: {}",
                                  attempt + 1, max_retries + 1, e);
-                        tokio::time::sleep(Duration::from_millis(1000 * (attempt + 1))).await;
+                        tokio::time::sleep(Duration::from_millis((1000 * (attempt + 1)) as u64)).await;
                         continue;
                     } else {
                         return Err(anyhow!("Z.AI network error after {} retries: {}", max_retries, e));
@@ -942,6 +959,7 @@ impl ApiClient {
                         tool_calls,
                         model: Some(self.model.clone()),
                         created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        reasoning_content: None,
                     })
                 } else {
                     Ok(ApiResponse {
@@ -952,6 +970,7 @@ impl ApiClient {
                         tool_calls: None,
                         model: Some(self.model.clone()),
                         created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        reasoning_content: None,
                     })
                 }
             } else {
@@ -961,6 +980,9 @@ impl ApiClient {
                     error: Some("No choices in response".to_string()),
                     usage: None,
                     tool_calls: None,
+                    model: Some(self.model.clone()),
+                    created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                    reasoning_content: None,
                 })
             }
         } else {
@@ -1142,6 +1164,9 @@ impl ApiClient {
                         error: None,
                         usage,
                         tool_calls,
+                        model: Some(self.model.clone()),
+                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        reasoning_content: None,
                     });
                 }
             }
@@ -1178,6 +1203,9 @@ impl ApiClient {
             error: None,
             usage: None,
             tool_calls: None,
+            model: Some("fallback".to_string()),
+            created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+            reasoning_content: None,
         })
     }
 
@@ -1342,6 +1370,9 @@ impl ApiClient {
                         error: None,
                         usage: None,
                         tool_calls,
+                        model: Some(self.model.clone()),
+                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        reasoning_content: None,
                     })
                 } else {
                     Ok(ApiResponse {
@@ -1352,6 +1383,7 @@ impl ApiClient {
                         tool_calls: None,
                         model: Some(self.model.clone()),
                         created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        reasoning_content: None,
                     })
                 }
             } else {
@@ -1361,6 +1393,9 @@ impl ApiClient {
                     error: Some("No choices in response".to_string()),
                     usage: None,
                     tool_calls: None,
+                    model: Some(self.model.clone()),
+                    created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                    reasoning_content: None,
                 })
             }
         } else {
@@ -1383,12 +1418,16 @@ impl ApiClient {
             self.api_key.len()
         ));
 
+        // Get Z.AI configuration from the config file
+        let config = crate::utils::config::Config::load_or_default()?;
+        let thinking_enabled = config.get_zai_thinking_enabled().unwrap_or(false);
+
         let max_retries = 3;
         let mut retry_count = 0;
 
         loop {
             match self
-                .send_zai_request_with_tools_once(messages.clone(), tools.clone())
+                .send_zai_request_with_tools_once(messages.clone(), tools.clone(), thinking_enabled)
                 .await
             {
                 Ok(response) => return Ok(response),
@@ -1419,6 +1458,7 @@ impl ApiClient {
         &self,
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
+        thinking_enabled: bool,
     ) -> Result<ApiResponse> {
         let zai_messages: Vec<serde_json::Value> = messages
             .into_iter()
@@ -1443,7 +1483,7 @@ impl ApiClient {
             })
             .collect();
 
-        let request = serde_json::json!({
+        let mut request = serde_json::json!({
             "model": self.model,
             "messages": zai_messages,
             "temperature": 0.7,
@@ -1452,6 +1492,19 @@ impl ApiClient {
             "tools": tools,
             "tool_choice": "auto"
         });
+
+        // Add thinking mode if enabled
+        if thinking_enabled {
+            request["thinking"] = serde_json::json!({
+                "type": "enabled"
+            });
+        }
+
+        // Debug: Log the Z.AI request when debug mode is enabled
+        if std::env::var("ARULA_DEBUG").is_ok() {
+            println!("🔧 DEBUG: Z.AI Tools Request: {}", serde_json::to_string_pretty(&request).unwrap_or_else(|_| "Failed to serialize request".to_string()));
+            println!("🔧 DEBUG: Thinking enabled: {}", thinking_enabled);
+        }
 
         // Create a new client specifically for Z.AI to force HTTP/1.1 for better compatibility
         let zai_client = Client::builder()
@@ -1492,12 +1545,31 @@ impl ApiClient {
         if status.is_success() {
             let response_json: serde_json::Value = response.json().await?;
 
+            // Debug: Log the full Z.AI response when debug mode is enabled
+            if std::env::var("ARULA_DEBUG").is_ok() {
+                println!("🔧 DEBUG: Z.AI Tools Response: {}", serde_json::to_string_pretty(&response_json).unwrap_or_else(|_| "Failed to serialize response".to_string()));
+            }
+
             if let Some(choices) = response_json["choices"].as_array() {
                 if let Some(choice) = choices.first() {
                     let content = choice["message"]["content"]
                         .as_str()
                         .unwrap_or("")
                         .to_string();
+
+                    // Extract reasoning content if available
+                    let reasoning_content = choice["message"]["reasoning_content"]
+                        .as_str()
+                        .map(|s| s.to_string());
+
+                    // Debug: Log reasoning content if present
+                    if std::env::var("ARULA_DEBUG").is_ok() {
+                        if let Some(ref reasoning) = reasoning_content {
+                            println!("🧠 DEBUG: Z.AI Tools Reasoning Content Found: {}", reasoning);
+                        } else {
+                            println!("🔧 DEBUG: Z.AI Tools No Reasoning Content in response");
+                        }
+                    }
 
                     let tool_calls = if let Some(calls) = choice["message"]["tool_calls"].as_array()
                     {
@@ -1541,6 +1613,9 @@ impl ApiClient {
                         error: None,
                         usage,
                         tool_calls,
+                        model: Some(self.model.clone()),
+                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        reasoning_content,
                     })
                 } else {
                     Ok(ApiResponse {
@@ -1551,6 +1626,7 @@ impl ApiClient {
                         tool_calls: None,
                         model: Some(self.model.clone()),
                         created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        reasoning_content: None,
                     })
                 }
             } else {

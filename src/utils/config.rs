@@ -228,6 +228,11 @@ impl Config {
                 model: legacy.model.clone(),
                 api_url: Some(legacy.api_url.clone()),
                 api_key: legacy.api_key.clone(),
+                thinking_enabled: None,
+                max_retries: None,
+                timeout_seconds: None,
+                enable_usage_tracking: None,
+                web_search_enabled: None,
             };
 
             self.providers.insert(legacy.provider.clone(), provider_config);
@@ -359,14 +364,14 @@ impl Config {
             timeout_seconds: std::env::var("ZAI_TIMEOUT_SECONDS")
                 .ok()
                 .and_then(|v| v.parse().ok()),
-            enable_usage_tracking: std::env::var("ZAI_ENABLE_USAGE_TRACKING")
+            enable_usage_tracking: Some(std::env::var("ZAI_ENABLE_USAGE_TRACKING")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(true),
-            web_search_enabled: std::env::var("ZAI_ENABLE_WEB_SEARCH")
+                .unwrap_or(true)),
+            web_search_enabled: Some(std::env::var("ZAI_ENABLE_WEB_SEARCH")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(false),
+                .unwrap_or(false)),
         });
 
         Ok(config)
@@ -473,6 +478,11 @@ impl Config {
                 model: model.to_string(),
                 api_url: Some(api_url.to_string()),
                 api_key: api_key.to_string(),
+                thinking_enabled: None,
+                max_retries: None,
+                timeout_seconds: None,
+                enable_usage_tracking: None,
+                web_search_enabled: None,
             },
         );
         Ok(())
@@ -489,6 +499,11 @@ impl Config {
                 model: openai_defaults.model,
                 api_url: Some(openai_defaults.api_url),
                 api_key: openai_defaults.api_key,
+                thinking_enabled: None,
+                max_retries: None,
+                timeout_seconds: None,
+                enable_usage_tracking: None,
+                web_search_enabled: None,
             },
         );
 
@@ -511,6 +526,11 @@ impl Config {
                 model: zai_defaults.model,
                 api_url: Some(zai_defaults.api_url),
                 api_key: zai_defaults.api_key,
+                thinking_enabled: None,
+                max_retries: None,
+                timeout_seconds: None,
+                enable_usage_tracking: None,
+                web_search_enabled: None,
             },
         );
 
@@ -531,6 +551,11 @@ impl Config {
                 model: model.to_string(),
                 api_url: Some(api_url.to_string()),
                 api_key: api_key.to_string(),
+                thinking_enabled: None,
+                max_retries: None,
+                timeout_seconds: None,
+                enable_usage_tracking: None,
+                web_search_enabled: None,
             },
         );
 

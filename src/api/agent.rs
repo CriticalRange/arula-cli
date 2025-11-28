@@ -401,6 +401,9 @@ pub enum ContentBlock {
     Text {
         text: String,
     },
+    Reasoning {
+        reasoning: String,
+    },
     ToolCall {
         id: String,
         name: String,
@@ -418,6 +421,10 @@ pub enum ContentBlock {
 impl ContentBlock {
     pub fn text(text: impl Into<String>) -> Self {
         Self::Text { text: text.into() }
+    }
+
+    pub fn reasoning(reasoning: impl Into<String>) -> Self {
+        Self::Reasoning { reasoning: reasoning.into() }
     }
 
     pub fn tool_call(id: String, name: String, arguments: String) -> Self {

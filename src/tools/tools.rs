@@ -6,6 +6,8 @@ use memmap2::MmapOptions;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command as TokioCommand;
 use console::style;
+use regex;
+use base64::Engine;
 
 /// Parameters for the bash tool
 #[derive(Debug, Deserialize)]
@@ -2203,7 +2205,7 @@ async fn get_dominant_color(&self, img: &Mat, rect: &Rect) -> Result<String, Str
     }
 
     /// Real click execution with element finding using OCR and UI automation
-    async fn execute_click(&self, _target: &str, click_target: ClickTarget, button: Option<ClickButton>, double_click: bool) -> Result<VisioneerResult, String> {
+    async fn execute_click(&self, target: &str, click_target: ClickTarget, button: Option<ClickButton>, double_click: bool) -> Result<VisioneerResult, String> {
         let start_time = std::time::Instant::now();
 
         #[cfg(target_os = "windows")]
@@ -3600,6 +3602,300 @@ impl Default for WebSearchTool {
     }
 }
 
+// Helper methods for WebSearchTool
+impl WebSearchTool {
+    /// Check if Z.AI web search should be used based on configuration
+    fn should_use_zai_web_search(&self) -> bool {
+        // Try to load configuration and check Z.AI web search setting
+        if let Ok(config) = crate::utils::config::Config::load_or_default() {
+            if let Some(zai_enabled) = config.get_zai_web_search_enabled() {
+                return zai_enabled;
+            }
+        }
+        false
+    }
+
+    /// Execute search using Z.AI web search API
+    async fn execute_zai_web_search(&self, query: &str, max_results: usize) -> Result<WebSearchResult, String> {
+        eprintln!("🔧 Using Z.AI web search for: {}", query);
+
+        // Try to load Z.AI configuration
+        let config = crate::utils::config::Config::load_or_default()
+            .map_err(|e| format!("Failed to load config: {}", e))?;
+
+        let api_key = if let Some(zai_config) = config.get_active_provider_config() {
+            if zai_config.api_key.is_empty() {
+                return Err("Z.AI API key not configured. Please set up Z.AI credentials.".to_string());
+            }
+            zai_config.api_key.clone()
+        } else {
+            return Err("No active provider configuration found.".to_string());
+        };
+
+        let endpoint = config.get_active_provider_config()
+            .and_then(|c| c.api_url.clone())
+            .unwrap_or_else(|| "https://api.z.ai/api/paas/v4/".to_string());
+
+        // Build Z.AI web search request
+        let search_request = serde_json::json!({
+            "model": "glm-4.6",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": format!("Please search the web for: {}", query)
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search the web for information",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "The search query"
+                                }
+                            },
+                            "required": ["query"]
+                        }
+                    }
+                }
+            ],
+            "tool_choice": "auto"
+        });
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(&endpoint)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&search_request)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to send request to Z.AI: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("Z.AI API error: {}", response.status()));
+        }
+
+        let response_json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse Z.AI response: {}", e))?;
+
+        // Extract web search results from Z.AI response
+        if let Some(choices) = response_json.get("choices").and_then(|c| c.as_array()) {
+            if let Some(first_choice) = choices.first() {
+                if let Some(message) = first_choice.get("message") {
+                    if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                        let results = self.parse_zai_web_search_results(content, max_results);
+                        let answer = self.extract_zai_answer(content);
+
+                        return Ok(WebSearchResult {
+                            results: results.clone(),
+                            answer: answer.clone(),
+                            abstract_text: answer.clone(),
+                            definition: None,
+                            query: query.to_string(),
+                            response_time_ms: 0, // Will be set by caller
+                            total_results: results.len(),
+                            success: !results.is_empty(),
+                            provider: "Z.AI".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Err("Failed to extract search results from Z.AI response".to_string())
+    }
+
+    /// Parse Z.AI web search results from response content
+    fn parse_zai_web_search_results(&self, content: &str, max_results: usize) -> Vec<WebSearchResultEntry> {
+        let mut results = Vec::new();
+
+        // Look for structured result patterns in the content
+        // Z.AI might return results in various formats, try to extract them
+
+        // Pattern 1: Look for numbered lists with URLs
+        let lines: Vec<&str> = content.lines().collect();
+        for line in lines {
+            if line.trim().starts_with(&format!("1.").to_string()) ||
+               line.trim().starts_with(&format!("2.").to_string()) ||
+               line.trim().starts_with(&format!("3.").to_string()) ||
+               line.contains("http") {
+                if let Some(entry) = self.parse_single_zai_result(line) {
+                    results.push(entry);
+                    if results.len() >= max_results {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Pattern 2: Look for JSON-like structures
+        if let Some(json_start) = content.find('{') {
+            if let Some(json_end) = content.rfind('}') {
+                let json_str = &content[json_start..=json_end];
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    if let Some(results_array) = parsed.get("results").and_then(|r| r.as_array()) {
+                        for result in results_array {
+                            if let Some(title) = result.get("title").and_then(|t| t.as_str()) {
+                                if let Some(url) = result.get("url").and_then(|u| u.as_str()) {
+                                    let snippet = result.get("snippet")
+                                        .and_then(|s| s.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+
+                                    results.push(WebSearchResultEntry {
+                                        title: title.to_string(),
+                                        url: url.to_string(),
+                                        snippet,
+                                        source: "Z.AI".to_string(),
+                                    });
+
+                                    if results.len() >= max_results {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Parse a single result from Z.AI response
+    fn parse_single_zai_result(&self, result: &str) -> Option<WebSearchResultEntry> {
+        // Try to extract URL, title, and snippet from a single result line
+        let url_regex = regex::Regex::new(r"https?://[^\s\)]+").ok()?;
+
+        if let Some(url_match) = url_regex.find(result) {
+            let url = url_match.as_str().to_string();
+
+            // Try to extract title (text before the URL)
+            let title_start = result.find("http").unwrap_or(0);
+            let title = result[..title_start].trim()
+                .trim_start_matches(|c: char| c.is_numeric() || c == '.' || c.is_whitespace())
+                .to_string();
+
+            // Try to extract snippet (text after the URL, if any)
+            let snippet = if url_match.end() < result.len() {
+                result[url_match.end()..].trim()
+                    .trim_start_matches(|c| char::is_ascii_punctuation(&c))
+                    .to_string()
+            } else {
+                title.clone()
+            };
+
+            if !title.is_empty() {
+                return Some(WebSearchResultEntry {
+                    title,
+                    url,
+                    snippet,
+                    source: "Z.AI".to_string(),
+                });
+            }
+        }
+        None
+    }
+
+    /// Extract the direct answer from Z.AI response
+    fn extract_zai_answer(&self, content: &str) -> Option<String> {
+        // Look for Answer: or Definition: sections
+        if let Some(answer_start) = content.find("Answer:") {
+            let answer_end = content[answer_start + 7..].find('\n').unwrap_or(content.len());
+            let answer = content[answer_start + 7..answer_start + 7 + answer_end].trim();
+            if !answer.is_empty() {
+                return Some(answer.to_string());
+            }
+        }
+
+        if let Some(def_start) = content.find("Definition:") {
+            let def_end = content[def_start + 11..].find('\n').unwrap_or(content.len());
+            let definition = content[def_start + 11..def_start + 11 + def_end].trim();
+            if !definition.is_empty() {
+                return Some(definition.to_string());
+            }
+        }
+
+        // If no structured answer found, try to extract first paragraph
+        let lines: Vec<&str> = content.lines().collect();
+        for line in lines {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() &&
+               !trimmed.starts_with("1.") &&
+               !trimmed.starts_with("2.") &&
+               !trimmed.starts_with("3.") &&
+               !trimmed.contains("http") &&
+               trimmed.len() > 20 {
+                return Some(trimmed.to_string());
+            }
+        }
+
+        None
+    }
+
+    /// Execute search using DuckDuckGo API
+    async fn execute_duckduckgo_search(&self, query: &str, max_results: usize) -> Result<WebSearchResult, String> {
+        let url = format!("https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
+                          urlencoding::encode(query));
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get(&url)
+            .header("User-Agent", "Mozilla/5.0 (compatible; ARULACLI/1.0)")
+            .send()
+            .await
+            .map_err(|e| format!("Failed to send request to DuckDuckGo: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("DuckDuckGo API error: {}", response.status()));
+        }
+
+        let ddg_response: DuckDuckGoResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse DuckDuckGo response: {}", e))?;
+
+        let mut results = Vec::new();
+
+        // Add Abstract (main answer) if available
+        if !ddg_response.abstract_text.is_empty() {
+            results.push(WebSearchResultEntry {
+                title: "Answer".to_string(),
+                url: ddg_response.abstract_url.clone(),
+                snippet: ddg_response.abstract_text.clone(),
+                source: "DuckDuckGo Instant Answer".to_string(),
+            });
+        }
+
+        // Add Related Topics if available
+        if let Some(related_topics) = &ddg_response.related_topics {
+            let parsed_results = self.parse_related_topics(related_topics);
+            results.extend(parsed_results);
+        }
+
+        Ok(WebSearchResult {
+            results: results.clone(),
+            answer: if ddg_response.abstract_text.is_empty() { None } else { Some(ddg_response.abstract_text.clone()) },
+            abstract_text: if ddg_response.abstract_text.is_empty() { None } else { Some(ddg_response.abstract_text.clone()) },
+            definition: if ddg_response.definition.is_empty() { None } else { Some(ddg_response.definition.clone()) },
+            total_results: results.len(),
+            success: !results.is_empty(),
+            response_time_ms: 0, // Will be set by caller
+            provider: "DuckDuckGo".to_string(),
+            query: query.to_string(),
+        })
+    }
+}
+
 #[async_trait]
 impl Tool for WebSearchTool {
     type Params = WebSearchParams;
@@ -3662,326 +3958,6 @@ impl Tool for WebSearchTool {
         let response_time_ms = start_time.elapsed().as_millis() as u64;
 
         Ok(search_result)
-    }
-
-    /// Check if Z.AI web search should be used based on configuration
-    fn should_use_zai_web_search(&self) -> bool {
-        // Try to load configuration and check Z.AI web search setting
-        if let Ok(config) = crate::utils::config::Config::load_or_default() {
-            if let Some(zai_enabled) = config.get_zai_web_search_enabled() {
-                return zai_enabled;
-            }
-        }
-        false
-    }
-
-    /// Execute search using Z.AI web search API
-    async fn execute_zai_web_search(&self, query: &str, max_results: usize) -> Result<WebSearchResult, String> {
-        eprintln!("🔧 Using Z.AI web search for: {}", query);
-
-        // Try to load Z.AI configuration
-        let config = crate::utils::config::Config::load_or_default()
-            .map_err(|e| format!("Failed to load config: {}", e))?;
-
-        let api_key = if let Some(zai_config) = config.get_active_provider_config() {
-            if zai_config.api_key.is_empty() {
-                return Err("Z.AI API key not configured. Please set up Z.AI credentials.".to_string());
-            }
-            zai_config.api_key.clone()
-        } else {
-            return Err("No active provider configuration found.".to_string());
-        };
-
-        let endpoint = config.get_active_provider_config()
-            .and_then(|c| c.api_url.clone())
-            .unwrap_or_else(|| "https://api.z.ai/api/paas/v4/".to_string());
-
-        // Build Z.AI web search request
-        let search_request = serde_json::json!({
-            "model": "glm-4.6",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": format!("Please search the web for: {}", query)
-                }
-            ],
-            "tools": [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "web_search",
-                        "description": "Search for information on the web",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "search_engine": {
-                                    "type": "string",
-                                    "description": "Search engine to use"
-                                },
-                                "search_query": {
-                                    "type": "string",
-                                    "description": "Search query"
-                                },
-                                "count": {
-                                    "type": "integer",
-                                    "description": "Number of results"
-                                },
-                                "search_recency_filter": {
-                                    "type": "string",
-                                    "description": "Time filter for search results"
-                                }
-                            },
-                            "required": ["search_query"],
-                            "properties": {
-                                "search_engine": {"type": "string"},
-                                "count": {"type": "integer"},
-                                "search_recency_filter": {"type": "string"}
-                            }
-                        }
-                    }
-                }
-            ],
-            "tool_choice": "auto"
-        });
-
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-        let response = client
-            .post(format!("{}/chat/completions", endpoint))
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Accept-Language", "en-US,en")
-            .json(&search_request)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to connect to Z.AI API: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(format!("Z.AI API returned error: {}", response.status()));
-        }
-
-        let response_json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse Z.AI response: {}", e))?;
-
-        // Parse Z.AI response and extract web search results
-        let mut all_results = Vec::new();
-        let mut answer = None;
-        let mut abstract_text = None;
-        let mut definition = None;
-
-        if let Some(choices) = response_json["choices"].as_array() {
-            if let Some(choice) = choices.first() {
-                if let Some(content) = choice["message"]["content"].as_str() {
-                    // Parse the web search results from Z.AI response
-                    // Z.AI typically returns results in a structured format
-                    let zai_results = self.parse_zai_web_search_results(content, max_results);
-                    all_results.extend(zai_results);
-
-                    // Look for answer or definition in the content
-                    if content.contains("Answer:") || content.contains("Definition:") {
-                        answer = self.extract_zai_answer(content);
-                    }
-                }
-            }
-        }
-
-        let total_results = all_results.len();
-
-        Ok(WebSearchResult {
-            query: query.to_string(),
-            results: all_results,
-            answer,
-            abstract_text,
-            definition,
-            total_results,
-            success: total_results > 0,
-            response_time_ms: 0, // Will be set by caller
-            provider: "Z.AI Web Search API".to_string(),
-        })
-    }
-
-    /// Parse Z.AI web search results from response content
-    fn parse_zai_web_search_results(&self, content: &str, max_results: usize) -> Vec<WebSearchResultEntry> {
-        let mut results = Vec::new();
-
-        // Look for structured search results in the response
-        // Z.AI often returns results in a format like:
-        // 1. [Title](URL) - Description
-        // 2. [Title](URL) - Description
-        // ...
-
-        let lines: Vec<&str> = content.lines().collect();
-        let mut current_result = String::new();
-        let mut in_result = false;
-
-        for line in lines.iter().take(max_results * 3) { // Allow multiple lines per result
-            let trimmed = line.trim();
-
-            if trimmed.starts_with("1.") || trimmed.starts_with("2.") || trimmed.starts_with("3.") ||
-               trimmed.starts_with("• ") || trimmed.starts_with("- ") {
-                // New result detected
-                if !current_result.is_empty() {
-                    if let Some(parsed) = self.parse_single_zai_result(&current_result) {
-                        results.push(parsed);
-                    }
-                }
-                current_result = trimmed.to_string();
-                in_result = true;
-            } else if in_result && (trimmed.starts_with("http") || trimmed.contains("](")) {
-                // URL detected in current result
-                current_result.push_str(" ");
-                current_result.push_str(trimmed);
-            } else if in_result && !trimmed.is_empty() {
-                // Additional content for current result
-                current_result.push_str(" ");
-                current_result.push_str(trimmed);
-            }
-        }
-
-        // Parse the last result if exists
-        if !current_result.is_empty() {
-            if let Some(parsed) = self.parse_single_zai_result(&current_result) {
-                results.push(parsed);
-            }
-        }
-
-        results
-    }
-
-    /// Parse a single Z.AI web search result
-    fn parse_single_zai_result(&self, result: &str) -> Option<WebSearchResultEntry> {
-        // Try to extract title, URL, and description from Z.AI result
-        // Common patterns:
-        // 1. [Title](URL) - Description
-        // 2. Title: URL - Description
-
-        if let Some(url_start) = result.find("http") {
-            let before_url = &result[..url_start];
-            let after_url = &result[url_start..];
-
-            // Extract title (before the URL)
-            let title = if let Some(markdown_end) = before_url.rfind("]") {
-                &before_url[..markdown_end].trim_start_matches("[").trim()
-            } else if let Some(colon_end) = before_url.rfind(":") {
-                &before_url[..colon_end].trim()
-            } else {
-                before_url.trim()
-            };
-
-            // Extract URL
-            let url_end = after_url.find(|c| c == ')' || c == ' ' || c == '-');
-            let url = if let Some(end) = url_end {
-                &after_url[..end]
-            } else {
-                after_url.trim()
-            };
-
-            // Extract description (after URL and any separators)
-            let remaining = &after_url[url_end.unwrap_or(after_url.len())..];
-            let description = remaining
-                .trim_start_matches(")").trim_start_matches("-").trim_start_matches("|");
-
-            if !title.is_empty() && !url.is_empty() {
-                return Some(WebSearchResultEntry {
-                    title: title.to_string(),
-                    url: url.to_string(),
-                    snippet: description.to_string(),
-                    source: "Z.AI Web Search".to_string(),
-                });
-            }
-        }
-
-        None
-    }
-
-    /// Extract answer from Z.AI response content
-    fn extract_zai_answer(&self, content: &str) -> Option<String> {
-        // Look for Answer: or Definition: sections
-        if let Some(answer_start) = content.find("Answer:") {
-            let answer_end = content[answer_start + 7..].find('\n').unwrap_or(content.len());
-            Some(content[answer_start + 7..answer_start + 7 + answer_end].trim().to_string())
-        } else if let Some(def_start) = content.find("Definition:") {
-            let def_end = content[def_start + 11..].find('\n').unwrap_or(content.len());
-            Some(content[def_start + 11..def_start + 11 + def_end].trim().to_string())
-        } else {
-            None
-        }
-    }
-
-    /// Execute search using DuckDuckGo API (existing implementation)
-    async fn execute_duckduckgo_search(&self, query: &str, max_results: usize) -> Result<WebSearchResult, String> {
-        let url = format!("https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
-                          urlencoding::encode(query));
-
-        let client = reqwest::Client::new();
-
-        match client.get(&url).send().await {
-            Ok(response) => {
-                if !response.status().is_success() {
-                    return Err(format!("HTTP error: {}", response.status()));
-                }
-
-                let text = response.text().await.map_err(|e| e.to_string())?;
-
-                // Parse DuckDuckGo response
-                let ddg_result: serde_json::Value = serde_json::from_str(&text)
-                    .map_err(|_| "Invalid JSON response".to_string())?;
-
-                let mut entries = Vec::new();
-
-                // Extract RelatedTopics (main results)
-                if let Some(related) = ddg_result.get("RelatedTopics").and_then(|v| v.as_array()) {
-                    for item in related.iter().take(max_results) {
-                        if let Some(text) = item.get("Text").and_then(|v| v.as_str()) {
-                            if let Some(first_url) = item.get("FirstURL").and_then(|v| v.as_str()) {
-                                if !text.is_empty() && !first_url.is_empty() {
-                                    entries.push(WebSearchResultEntry {
-                                        title: text.split('\n').next().unwrap_or(text).to_string(),
-                                        url: first_url.to_string(),
-                                        snippet: text.to_string(),
-                                        relevance_score: Some(0.8),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Fallback to Abstract if no results
-                if entries.is_empty() {
-                    if let Some(abstract_text) = ddg_result.get("Abstract").and_then(|v| v.as_str()) {
-                        if let Some(abstract_url) = ddg_result.get("AbstractURL").and_then(|v| v.as_str()) {
-                            if !abstract_text.is_empty() {
-                                entries.push(WebSearchResultEntry {
-                                    title: ddg_result.get("Heading").and_then(|v| v.as_str())
-                                        .unwrap_or("Result").to_string(),
-                                    url: abstract_url.to_string(),
-                                    snippet: abstract_text.to_string(),
-                                    relevance_score: Some(0.7),
-                                });
-                            }
-                        }
-                    }
-                }
-
-                if entries.is_empty() {
-                    return Err("No results found".to_string());
-                }
-
-                Ok(WebSearchResult {
-                    query: query.to_string(),
-                    entries,
-                    total_results: Some(entries.len()),
-                    search_time_ms: None,
-                    source: "DuckDuckGo".to_string(),
-                })
-            }
-            Err(e) => Err(format!("Request failed: {}", e)),
-        }
     }
 }
 
