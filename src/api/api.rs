@@ -12,122 +12,6 @@ fn debug_print(msg: &str) {
     }
 }
 
-/// Smart debugging output that shows essential information without overwhelming output
-fn smart_debug_format(msg: &str, label: &str) -> String {
-    // First, try to unescape common escape sequences
-    let mut cleaned = msg.replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\");
-
-    // Handle other escape sequences
-    cleaned = cleaned.replace("\\/", "/");
-    cleaned = cleaned.replace("\\t", "\t");
-    cleaned = cleaned.replace("\\r", "\r");
-
-    // If it starts with { and we can parse it as JSON, show a summary
-    if cleaned.trim_start().starts_with("{") {
-        if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&cleaned) {
-            return format_json_summary(&json_val, label);
-        }
-    }
-
-    // If JSON parsing failed, try a simpler approach for very large content
-    if cleaned.len() > 1000 {
-        // Look for key patterns in large content
-        if cleaned.contains("\"model\"") {
-            return format!("{}: Large JSON payload with model info found", label);
-        }
-        if cleaned.contains("\"content\"") {
-            return format!("{}: Large JSON payload with content found", label);
-        }
-        return format!("{}: Large JSON payload ({} chars, details truncated)", label, cleaned.len());
-    }
-
-    // For non-JSON or unparseable content, truncate aggressively
-    if cleaned.len() > 300 {
-        format!("{} (truncated):\n{}...", label, &cleaned[..300])
-    } else {
-        format!("{}:\n{}", label, cleaned)
-    }
-}
-
-/// Format JSON with just the essential information
-fn format_json_summary(json: &serde_json::Value, label: &str) -> String {
-    match json {
-        serde_json::Value::Object(obj) => {
-            let mut summary = Vec::new();
-            summary.push(format!("{}: JSON object with {} fields", label, obj.len()));
-
-            // Show key fields
-            if let Some(model) = obj.get("model") {
-                summary.push(format!("  model: {}", model));
-            }
-            if let Some(messages) = obj.get("messages") {
-                if let Some(msgs) = messages.as_array() {
-                    summary.push(format!("  messages: {} items", msgs.len()));
-                    if let Some(first_msg) = msgs.first() {
-                        if let Some(role) = first_msg.get("role") {
-                            summary.push(format!("  first_message_role: {}", role));
-                        }
-                        if let Some(content) = first_msg.get("content") {
-                            if let Some(content_str) = content.as_str() {
-                                if content_str.len() > 100 {
-                                    summary.push(format!("  first_message_content: {}...", &content_str[..100]));
-                                } else {
-                                    summary.push(format!("  first_message_content: {}", content_str));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some(tools) = obj.get("tools") {
-                if let Some(tool_array) = tools.as_array() {
-                    summary.push(format!("  tools: {} tool definitions", tool_array.len()));
-                }
-            }
-            if let Some(choices) = obj.get("choices") {
-                if let Some(choice_array) = choices.as_array() {
-                    summary.push(format!("  choices: {} responses", choice_array.len()));
-                    if let Some(first_choice) = choice_array.first() {
-                        if let Some(message) = first_choice.get("message") {
-                            if let Some(tool_calls) = message.get("tool_calls") {
-                                if let Some(call_array) = tool_calls.as_array() {
-                                    summary.push(format!("  tool_calls: {} calls", call_array.len()));
-                                }
-                            }
-                            if let Some(content) = message.get("content") {
-                                if let Some(content_str) = content.as_str() {
-                                    if !content_str.is_empty() {
-                                        if content_str.len() > 100 {
-                                            summary.push(format!("  content: {}...", &content_str[..100]));
-                                        } else {
-                                            summary.push(format!("  content: {}", content_str));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            summary.join("\n")
-        }
-        serde_json::Value::Array(arr) => {
-            format!("{}: JSON array with {} items", label, arr.len())
-        }
-        serde_json::Value::String(s) => {
-            if s.len() > 200 {
-                format!("{}: \"{}...\" (truncated)", label, &s[..200])
-            } else {
-                format!("{}: \"{}\"", label, s)
-            }
-        }
-        _ => {
-            format!("{}: {}", label, json)
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
@@ -509,35 +393,21 @@ impl ApiClient {
             "max_tokens": 2048
         });
 
-        let request_url = format!("{}/chat/completions", self.endpoint);
-        debug_print(&format!("DEBUG: Making request to URL: {}", request_url));
-        let request_body_str = serde_json::to_string(&request_body).unwrap_or_else(|_| "Failed to serialize".to_string());
-        debug_print(&smart_debug_format(&request_body_str, "DEBUG: Request body"));
-
         let mut request_builder = self
             .client
-            .post(&request_url)
+            .post(format!("{}/chat/completions", self.endpoint))
             .json(&request_body);
 
         // Add authorization header if API key is provided
         if !self.api_key.is_empty() {
-            debug_print("DEBUG: Adding Authorization header with API key");
             request_builder =
                 request_builder.header("Authorization", format!("Bearer {}", self.api_key));
-        } else {
-            debug_print("DEBUG: No API key provided");
         }
 
-        debug_print("DEBUG: Sending HTTP request...");
         let response = request_builder.send().await?;
-        debug_print(&format!("DEBUG: Response status: {}", response.status()));
-        debug_print(&format!("DEBUG: Response headers: {:?}", response.headers()));
 
         if response.status().is_success() {
-            debug_print("DEBUG: Reading response JSON...");
             let response_json: serde_json::Value = response.json().await?;
-            let response_str = serde_json::to_string(&response_json).unwrap_or_else(|_| "Failed to serialize response".to_string());
-            debug_print(&smart_debug_format(&response_str, "DEBUG: Response JSON"));
 
             if let Some(choices) = response_json["choices"].as_array() {
                 if let Some(choice) = choices.first() {
@@ -598,12 +468,10 @@ impl ApiClient {
                 })
             }
         } else {
-            let status = response.status();
             let error_text = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            debug_print(&smart_debug_format(&error_text, &format!("DEBUG: OpenAI API request failed with status {}", status)));
             Err(anyhow::anyhow!("OpenAI API request failed: {}", error_text))
         }
     }
@@ -1262,41 +1130,27 @@ impl ApiClient {
             "tool_choice": "auto"
         });
 
-        let request_url = format!("{}/chat/completions", self.endpoint);
-        debug_print(&format!("DEBUG: Making TOOLS request to URL: {}", request_url));
-        let tools_request_body_str = serde_json::to_string(&request_body).unwrap_or_else(|_| "Failed to serialize".to_string());
-        debug_print(&smart_debug_format(&tools_request_body_str, "DEBUG: TOOLS request body"));
-
         let mut request_builder = self
             .client
-            .post(&request_url)
+            .post(format!("{}/chat/completions", self.endpoint))
             .json(&request_body);
 
         if !self.api_key.is_empty() {
-            debug_print("DEBUG: Adding Authorization header for TOOLS request");
             request_builder =
                 request_builder.header("Authorization", format!("Bearer {}", self.api_key));
-        } else {
-            debug_print("DEBUG: No API key for TOOLS request");
         }
 
         // Add OpenRouter-specific headers if using OpenRouter
         if self.provider == AIProvider::OpenRouter {
-            debug_print("DEBUG: Adding OpenRouter headers");
             request_builder = request_builder
                 .header("HTTP-Referer", "https://github.com/arula-cli/arula-cli")
                 .header("X-Title", "ARULA CLI");
         }
 
-        debug_print("DEBUG: Sending TOOLS HTTP request...");
         let response = request_builder.send().await?;
-        debug_print(&format!("DEBUG: TOOLS Response status: {}", response.status()));
 
         if response.status().is_success() {
-            debug_print("DEBUG: Reading TOOLS response JSON...");
             let response_json: serde_json::Value = response.json().await?;
-            let tools_response_str = serde_json::to_string(&response_json).unwrap_or_else(|_| "Failed to serialize response".to_string());
-            debug_print(&smart_debug_format(&tools_response_str, "DEBUG: TOOLS Response JSON"));
 
             if let Some(choices) = response_json["choices"].as_array() {
                 if let Some(choice) = choices.first() {
