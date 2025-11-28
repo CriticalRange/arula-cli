@@ -32,29 +32,29 @@ fn render_markdown_line(line: &str) -> String {
 
 /// Format a code block with simple borders for ExternalPrinter
 fn format_code_block(content: &str) -> String {
-    use nu_ansi_term::Color;
+    use console::Style;
 
     let mut result = String::new();
 
     // Top border
-    result.push_str(&Color::DarkGray.paint("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n").to_string());
+    result.push_str(&console::style("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n").black().to_string());
 
     // Content lines with borders
     for line in content.lines() {
-        result.push_str(&Color::DarkGray.paint("┃ ").to_string());
-        result.push_str(&Color::White.paint(line).to_string());
+        result.push_str(&console::style("┃ ").black().to_string());
+        result.push_str(line);
         result.push('\n');
     }
 
     // Bottom border
-    result.push_str(&Color::DarkGray.paint("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n").to_string());
+    result.push_str(&console::style("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n").black().to_string());
 
     result
 }
 
 /// Format tool call with icon and human-readable description
 fn format_tool_call(tool_name: &str, arguments: &str) -> String {
-    use nu_ansi_term::Color;
+    use console::Style;
 
     // Parse arguments to extract key information
     let args: Result<Value, _> = serde_json::from_str(arguments);
@@ -119,8 +119,8 @@ fn format_tool_call(tool_name: &str, arguments: &str) -> String {
 
     // Format with loading spinner and colored description
     format!("{} {}",
-        Color::Cyan.paint(icon),
-        Color::White.dimmed().paint(description)
+        console::style(icon).cyan(),
+        console::style(description).dim()
     )
 }
 
@@ -318,8 +318,6 @@ pub struct App {
     pub current_task_handle: Option<tokio::task::JoinHandle<()>>,
     // Model caches for all providers
     pub openrouter_models: Arc<Mutex<Option<Vec<String>>>>,
-    // ExternalPrinter sender for concurrent output while read_line() is active
-    pub external_printer: Option<crossbeam_channel::Sender<String>>,
     pub openai_models: Arc<Mutex<Option<Vec<String>>>>,
     pub anthropic_models: Arc<Mutex<Option<Vec<String>>>>,
     pub ollama_models: Arc<Mutex<Option<Vec<String>>>>,
@@ -354,7 +352,7 @@ impl App {
             debug: false,
             cancellation_token: CancellationToken::new(),
             current_task_handle: None,
-            external_printer: None,
+            // external_printer: None, // External printer removed
             openrouter_models: Arc::new(Mutex::new(None)),
             openai_models: Arc::new(Mutex::new(None)),
             anthropic_models: Arc::new(Mutex::new(None)),
@@ -427,11 +425,7 @@ impl App {
         self.cached_tool_registry.as_ref().unwrap()
     }
 
-    /// Set ExternalPrinter sender for concurrent output
-    pub fn set_external_printer(&mut self, sender: crossbeam_channel::Sender<String>) {
-        self.external_printer = Some(sender);
-    }
-
+    
     /// Build comprehensive system prompt from ARULA.md files
     fn build_system_prompt(&self) -> String {
         let mut prompt_parts = Vec::new();
@@ -738,7 +732,7 @@ The user will manually rebuild after exiting the application.
         // Send message using modern agent in background
         let msg = message.to_string();
         let cancel_token = self.cancellation_token.clone();
-        let external_printer = self.external_printer.clone();
+        // Removed external_printer since we're using custom output system
         let shared_conv = self.shared_conversation.clone();
         let auto_save = self.auto_save_conversations;
         let handle = tokio::spawn(async move {
@@ -750,9 +744,10 @@ The user will manually rebuild after exiting the application.
                 _ = cancel_token.cancelled() => {
                     // Request was cancelled
                     let _ = tx.send(AiResponse::AgentStreamEnd);
-                    if let Some(ref printer) = external_printer {
-                        let _ = printer.send("\n".to_string());
-                    }
+                    // External printer removed - using custom output system
+                    // // if let Some(ref printer) = external_printer { // External printer removed
+                    //     // let _ = printer.send("\n".to_string());
+                    // }
                 }
                 _result = async {
                     match agent_client.query(&msg, Some(api_messages)).await {
@@ -775,7 +770,7 @@ The user will manually rebuild after exiting the application.
                                                 log_ai_response_chunk(&text);
 
                                                 let _ = tx.send(AiResponse::AgentStreamText(text.clone()));
-                                                if let Some(ref printer) = external_printer {
+                                                // if let Some(ref printer) = external_printer { // External printer removed
                                                     // TODO: Fix terminal scroll positioning
                                                     // Currently, content may not scroll to keep input visible at bottom
                                                     // This needs investigation - may require different approach or reedline config changes
@@ -783,28 +778,28 @@ The user will manually rebuild after exiting the application.
                                                     // Render markdown for each line
                                                     for line in text.lines() {
                                                         let rendered = render_markdown_line(line);
-                                                        let _ = printer.send(format!("{}\n", rendered));
+                                                        // let _ = printer.send(format!("{}\n", rendered));
                                                     }
                                                     // If text doesn't end with newline, send one anyway
                                                     if !text.ends_with('\n') && !text.is_empty() {
-                                                        let _ = printer.send("\n".to_string());
+                                                        // let _ = printer.send("\n".to_string());
                                                     }
-                                                }
+                                                // }
                                             }
                                             Some(ContentBlock::Reasoning { reasoning }) => {
                                                 // Send reasoning content to stream
                                                 let _ = tx.send(AiResponse::AgentReasoningContent(reasoning.clone()));
 
-                                                if let Some(ref printer) = external_printer {
+                                                // if let Some(ref printer) = external_printer { // External printer removed
                                                     // Display reasoning with special formatting
                                                     for line in reasoning.lines() {
                                                         // Use cyan color and "🧠" prefix for thinking content
-                                                        let _ = printer.send(format!("{}{}\n",
-                                                            console::style("🧠 ").cyan(),
-                                                            console::style(line).cyan()
-                                                        ));
+                                                        // let _ = printer.send(format!("{}{}\n",
+                                                        //     console::style("🧠 ").cyan(),
+                                                        //     console::style(line).cyan()
+                                                        // ));
                                                     }
-                                                }
+                                                // }
                                             }
                                             Some(ContentBlock::ToolCall {
                                                 id,
@@ -819,11 +814,11 @@ The user will manually rebuild after exiting the application.
                                                     name: name.clone(),
                                                     arguments: arguments.clone(),
                                                 });
-                                                if let Some(ref printer) = external_printer {
+                                                // if let Some(ref printer) = external_printer { // External printer removed
                                                     // Format tool call with icon and human-readable name
                                                     let tool_display = format_tool_call(&name, &arguments);
-                                                    let _ = printer.send(format!("{}\n", tool_display));
-                                                }
+                                                    // let _ = printer.send(format!("{}\n", tool_display));
+                                                // }
                                             }
                                             Some(ContentBlock::ToolResult {
                                                 tool_call_id,
@@ -849,20 +844,20 @@ The user will manually rebuild after exiting the application.
                                                     execution_time_ms: 100,
                                                 });
 
-                                                if let Some(ref printer) = external_printer {
+                                                // if let Some(ref printer) = external_printer { // External printer removed
                                                     // Summarize the result in a compact format
                                                     let summary = summarize_tool_result(&result_data);
                                                     let result_display = format!("  {} {}", status, summary);
-                                                    let _ = printer.send(format!("{}\n", result_display));
-                                                }
+                                                    // let _ = printer.send(format!("{}\n", result_display));
+                                                // }
                                             }
                                             Some(ContentBlock::Error { error }) => {
                                                 // Convert error to AgentStreamText to maintain compatibility
                                                 let error_msg = format!("[Error] {}", error);
                                                 let _ = tx.send(AiResponse::AgentStreamText(error_msg.clone()));
-                                                if let Some(ref printer) = external_printer {
-                                                    let _ = printer.send(format!("{}\n", error_msg));
-                                                }
+                                                // if let Some(ref printer) = external_printer { // External printer removed
+                                                    // let _ = printer.send(format!("{}\n", error_msg));
+                                                // }
                                                 break;
                                             }
                                             None => {
@@ -914,18 +909,18 @@ The user will manually rebuild after exiting the application.
                             }
 
                             let _ = tx.send(AiResponse::AgentStreamEnd);
-                            if let Some(ref printer) = external_printer {
-                                let _ = printer.send("\n".to_string());
-                            }
+                            // if let Some(ref printer) = external_printer { // External printer removed
+                                // let _ = printer.send("\n".to_string());
+                            // }
                         }
                         Err(e) => {
                             let error_msg = format!("**Error:** Failed to send message via agent: {}", e);
                             let _ = tx.send(AiResponse::AgentStreamText(error_msg.clone()));
                             let _ = tx.send(AiResponse::AgentStreamEnd);
-                            if let Some(ref printer) = external_printer {
+                            // if let Some(ref printer) = external_printer { // External printer removed
                                 let error_line = render_markdown_line(&error_msg);
-                                let _ = printer.send(format!("{}\n\n", error_line));
-                            }
+                                // let _ = printer.send(format!("{}\n\n", error_line));
+                            // }
                         }
                     }
                 } => {}
@@ -1962,7 +1957,7 @@ mod tests {
             cancellation_token: CancellationToken::new(),
             current_task_handle: None,
             openrouter_models: Arc::new(Mutex::new(None)),
-            external_printer: None,
+            // external_printer: None, // External printer removed
             openai_models: Arc::new(Mutex::new(None)),
             anthropic_models: Arc::new(Mutex::new(None)),
             ollama_models: Arc::new(Mutex::new(None)),
@@ -2043,7 +2038,7 @@ mod tests {
             cancellation_token: CancellationToken::new(),
             current_task_handle: None,
             openrouter_models: Arc::new(Mutex::new(None)),
-            external_printer: None,
+            // external_printer: None, // External printer removed
             openai_models: Arc::new(Mutex::new(None)),
             anthropic_models: Arc::new(Mutex::new(None)),
             ollama_models: Arc::new(Mutex::new(None)),

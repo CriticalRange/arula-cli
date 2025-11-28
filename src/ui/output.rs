@@ -1,7 +1,6 @@
 use crate::api::api::Usage;
 use crate::utils::colors::{ColorTheme, helpers};
 use console::style;
-use crossbeam_channel::Sender;
 use crossterm::terminal;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, Write};
@@ -187,7 +186,6 @@ pub struct OutputHandler {
     code_block_content: String,
     line_buffer: String,
     last_printed_len: usize,
-    external_printer: Option<Sender<String>>,
 }
 
 impl OutputHandler {
@@ -217,7 +215,6 @@ impl OutputHandler {
             code_block_content: String::new(),
             line_buffer: String::new(),
             last_printed_len: 0,
-            external_printer: None,
         }
     }
 
@@ -230,36 +227,17 @@ impl OutputHandler {
         self.debug
     }
 
-    /// Set ExternalPrinter sender for concurrent output while in read_line()
-    pub fn set_external_printer(&mut self, sender: Sender<String>) {
-        self.external_printer = Some(sender);
-    }
-
-    /// Helper to print either via ExternalPrinter or stdout
+    /// Helper to print via stdout
     fn print_line(&self, text: String) -> io::Result<()> {
-        if let Some(sender) = &self.external_printer {
-            // Use ExternalPrinter - send with newline
-            let _ = sender.send(format!("{}\n", text));
-            Ok(())
-        } else {
-            // Fallback to stdout
-            println!("{}", text);
-            Ok(())
-        }
+        println!("{}", text);
+        Ok(())
     }
 
     /// Helper to print without newline (for streaming)
     fn print_inline(&self, text: &str) -> io::Result<()> {
-        if let Some(sender) = &self.external_printer {
-            // Use ExternalPrinter - send without newline
-            let _ = sender.send(text.to_string());
-            Ok(())
-        } else {
-            // Fallback to stdout
-            print!("{}", text);
-            std::io::stdout().flush()?;
-            Ok(())
-        }
+        print!("{}", text);
+        std::io::stdout().flush()?;
+        Ok(())
     }
 
     /// Get the terminal width, falling back to a reasonable default if unavailable
