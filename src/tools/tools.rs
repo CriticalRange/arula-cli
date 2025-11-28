@@ -6,7 +6,6 @@ use memmap2::MmapOptions;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command as TokioCommand;
 use console::style;
-use base64::Engine;
 
 /// Parameters for the bash tool
 #[derive(Debug, Deserialize)]
@@ -2204,7 +2203,7 @@ async fn get_dominant_color(&self, img: &Mat, rect: &Rect) -> Result<String, Str
     }
 
     /// Real click execution with element finding using OCR and UI automation
-    async fn execute_click(&self, target: &str, click_target: ClickTarget, button: Option<ClickButton>, double_click: bool) -> Result<VisioneerResult, String> {
+    async fn execute_click(&self, _target: &str, click_target: ClickTarget, button: Option<ClickButton>, double_click: bool) -> Result<VisioneerResult, String> {
         let start_time = std::time::Instant::now();
 
         #[cfg(target_os = "windows")]
@@ -3651,84 +3650,338 @@ impl Tool for WebSearchTool {
             return Err("Invalid safe_search value. Must be 'on', 'moderate', or 'off'.".to_string());
         }
 
-        // Build DuckDuckGo API URL
-        let encoded_query = urlencoding::encode(&query);
-        let url = format!(
-            "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
-            encoded_query
-        );
+        // Check if we should use Z.AI web search
+        let use_zai_search = self.should_use_zai_web_search();
 
-        // Make HTTP request to DuckDuckGo API
-        let response = reqwest::get(&url)
-            .await
-            .map_err(|e| format!("Failed to connect to DuckDuckGo API: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(format!("DuckDuckGo API returned error: {}", response.status()));
-        }
-
-        // Parse JSON response
-        let ddg_response: DuckDuckGoResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse DuckDuckGo response: {}", e))?;
-
-        // Collect all results
-        let mut all_results = Vec::new();
-
-        // Add main results if available
-        if let Some(results) = &ddg_response.results {
-            all_results.extend(self.parse_ddg_results(results));
-        }
-
-        // Add related topics if available
-        if let Some(related_topics) = &ddg_response.related_topics {
-            all_results.extend(self.parse_related_topics(related_topics));
-        }
-
-        // Limit to requested max_results
-        all_results.truncate(max_results);
-
-        // Extract answer and definition
-        let answer = if !ddg_response.answer.is_empty() {
-            Some(ddg_response.answer)
-        } else if let Some(answer_type) = ddg_response.answer_type_field {
-            if !answer_type.is_empty() && !ddg_response.abstract_text.is_empty() {
-                Some(format!("{}: {}", answer_type, ddg_response.abstract_text))
-            } else {
-                None
-            }
+        let search_result = if use_zai_search {
+            self.execute_zai_web_search(&query, max_results).await?
         } else {
-            None
-        };
-
-        let abstract_text = if !ddg_response.abstract_text.is_empty() {
-            Some(ddg_response.abstract_text)
-        } else {
-            None
-        };
-
-        let definition = if !ddg_response.definition.is_empty() {
-            Some(format!("{} - {}", ddg_response.definition, ddg_response.definition_source))
-        } else {
-            None
+            self.execute_duckduckgo_search(&query, max_results).await?
         };
 
         let response_time_ms = start_time.elapsed().as_millis() as u64;
+
+        Ok(search_result)
+    }
+
+    /// Check if Z.AI web search should be used based on configuration
+    fn should_use_zai_web_search(&self) -> bool {
+        // Try to load configuration and check Z.AI web search setting
+        if let Ok(config) = crate::utils::config::Config::load_or_default() {
+            if let Some(zai_enabled) = config.get_zai_web_search_enabled() {
+                return zai_enabled;
+            }
+        }
+        false
+    }
+
+    /// Execute search using Z.AI web search API
+    async fn execute_zai_web_search(&self, query: &str, max_results: usize) -> Result<WebSearchResult, String> {
+        eprintln!("🔧 Using Z.AI web search for: {}", query);
+
+        // Try to load Z.AI configuration
+        let config = crate::utils::config::Config::load_or_default()
+            .map_err(|e| format!("Failed to load config: {}", e))?;
+
+        let api_key = if let Some(zai_config) = config.get_active_provider_config() {
+            if zai_config.api_key.is_empty() {
+                return Err("Z.AI API key not configured. Please set up Z.AI credentials.".to_string());
+            }
+            zai_config.api_key.clone()
+        } else {
+            return Err("No active provider configuration found.".to_string());
+        };
+
+        let endpoint = config.get_active_provider_config()
+            .and_then(|c| c.api_url.clone())
+            .unwrap_or_else(|| "https://api.z.ai/api/paas/v4/".to_string());
+
+        // Build Z.AI web search request
+        let search_request = serde_json::json!({
+            "model": "glm-4.6",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": format!("Please search the web for: {}", query)
+                }
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search for information on the web",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "search_engine": {
+                                    "type": "string",
+                                    "description": "Search engine to use"
+                                },
+                                "search_query": {
+                                    "type": "string",
+                                    "description": "Search query"
+                                },
+                                "count": {
+                                    "type": "integer",
+                                    "description": "Number of results"
+                                },
+                                "search_recency_filter": {
+                                    "type": "string",
+                                    "description": "Time filter for search results"
+                                }
+                            },
+                            "required": ["search_query"],
+                            "properties": {
+                                "search_engine": {"type": "string"},
+                                "count": {"type": "integer"},
+                                "search_recency_filter": {"type": "string"}
+                            }
+                        }
+                    }
+                }
+            ],
+            "tool_choice": "auto"
+        });
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+        let response = client
+            .post(format!("{}/chat/completions", endpoint))
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Accept-Language", "en-US,en")
+            .json(&search_request)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to connect to Z.AI API: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("Z.AI API returned error: {}", response.status()));
+        }
+
+        let response_json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse Z.AI response: {}", e))?;
+
+        // Parse Z.AI response and extract web search results
+        let mut all_results = Vec::new();
+        let mut answer = None;
+        let mut abstract_text = None;
+        let mut definition = None;
+
+        if let Some(choices) = response_json["choices"].as_array() {
+            if let Some(choice) = choices.first() {
+                if let Some(content) = choice["message"]["content"].as_str() {
+                    // Parse the web search results from Z.AI response
+                    // Z.AI typically returns results in a structured format
+                    let zai_results = self.parse_zai_web_search_results(content, max_results);
+                    all_results.extend(zai_results);
+
+                    // Look for answer or definition in the content
+                    if content.contains("Answer:") || content.contains("Definition:") {
+                        answer = self.extract_zai_answer(content);
+                    }
+                }
+            }
+        }
+
         let total_results = all_results.len();
 
-        // Return success even if no results found (empty search is still a valid operation)
         Ok(WebSearchResult {
-            query,
+            query: query.to_string(),
             results: all_results,
             answer,
             abstract_text,
             definition,
             total_results,
-            success: true,
-            response_time_ms,
-            provider: "DuckDuckGo Instant Answer API".to_string(),
+            success: total_results > 0,
+            response_time_ms: 0, // Will be set by caller
+            provider: "Z.AI Web Search API".to_string(),
         })
+    }
+
+    /// Parse Z.AI web search results from response content
+    fn parse_zai_web_search_results(&self, content: &str, max_results: usize) -> Vec<WebSearchResultEntry> {
+        let mut results = Vec::new();
+
+        // Look for structured search results in the response
+        // Z.AI often returns results in a format like:
+        // 1. [Title](URL) - Description
+        // 2. [Title](URL) - Description
+        // ...
+
+        let lines: Vec<&str> = content.lines().collect();
+        let mut current_result = String::new();
+        let mut in_result = false;
+
+        for line in lines.iter().take(max_results * 3) { // Allow multiple lines per result
+            let trimmed = line.trim();
+
+            if trimmed.starts_with("1.") || trimmed.starts_with("2.") || trimmed.starts_with("3.") ||
+               trimmed.starts_with("• ") || trimmed.starts_with("- ") {
+                // New result detected
+                if !current_result.is_empty() {
+                    if let Some(parsed) = self.parse_single_zai_result(&current_result) {
+                        results.push(parsed);
+                    }
+                }
+                current_result = trimmed.to_string();
+                in_result = true;
+            } else if in_result && (trimmed.starts_with("http") || trimmed.contains("](")) {
+                // URL detected in current result
+                current_result.push_str(" ");
+                current_result.push_str(trimmed);
+            } else if in_result && !trimmed.is_empty() {
+                // Additional content for current result
+                current_result.push_str(" ");
+                current_result.push_str(trimmed);
+            }
+        }
+
+        // Parse the last result if exists
+        if !current_result.is_empty() {
+            if let Some(parsed) = self.parse_single_zai_result(&current_result) {
+                results.push(parsed);
+            }
+        }
+
+        results
+    }
+
+    /// Parse a single Z.AI web search result
+    fn parse_single_zai_result(&self, result: &str) -> Option<WebSearchResultEntry> {
+        // Try to extract title, URL, and description from Z.AI result
+        // Common patterns:
+        // 1. [Title](URL) - Description
+        // 2. Title: URL - Description
+
+        if let Some(url_start) = result.find("http") {
+            let before_url = &result[..url_start];
+            let after_url = &result[url_start..];
+
+            // Extract title (before the URL)
+            let title = if let Some(markdown_end) = before_url.rfind("]") {
+                &before_url[..markdown_end].trim_start_matches("[").trim()
+            } else if let Some(colon_end) = before_url.rfind(":") {
+                &before_url[..colon_end].trim()
+            } else {
+                before_url.trim()
+            };
+
+            // Extract URL
+            let url_end = after_url.find(|c| c == ')' || c == ' ' || c == '-');
+            let url = if let Some(end) = url_end {
+                &after_url[..end]
+            } else {
+                after_url.trim()
+            };
+
+            // Extract description (after URL and any separators)
+            let remaining = &after_url[url_end.unwrap_or(after_url.len())..];
+            let description = remaining
+                .trim_start_matches(")").trim_start_matches("-").trim_start_matches("|");
+
+            if !title.is_empty() && !url.is_empty() {
+                return Some(WebSearchResultEntry {
+                    title: title.to_string(),
+                    url: url.to_string(),
+                    snippet: description.to_string(),
+                    source: "Z.AI Web Search".to_string(),
+                });
+            }
+        }
+
+        None
+    }
+
+    /// Extract answer from Z.AI response content
+    fn extract_zai_answer(&self, content: &str) -> Option<String> {
+        // Look for Answer: or Definition: sections
+        if let Some(answer_start) = content.find("Answer:") {
+            let answer_end = content[answer_start + 7..].find('\n').unwrap_or(content.len());
+            Some(content[answer_start + 7..answer_start + 7 + answer_end].trim().to_string())
+        } else if let Some(def_start) = content.find("Definition:") {
+            let def_end = content[def_start + 11..].find('\n').unwrap_or(content.len());
+            Some(content[def_start + 11..def_start + 11 + def_end].trim().to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Execute search using DuckDuckGo API (existing implementation)
+    async fn execute_duckduckgo_search(&self, query: &str, max_results: usize) -> Result<WebSearchResult, String> {
+        let url = format!("https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
+                          urlencoding::encode(query));
+
+        let client = reqwest::Client::new();
+
+        match client.get(&url).send().await {
+            Ok(response) => {
+                if !response.status().is_success() {
+                    return Err(format!("HTTP error: {}", response.status()));
+                }
+
+                let text = response.text().await.map_err(|e| e.to_string())?;
+
+                // Parse DuckDuckGo response
+                let ddg_result: serde_json::Value = serde_json::from_str(&text)
+                    .map_err(|_| "Invalid JSON response".to_string())?;
+
+                let mut entries = Vec::new();
+
+                // Extract RelatedTopics (main results)
+                if let Some(related) = ddg_result.get("RelatedTopics").and_then(|v| v.as_array()) {
+                    for item in related.iter().take(max_results) {
+                        if let Some(text) = item.get("Text").and_then(|v| v.as_str()) {
+                            if let Some(first_url) = item.get("FirstURL").and_then(|v| v.as_str()) {
+                                if !text.is_empty() && !first_url.is_empty() {
+                                    entries.push(WebSearchResultEntry {
+                                        title: text.split('\n').next().unwrap_or(text).to_string(),
+                                        url: first_url.to_string(),
+                                        snippet: text.to_string(),
+                                        relevance_score: Some(0.8),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Fallback to Abstract if no results
+                if entries.is_empty() {
+                    if let Some(abstract_text) = ddg_result.get("Abstract").and_then(|v| v.as_str()) {
+                        if let Some(abstract_url) = ddg_result.get("AbstractURL").and_then(|v| v.as_str()) {
+                            if !abstract_text.is_empty() {
+                                entries.push(WebSearchResultEntry {
+                                    title: ddg_result.get("Heading").and_then(|v| v.as_str())
+                                        .unwrap_or("Result").to_string(),
+                                    url: abstract_url.to_string(),
+                                    snippet: abstract_text.to_string(),
+                                    relevance_score: Some(0.7),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                if entries.is_empty() {
+                    return Err("No results found".to_string());
+                }
+
+                Ok(WebSearchResult {
+                    query: query.to_string(),
+                    entries,
+                    total_results: Some(entries.len()),
+                    search_time_ms: None,
+                    source: "DuckDuckGo".to_string(),
+                })
+            }
+            Err(e) => Err(format!("Request failed: {}", e)),
+        }
     }
 }
 
@@ -4312,9 +4565,9 @@ impl crate::api::agent::Tool for QuestionTool {
     }
 }
 
-/// Factory function to create a default tool registry with Visioneer tools
-/// MCP tools are initialized separately to avoid runtime conflicts
-pub fn create_default_tool_registry(config: &crate::utils::config::Config) -> crate::api::agent::ToolRegistry {
+/// Factory function to create a basic tool registry (without MCP discovery)
+/// Used by AgentClient when a cached registry is already available
+pub fn create_basic_tool_registry() -> crate::api::agent::ToolRegistry {
     use crate::api::agent::ToolRegistry;
 
     let mut registry = ToolRegistry::new();
@@ -4330,10 +4583,26 @@ pub fn create_default_tool_registry(config: &crate::utils::config::Config) -> cr
     registry.register(VisioneerTool::new());
     registry.register(QuestionTool::new());
 
-    // Note: MCP tools are initialized separately in initialize_mcp_tools_async
-    // to avoid tokio runtime conflicts
-
     registry
+}
+
+/// Factory function to create a default tool registry with MCP discovery
+/// This includes async MCP discovery and should only be called once at startup
+pub async fn create_default_tool_registry_with_mcp(config: &crate::utils::config::Config) -> Result<crate::api::agent::ToolRegistry, String> {
+    let mut registry = create_basic_tool_registry();
+
+    // Initialize MCP tools if available
+    if let Err(e) = initialize_mcp_tools(&mut registry, config).await {
+        eprintln!("⚠️ Failed to initialize MCP tools: {}", e);
+    }
+
+    Ok(registry)
+}
+
+/// Factory function to create a default tool registry (backward compatibility)
+/// MCP tools are initialized separately to avoid runtime conflicts
+pub fn create_default_tool_registry(_config: &crate::utils::config::Config) -> crate::api::agent::ToolRegistry {
+    create_basic_tool_registry()
 }
 
 /// Initialize MCP tools asynchronously and add them to the registry

@@ -2,6 +2,7 @@ use crate::api::agent::{AgentOptionsBuilder, ContentBlock};
 use crate::api::agent_client::AgentClient;
 use crate::utils::chat::{ChatMessage, MessageType};
 use crate::utils::config::Config;
+use crate::utils::git_state::GitStateTracker;
 use crate::utils::tool_call::{execute_bash_tool, ToolCall, ToolCallResult};
 use anyhow::Result;
 use chrono::Utc;
@@ -299,6 +300,10 @@ enum TrackingCommand {
 pub struct App {
     pub config: Config,
     pub agent_client: Option<AgentClient>,
+    // Cached tool registry to avoid repeated MCP discovery
+    pub cached_tool_registry: Option<crate::api::agent::ToolRegistry>,
+    // Git state tracker for branch restoration
+    pub git_state_tracker: GitStateTracker,
     pub messages: Vec<ChatMessage>,
     pub ai_response_rx: Option<mpsc::UnboundedReceiver<AiResponse>>,
     pub current_streaming_message: Option<String>,
@@ -337,6 +342,8 @@ impl App {
         Ok(Self {
             config,
             agent_client: None,
+            cached_tool_registry: None,
+            git_state_tracker: GitStateTracker::new("."),
             messages: Vec::new(),
             ai_response_rx: None,
             current_streaming_message: None,
@@ -363,6 +370,60 @@ impl App {
     pub fn with_debug(mut self, debug: bool) -> Self {
         self.debug = debug;
         self
+    }
+
+    /// Reload configuration from file and reinitialize agent client if needed
+    pub fn reload_config(&mut self) -> Result<()> {
+        // Reload configuration from file
+        self.config = Config::load_or_default()?;
+
+        // Clear cached tool registry to force refresh with new config
+        self.cached_tool_registry = None;
+
+        // Reinitialize agent client with new configuration
+        self.initialize_agent_client()?;
+
+        Ok(())
+    }
+
+    /// Initialize cached tool registry with MCP discovery (run once at startup)
+    pub async fn initialize_tool_registry(&mut self) -> Result<()> {
+        if self.cached_tool_registry.is_none() {
+            eprintln!("🔧 Initializing tool registry with MCP discovery...");
+            match crate::tools::tools::create_default_tool_registry_with_mcp(&self.config).await {
+                Ok(registry) => {
+                    self.cached_tool_registry = Some(registry);
+                    eprintln!("✅ Tool registry initialized successfully");
+                }
+                Err(e) => {
+                    eprintln!("⚠️ Failed to initialize tool registry with MCP: {}", e);
+                    eprintln!("🔧 Falling back to basic tool registry...");
+                    let registry = crate::tools::tools::create_basic_tool_registry();
+                    self.cached_tool_registry = Some(registry);
+                    eprintln!("✅ Basic tool registry initialized successfully");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Initialize git state tracking (load saved state from previous crash)
+    pub async fn initialize_git_state(&mut self) -> Result<()> {
+        // Load any saved git state from previous crash
+        if let Some(branch) = self.git_state_tracker.load_branch_from_disk().await? {
+            eprintln!("🔧 GitState: Loaded saved branch from previous session: {:?}", branch);
+        }
+        Ok(())
+    }
+
+    /// Get the cached tool registry, initializing it if necessary
+    pub fn get_tool_registry(&mut self) -> &crate::api::agent::ToolRegistry {
+        if self.cached_tool_registry.is_none() {
+            // This should not happen if initialize_tool_registry was called, but handle gracefully
+            let registry = crate::tools::tools::create_basic_tool_registry();
+            self.cached_tool_registry = Some(registry);
+        }
+        self.cached_tool_registry.as_ref().unwrap()
     }
 
     /// Set ExternalPrinter sender for concurrent output
@@ -530,17 +591,19 @@ The user will manually rebuild after exiting the application.
             .debug(self.debug)
             .build();
 
-        self.agent_client = Some(AgentClient::new(
+        // Create a new agent client with a basic tool registry
+        // MCP tools are handled separately in the streaming response
+        let basic_registry = crate::tools::tools::create_basic_tool_registry();
+
+        self.agent_client = Some(AgentClient::new_with_registry(
             self.config.active_provider.clone(),
             self.config.get_api_url(),
             self.config.get_api_key(),
             self.config.get_model(),
             agent_options,
             &self.config,
+            basic_registry,
         ));
-
-        // Initialize MCP tools in background (non-blocking)
-        self.initialize_mcp_tools_async();
 
         Ok(())
     }
@@ -601,6 +664,11 @@ The user will manually rebuild after exiting the application.
 
     /// Send message using the modern agent client
     async fn send_to_ai_with_agent(&mut self, message: &str) -> Result<()> {
+        // Save current git branch before AI interaction
+        if let Err(e) = self.git_state_tracker.save_current_branch().await {
+            eprintln!("⚠️ GitState: Failed to save current branch: {}", e);
+        }
+
         // Get agent client
         let agent_client = match &self.agent_client {
             Some(client) => client.clone(),
@@ -854,6 +922,19 @@ The user will manually rebuild after exiting the application.
         Ok(())
     }
 
+    /// Restore git branch after AI interaction completes
+    pub async fn restore_git_branch(&self) {
+        if let Err(e) = self.git_state_tracker.restore_original_branch().await {
+            eprintln!("⚠️ GitState: Failed to restore git branch: {}", e);
+        }
+    }
+
+    /// Cleanup method to restore git branch when app exits
+    pub async fn cleanup(&self) {
+        eprintln!("🔧 GitState: Cleaning up and restoring git state...");
+        self.restore_git_branch().await;
+    }
+
 
     /// Process pending tracking commands
     pub fn process_tracking_commands(&mut self) {
@@ -1054,6 +1135,10 @@ The user will manually rebuild after exiting the application.
         self.cancellation_token = CancellationToken::new();
         // Clear the response receiver so is_waiting_for_response() returns false
         self.ai_response_rx = None;
+
+        // Note: Git branch restoration on cancel would require async context
+        // For now, we'll let the state be restored on next app startup
+        eprintln!("🔧 GitState: Cancelled - git branch will be restored on next startup");
     }
 
     /// Get cached OpenRouter models, returning None if not cached

@@ -5,7 +5,7 @@
 
 use crate::api::agent::{AgentOptions, ContentBlock, ToolRegistry, ToolResult};
 use crate::api::api::{ApiClient, ChatMessage, StreamingResponse};
-use crate::tools::tools::create_default_tool_registry;
+use crate::tools::tools::create_basic_tool_registry;
 use crate::utils::config::Config;
 use anyhow::Result;
 use futures::Stream;
@@ -66,7 +66,27 @@ impl AgentClient {
         config: &crate::utils::config::Config,
     ) -> Self {
         let api_client = ApiClient::new(provider, endpoint, api_key, model);
-        let tool_registry = create_default_tool_registry(config);
+        let tool_registry = create_basic_tool_registry();
+
+        Self {
+            api_client,
+            tool_registry,
+            options,
+            config: config.clone(),
+        }
+    }
+
+    /// Create a new agent client with a pre-initialized tool registry (shared via Arc)
+    pub fn new_with_registry(
+        provider: String,
+        endpoint: String,
+        api_key: String,
+        model: String,
+        options: AgentOptions,
+        config: &crate::utils::config::Config,
+        tool_registry: crate::api::agent::ToolRegistry,
+    ) -> Self {
+        let api_client = ApiClient::new(provider, endpoint, api_key, model);
 
         Self {
             api_client,
@@ -119,7 +139,6 @@ impl AgentClient {
         let max_tool_iterations = self.options.max_tool_iterations;
 
         let debug = self.options.debug;
-        let config = self.config.clone();
         let tx_clone = tx.clone();
         tokio::spawn(async move {
             if let Err(e) = Self::handle_streaming_response(
@@ -130,7 +149,7 @@ impl AgentClient {
                 auto_execute_tools,
                 max_tool_iterations,
                 debug,
-                &config,
+                &ToolRegistry::new(), // Use a new empty registry for streaming
             )
             .await
             {
@@ -211,19 +230,13 @@ impl AgentClient {
     async fn handle_streaming_response(
         api_client: ApiClient,
         messages: Vec<ChatMessage>,
-        tools: Vec<serde_json::Value>,
+        _tools: Vec<serde_json::Value>,
         tx: mpsc::UnboundedSender<ContentBlock>,
         auto_execute_tools: bool,
         _max_tool_iterations: u32,
         debug: bool,
-        config: &crate::utils::config::Config,
+        tool_registry: &crate::api::agent::ToolRegistry,
     ) -> Result<()> {
-        let mut tool_registry = create_default_tool_registry(config);
-
-        // Initialize MCP tools if available
-        if let Err(e) = crate::tools::tools::initialize_mcp_tools(&mut tool_registry, config).await {
-            eprintln!("⚠️ Failed to initialize MCP tools in streaming response: {}", e);
-        }
 
         // Filter tools to only include functional MCP servers
         let all_tools = tool_registry.get_openai_tools();

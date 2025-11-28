@@ -6,6 +6,7 @@
 use crate::api::agent::{Tool, ToolSchema, ToolSchemaBuilder};
 use async_trait::async_trait;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -867,7 +868,7 @@ impl OcrEngine for TesseractOcrEngine {
 
         // Configure Tesseract with real parameters
         let lang = language.unwrap_or_else(|| "eng".to_string());
-        let args = Args {
+        let mut args = Args {
             lang: lang.clone(),
             config_variables: HashMap::from([
                 ("tessedit_char_whitelist".to_string(),

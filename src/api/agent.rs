@@ -197,6 +197,7 @@ pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn Tool<Params = serde_json::Value, Result = serde_json::Value>>>,
 }
 
+
 impl std::fmt::Debug for ToolRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ToolRegistry")

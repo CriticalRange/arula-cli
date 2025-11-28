@@ -7,5 +7,6 @@ pub mod chat;
 pub mod colors;
 pub mod config;
 pub mod conversation;
+pub mod git_state;
 pub mod tool_call;
 pub mod tool_progress;

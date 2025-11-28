@@ -150,7 +150,18 @@ fn show_main_menu(main_menu: &mut MainMenu, app: &mut App, output: &mut OutputHa
 fn show_config_menu(config_menu: &mut ConfigMenu, app: &mut App, output: &mut OutputHandler) -> Result<bool> {
     match config_menu.show(app, output)? {
         ui::menus::common::MenuResult::Exit => Ok(true),
-        _ => Ok(false), // BackToMain, ConfigurationUpdated -> don't exit
+        _ => {
+            // Configuration was likely updated, reload it
+            match app.reload_config() {
+                Ok(()) => {
+                    output.print_system("✅ Configuration reloaded successfully")?;
+                }
+                Err(e) => {
+                    output.print_error(&format!("Failed to reload configuration: {}", e))?;
+                }
+            }
+            Ok(false) // BackToMain, ConfigurationUpdated -> don't exit
+        }
     }
 }
 
@@ -160,7 +171,21 @@ fn show_exit_confirmation(output: &mut OutputHandler) -> Result<bool> {
     exit_menu.show(output)
 }
 
-/// Properly exit the application with terminal cleanup
+/// Properly exit the application with terminal cleanup and git restoration
+fn graceful_exit_with_app(app: &mut App) -> ! {
+    // Use tokio block_in_place to run async cleanup in sync context
+    let rt = tokio::runtime::Handle::current();
+    let _guard = rt.enter();
+    let _ = rt.block_on(async {
+        app.cleanup().await;
+    });
+
+    // Restore terminal state before exiting
+    let _ = cleanup_terminal_and_exit();
+    std::process::exit(0);
+}
+
+/// Properly exit the application with terminal cleanup (for cases without app)
 fn graceful_exit() -> ! {
     // Restore terminal state before exiting
     let _ = cleanup_terminal_and_exit();
@@ -363,6 +388,16 @@ async fn main() -> Result<()> {
     let mut output = OutputHandler::new().with_debug(cli.debug);
     let mut app = App::new()?.with_debug(cli.debug);
 
+    // Initialize git state tracking (load saved state from previous crash)
+    if let Err(e) = app.initialize_git_state().await {
+        eprintln!("⚠️ Failed to initialize git state tracking: {}", e);
+    }
+
+    // Initialize tool registry with MCP discovery (once at startup)
+    if let Err(e) = app.initialize_tool_registry().await {
+        eprintln!("⚠️ Failed to initialize tool registry: {}", e);
+    }
+
     // Initialize AI client if configuration is valid
     match app.initialize_agent_client() {
         Ok(()) => {
@@ -452,7 +487,7 @@ async fn main() -> Result<()> {
                     // Double ESC - show menu
                     if show_main_menu(&mut main_menu, &mut app, &mut output, &mut config_menu)? {
                         output.print_system("Goodbye! 👋")?;
-                        graceful_exit();
+                        graceful_exit_with_app(&mut app);
                     }
                     continue 'main_loop;
                 }
@@ -461,7 +496,7 @@ async fn main() -> Result<()> {
                     // Ctrl+C - show exit menu
                     if show_exit_confirmation(&mut output)? {
                         output.print_system("Goodbye! 👋")?;
-                        graceful_exit();
+                        graceful_exit_with_app(&mut app);
                     }
                     continue 'main_loop;
                 }
@@ -478,7 +513,7 @@ async fn main() -> Result<()> {
                 if input == "exit" || input == "quit" {
                     if show_exit_confirmation(&mut output)? {
                         output.print_system("Goodbye! 👋")?;
-                        graceful_exit();
+                        graceful_exit_with_app(&mut app);
                     }
                     continue 'main_loop;
                 }

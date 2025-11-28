@@ -30,6 +30,18 @@ pub struct ProviderConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_url: Option<String>,
     pub api_key: String,
+
+    // Z.AI specific options
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enable_usage_tracking: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_search_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,12 +256,120 @@ impl Config {
                     model: defaults.model,
                     api_url: Some(defaults.api_url),
                     api_key: defaults.api_key,
+                    thinking_enabled: None,
+                    max_retries: Some(3),
+                    timeout_seconds: Some(300),
+                    enable_usage_tracking: Some(true),
+                    web_search_enabled: Some(false),
                 },
             );
         }
 
         self.active_provider = provider_name.to_string();
         Ok(())
+    }
+
+    /// Get Z.AI specific thinking mode setting
+    pub fn get_zai_thinking_enabled(&self) -> Option<bool> {
+        if let Some(config) = self.get_active_provider_config() {
+            config.thinking_enabled
+        } else {
+            None
+        }
+    }
+
+    /// Set Z.AI thinking mode
+    pub fn set_zai_thinking_enabled(&mut self, enabled: bool) -> Result<()> {
+        if let Some(config) = self.get_active_provider_config_mut() {
+            config.thinking_enabled = Some(enabled);
+        }
+        self.save_to_file(Self::get_config_path())?;
+        Ok(())
+    }
+
+    /// Get Z.AI web search enabled setting
+    pub fn get_zai_web_search_enabled(&self) -> Option<bool> {
+        if let Some(config) = self.get_active_provider_config() {
+            config.web_search_enabled
+        } else {
+            None
+        }
+    }
+
+    /// Set Z.AI web search enabled
+    pub fn set_zai_web_search_enabled(&mut self, enabled: bool) -> Result<()> {
+        if let Some(config) = self.get_active_provider_config_mut() {
+            config.web_search_enabled = Some(enabled);
+        }
+        self.save_to_file(Self::get_config_path())?;
+        Ok(())
+    }
+
+    /// Get Z.AI usage tracking enabled setting
+    pub fn get_zai_usage_tracking_enabled(&self) -> Option<bool> {
+        if let Some(config) = self.get_active_provider_config() {
+            config.enable_usage_tracking
+        } else {
+            None
+        }
+    }
+
+    /// Get Z.AI max retries setting
+    pub fn get_zai_max_retries(&self) -> u32 {
+        if let Some(config) = self.get_active_provider_config() {
+            config.max_retries.unwrap_or(3)
+        } else {
+            3
+        }
+    }
+
+    /// Get Z.AI timeout seconds setting
+    pub fn get_zai_timeout_seconds(&self) -> u64 {
+        if let Some(config) = self.get_active_provider_config() {
+            config.timeout_seconds.unwrap_or(300)
+        } else {
+            300
+        }
+    }
+
+    /// Load configuration from environment variables
+    pub fn load_from_env() -> Result<Self> {
+        let api_key = std::env::var("ZAI_API_KEY")
+            .or_else(|_| std::env::var("ZAI_CODING_PLAN_API_KEY"))
+            .unwrap_or_default();
+
+        let endpoint = std::env::var("ZAI_BASE_URL")
+            .unwrap_or_else(|_| "https://api.z.ai/api/paas/v4/".to_string());
+
+        let model = std::env::var("ZAI_MODEL")
+            .unwrap_or_else(|_| "glm-4.6".to_string());
+
+        let mut config = Self::default();
+        config.active_provider = "z.ai coding plan".to_string();
+        config.providers.insert("z.ai coding plan".to_string(), ProviderConfig {
+            model,
+            api_url: Some(endpoint),
+            api_key,
+            thinking_enabled: std::env::var("ZAI_THINKING_ENABLED")
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            max_retries: std::env::var("ZAI_MAX_RETRIES")
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            timeout_seconds: std::env::var("ZAI_TIMEOUT_SECONDS")
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            enable_usage_tracking: std::env::var("ZAI_ENABLE_USAGE_TRACKING")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(true),
+            web_search_enabled: std::env::var("ZAI_ENABLE_WEB_SEARCH")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(false),
+        });
+
+        Ok(config)
     }
 
     /// Get the API URL for the current provider

@@ -1,9 +1,48 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::sync::mpsc;
+
+// Z.AI specific error types
+#[derive(Debug, thiserror::Error)]
+pub enum ZAIApiError {
+    #[error("Authentication failed: {message}")]
+    AuthenticationError { message: String },
+
+    #[error("Rate limit exceeded: {message}")]
+    RateLimitError { message: String },
+
+    #[error("Request timeout: {message}")]
+    TimeoutError { message: String },
+
+    #[error("Invalid request: {message} (Status: {status_code})")]
+    RequestError { message: String, status_code: u16 },
+
+    #[error("Internal server error: {message}")]
+    InternalError { message: String },
+
+    #[error("Server overloaded: {message}")]
+    ServerFlowExceedError { message: String },
+
+    #[error("API error: {message} (Status: {status_code})")]
+    StatusError { message: String, status_code: u16 },
+
+    #[error("Network error: {0}")]
+    NetworkError(#[from] reqwest::Error),
+}
+
+impl ZAIApiError {
+    pub fn from_status_code(status: u16, message: &str) -> Self {
+        match status {
+            401 => Self::AuthenticationError { message: message.to_string() },
+            429 => Self::RateLimitError { message: message.to_string() },
+            500..=599 => Self::InternalError { message: message.to_string() },
+            _ => Self::StatusError { message: message.to_string(), status_code: status },
+        }
+    }
+}
 
 /// Debug print helper that checks ARULA_DEBUG environment variable
 fn debug_print(msg: &str) {
@@ -49,6 +88,26 @@ pub struct ApiResponse {
     pub error: Option<String>,
     pub usage: Option<Usage>,
     pub tool_calls: Option<Vec<ToolCall>>,
+    pub model: Option<String>,
+    pub created: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZAIUsage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    pub cost_estimate: Option<f64>, // in USD for some models
+}
+
+impl ZAIUsage {
+    pub fn log_usage(&self, model: &str) {
+        eprintln!("🔧 Z.AI Usage [{}]: {} prompt + {} completion = {} total tokens",
+                 model, self.prompt_tokens, self.completion_tokens, self.total_tokens);
+        if let Some(cost) = self.cost_estimate {
+            eprintln!("💰 Estimated cost: ${:.6}", cost);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -448,6 +507,8 @@ impl ApiClient {
                         error: None,
                         usage: None, // TODO: Parse usage from response if needed
                         tool_calls,
+                        model: Some(self.model.clone()),
+                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
                     })
                 } else {
                     Ok(ApiResponse {
@@ -456,6 +517,8 @@ impl ApiClient {
                         error: Some("No choices in response".to_string()),
                         usage: None,
                         tool_calls: None,
+                        model: Some(self.model.clone()),
+                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
                     })
                 }
             } else {
@@ -520,6 +583,8 @@ impl ApiClient {
                             error: None,
                             usage: None, // Claude has different usage format
                             tool_calls: None,
+                            model: Some(self.model.clone()),
+                            created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
                         });
                     }
                 }
@@ -602,6 +667,13 @@ impl ApiClient {
     }
 
     async fn send_zai_request(&self, messages: Vec<ChatMessage>) -> Result<ApiResponse> {
+        // Get Z.AI configuration from the config file
+        let config = crate::utils::config::Config::load_or_default()?;
+        let max_retries = config.get_zai_max_retries();
+        let timeout = Duration::from_secs(config.get_zai_timeout_seconds());
+        let thinking_enabled = config.get_zai_thinking_enabled().unwrap_or(false);
+        let usage_tracking = config.get_zai_usage_tracking_enabled().unwrap_or(true);
+
         // Convert ChatMessage format to plain objects for Z.AI
         let zai_messages: Vec<Value> = messages
             .into_iter()
@@ -626,10 +698,8 @@ impl ApiClient {
             })
             .collect();
 
-        // Z.AI uses OpenAI-compatible format with specific endpoint
-        // NOTE: Tools are intentionally NOT included here to allow normal conversation
-        // Tools are only added when explicitly needed via send_message_with_tools
-        let request = json!({
+        // Z.AI uses OpenAI-compatible format with thinking mode support
+        let mut request = json!({
             "model": self.model,
             "messages": zai_messages,
             "temperature": 0.7,
@@ -637,88 +707,166 @@ impl ApiClient {
             "stream": false
         });
 
-        let mut request_builder = self
-            .client
-            .post(format!("{}/chat/completions", self.endpoint)) // Z.AI uses this exact path
-            .json(&request);
-
-        // Add authorization header if API key is provided
-        if !self.api_key.is_empty() {
-            request_builder =
-                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+        // Add thinking mode if enabled
+        if thinking_enabled {
+            request["thinking"] = json!({
+                "type": "enabled"
+            });
         }
 
-        let response = request_builder.send().await?;
-        let status = response.status();
+        // Implement retry logic
+        for attempt in 0..=max_retries {
+            let mut request_builder = self
+                .client
+                .post(format!("{}/chat/completions", self.endpoint))
+                .timeout(timeout)
+                .json(&request);
 
-        if status.is_success() {
-            let response_json: serde_json::Value = response.json().await?;
+            // Add Z.AI recommended headers
+            request_builder = request_builder
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Accept-Language", "en-US,en")
+                .header("HTTP-Referer", "https://github.com/arula-cli/arula-cli");
 
-            if let Some(choices) = response_json["choices"].as_array() {
-                if let Some(choice) = choices.first() {
-                    let content = choice["message"]["content"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string();
+            let response = request_builder.send().await;
+            match response {
+                Ok(resp) => {
+                    let status = resp.status();
 
-                    // Handle tool calls
-                    let tool_calls = if let Some(calls) = choice["message"]["tool_calls"].as_array()
-                    {
-                        Some(
-                            calls
-                                .iter()
-                                .map(|tool_call| ToolCall {
-                                    id: tool_call["id"].as_str().unwrap_or_default().to_string(),
-                                    r#type: "function".to_string(),
-                                    function: ToolCallFunction {
-                                        name: tool_call["function"]["name"]
-                                            .as_str()
-                                            .unwrap_or_default()
-                                            .to_string(),
-                                        arguments: tool_call["function"]["arguments"]
-                                            .as_str()
-                                            .unwrap_or_default()
-                                            .to_string(),
-                                    },
-                                })
-                                .collect::<Vec<_>>(),
-                        )
+                    if status.is_success() {
+                        let response_json: serde_json::Value = resp.json().await?;
+
+                        // Extract usage information
+                        let zai_usage = if usage_tracking {
+                            response_json["usage"].as_object().map(|usage| {
+                                let prompt_tokens = usage.get("prompt_tokens")
+                                    .and_then(|v| v.as_u64()).unwrap_or(0);
+                                let completion_tokens = usage.get("completion_tokens")
+                                    .and_then(|v| v.as_u64()).unwrap_or(0);
+                                let total_tokens = usage.get("total_tokens")
+                                    .and_then(|v| v.as_u64()).unwrap_or(0);
+
+                                ZAIUsage {
+                                    prompt_tokens,
+                                    completion_tokens,
+                                    total_tokens,
+                                    cost_estimate: self.calculate_zai_cost(&self.model, total_tokens),
+                                }
+                            })
+                        } else {
+                            None
+                        };
+
+                        // Log usage if tracking is enabled
+                        if let Some(ref usage) = zai_usage {
+                            usage.log_usage(&self.model);
+                        }
+
+                        if let Some(choices) = response_json["choices"].as_array() {
+                            if let Some(choice) = choices.first() {
+                                let content = choice["message"]["content"]
+                                    .as_str()
+                                    .unwrap_or("")
+                                    .to_string();
+
+                                // Handle tool calls
+                                let tool_calls = if let Some(calls) = choice["message"]["tool_calls"].as_array()
+                                {
+                                    Some(
+                                        calls
+                                            .iter()
+                                            .map(|tool_call| ToolCall {
+                                                id: tool_call["id"].as_str().unwrap_or_default().to_string(),
+                                                r#type: "function".to_string(),
+                                                function: ToolCallFunction {
+                                                    name: tool_call["function"]["name"]
+                                                        .as_str()
+                                                        .unwrap_or_default()
+                                                        .to_string(),
+                                                    arguments: tool_call["function"]["arguments"]
+                                                        .as_str()
+                                                        .unwrap_or_default()
+                                                        .to_string(),
+                                                },
+                                            })
+                                            .collect::<Vec<_>>(),
+                                    )
+                                } else {
+                                    None
+                                };
+
+                                // Convert Z.AI usage to our Usage struct
+                                let usage = zai_usage.map(|z_usage| Usage {
+                                    prompt_tokens: z_usage.prompt_tokens as u32,
+                                    completion_tokens: z_usage.completion_tokens as u32,
+                                    total_tokens: z_usage.total_tokens as u32,
+                                });
+
+                                return Ok(ApiResponse {
+                                    response: content,
+                                    success: true,
+                                    error: None,
+                                    usage,
+                                    tool_calls,
+                                    model: Some(self.model.clone()),
+                                    created: response_json["created"].as_u64(),
+                                });
+                            }
+                        }
+
+                        return Err(anyhow!("No choices in Z.AI response"));
                     } else {
-                        None
-                    };
+                        // Handle HTTP errors with Z.AI-specific mapping
+                        let error_body = resp.text().await.unwrap_or_default();
+                        let api_error = ZAIApiError::from_status_code(
+                            status.as_u16(),
+                            &error_body
+                        );
 
-                    Ok(ApiResponse {
-                        response: content,
-                        success: true,
-                        error: None,
-                        usage: None,
-                        tool_calls,
-                    })
-                } else {
-                    Ok(ApiResponse {
-                        response: "No response received".to_string(),
-                        success: false,
-                        error: Some("No choices in response".to_string()),
-                        usage: None,
-                        tool_calls: None,
-                    })
+                        // Don't retry on client errors (4xx)
+                        if status.is_client_error() {
+                            return Err(anyhow!("Z.AI API error: {}", api_error));
+                        }
+
+                        // Log retry attempt
+                        if attempt < max_retries {
+                            eprintln!("🔄 Z.AI request failed (attempt {}/{}), retrying...: {}",
+                                     attempt + 1, max_retries + 1, api_error);
+                            tokio::time::sleep(Duration::from_millis(1000 * (attempt + 1))).await;
+                            continue;
+                        } else {
+                            return Err(anyhow!("Z.AI API request failed after {} retries: {}", max_retries, api_error));
+                        }
+                    }
                 }
-            } else {
-                Ok(ApiResponse {
-                    response: "No response received".to_string(),
-                    success: false,
-                    error: Some("No choices in response".to_string()),
-                    usage: None,
-                    tool_calls: None,
-                })
+                Err(e) => {
+                    // Handle network errors
+                    if attempt < max_retries {
+                        eprintln!("🔄 Z.AI network error (attempt {}/{}) retrying...: {}",
+                                 attempt + 1, max_retries + 1, e);
+                        tokio::time::sleep(Duration::from_millis(1000 * (attempt + 1))).await;
+                        continue;
+                    } else {
+                        return Err(anyhow!("Z.AI network error after {} retries: {}", max_retries, e));
+                    }
+                }
             }
-        } else {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(anyhow::anyhow!("Z.AI API request failed: {}", error_text))
         }
+
+        unreachable!("Loop should have returned")
+    }
+
+    // Calculate estimated cost for Z.AI models
+    fn calculate_zai_cost(&self, model: &str, total_tokens: u64) -> Option<f64> {
+        // Rough cost estimates (per 1M tokens)
+        let cost_per_million = match model {
+            "glm-4" | "glm-4.6" => 0.0025, // $2.50 per 1M tokens
+            "glm-4.5" => 0.0015, // $1.50 per 1M tokens
+            "claude-instant-1.2" => 0.0008, // $0.80 per 1M tokens
+            _ => return None,
+        };
+
+        Some((total_tokens as f64 / 1_000_000.0) * cost_per_million)
     }
 
     async fn send_openrouter_request(&self, messages: Vec<ChatMessage>) -> Result<ApiResponse> {
@@ -792,6 +940,8 @@ impl ApiClient {
                         error: None,
                         usage: None, // TODO: Parse usage from response if needed
                         tool_calls,
+                        model: Some(self.model.clone()),
+                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
                     })
                 } else {
                     Ok(ApiResponse {
@@ -800,6 +950,8 @@ impl ApiClient {
                         error: Some("No choices in response".to_string()),
                         usage: None,
                         tool_calls: None,
+                        model: Some(self.model.clone()),
+                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
                     })
                 }
             } else {
@@ -1198,6 +1350,8 @@ impl ApiClient {
                         error: Some("No choices in response".to_string()),
                         usage: None,
                         tool_calls: None,
+                        model: Some(self.model.clone()),
+                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
                     })
                 }
             } else {
@@ -1395,6 +1549,8 @@ impl ApiClient {
                         error: Some("No choices in response".to_string()),
                         usage: None,
                         tool_calls: None,
+                        model: Some(self.model.clone()),
+                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
                     })
                 }
             } else {

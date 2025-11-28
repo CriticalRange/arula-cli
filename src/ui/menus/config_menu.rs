@@ -25,6 +25,8 @@ pub enum ConfigMenuItem {
     AIModel,
     APIUrl,
     APIKey,
+    ThinkingMode,
+    WebSearch,
 }
 
 impl ConfigMenuItem {
@@ -34,6 +36,8 @@ impl ConfigMenuItem {
             ConfigMenuItem::AIModel,
             ConfigMenuItem::APIUrl,
             ConfigMenuItem::APIKey,
+            ConfigMenuItem::ThinkingMode,
+            ConfigMenuItem::WebSearch,
         ]
     }
 
@@ -43,6 +47,8 @@ impl ConfigMenuItem {
             ConfigMenuItem::AIModel => "AI Model",
             ConfigMenuItem::APIUrl => "API URL",
             ConfigMenuItem::APIKey => "API Key",
+            ConfigMenuItem::ThinkingMode => "Thinking Mode",
+            ConfigMenuItem::WebSearch => "Web Search",
         }
     }
 
@@ -52,6 +58,8 @@ impl ConfigMenuItem {
             ConfigMenuItem::AIModel => "Choose AI model to use",
             ConfigMenuItem::APIUrl => "Set custom API endpoint URL",
             ConfigMenuItem::APIKey => "Configure API authentication key",
+            ConfigMenuItem::ThinkingMode => "Toggle Z.AI thinking mode (show reasoning)",
+            ConfigMenuItem::WebSearch => "Toggle web search provider (DuckDuckGo/Z.AI)",
         }
     }
 }
@@ -232,6 +240,18 @@ impl ConfigMenu {
         let max_item_width = menu_width.saturating_sub(6) as usize;
 
         // Update display values with original styling and overflow protection
+        let thinking_enabled = config.get_active_provider_config()
+            .and_then(|c| c.thinking_enabled)
+            .unwrap_or(false);
+        let web_search_enabled = config.get_active_provider_config()
+            .and_then(|c| c.web_search_enabled)
+            .unwrap_or(false);
+        let web_search_provider = if web_search_enabled && config.active_provider == "zai" {
+            "Z.AI"
+        } else {
+            "DuckDuckGo"
+        };
+
         let display_options = vec![
             format!("Provider: {}", MenuUtils::truncate_text(&config.active_provider, max_item_width.saturating_sub(11))),
             format!("Model: {}", MenuUtils::truncate_text(&config.get_model(), max_item_width.saturating_sub(9))),
@@ -246,9 +266,11 @@ impl ConfigMenu {
                     "••••••••"
                 }
             ),
+            format!("Thinking: {}", if thinking_enabled { "Enabled" } else { "Disabled" }),
+            format!("Web Search: {} ({})", if web_search_enabled { "Enabled" } else { "Disabled" }, web_search_provider),
         ];
 
-        let menu_height = 12; // Fixed height for consistency
+        let menu_height = 14; // Increased height to accommodate new menu items
         let start_x = (cols - menu_width) / 2;
         let start_y = (rows - menu_height) / 2;
 
@@ -418,6 +440,23 @@ impl ConfigMenu {
                     (Some("Not set".to_string()), item.description().to_string())
                 }
             }
+            ConfigMenuItem::ThinkingMode => {
+                let enabled = app.config.get_active_provider_config()
+                    .and_then(|c| c.thinking_enabled)
+                    .unwrap_or(false);
+                (Some(if enabled { "Enabled" } else { "Disabled" }.to_string()), item.description().to_string())
+            }
+            ConfigMenuItem::WebSearch => {
+                let enabled = app.config.get_active_provider_config()
+                    .and_then(|c| c.web_search_enabled)
+                    .unwrap_or(false);
+                let provider = if enabled && app.config.active_provider == "zai" {
+                    "Z.AI"
+                } else {
+                    "DuckDuckGo"
+                };
+                (Some(format!("{} ({})", if enabled { "Enabled" } else { "Disabled" }, provider)), item.description().to_string())
+            }
         }
     }
 
@@ -471,6 +510,14 @@ impl ConfigMenu {
                     }
                     Ok(MenuAction::Continue)
                 }
+                ConfigMenuItem::ThinkingMode => {
+                    self.toggle_thinking_mode(app, output)?;
+                    Ok(MenuAction::Continue)
+                }
+                ConfigMenuItem::WebSearch => {
+                    self.toggle_web_search(app, output)?;
+                    Ok(MenuAction::Continue)
+                }
             }
         } else {
             Ok(MenuAction::Continue)
@@ -504,6 +551,62 @@ impl ConfigMenu {
         Ok(())
     }
 
+
+    /// Toggle thinking mode for Z.AI
+    fn toggle_thinking_mode(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
+        // Only allow thinking mode for Z.AI provider
+        if app.config.active_provider != "zai" {
+            output.print_system("💭 Thinking mode is only available for Z.AI provider")?;
+            output.print_system("ℹ Please switch to Z.AI provider first")?;
+            return Ok(());
+        }
+
+        let current_enabled = app.config.get_active_provider_config()
+            .and_then(|c| c.thinking_enabled)
+            .unwrap_or(false);
+
+        let new_enabled = !current_enabled;
+
+        if let Some(config) = app.config.get_active_provider_config_mut() {
+            config.thinking_enabled = Some(new_enabled);
+        }
+
+        if new_enabled {
+            output.print_system("💭 Thinking mode enabled - Z.AI will show reasoning")?;
+        } else {
+            output.print_system("💭 Thinking mode disabled - Z.AI will give direct answers")?;
+        }
+
+        Ok(())
+    }
+
+    /// Toggle web search provider and settings
+    fn toggle_web_search(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
+        let current_enabled = app.config.get_active_provider_config()
+            .and_then(|c| c.web_search_enabled)
+            .unwrap_or(false);
+
+        let new_enabled = !current_enabled;
+
+        if let Some(config) = app.config.get_active_provider_config_mut() {
+            config.web_search_enabled = Some(new_enabled);
+        }
+
+        if new_enabled {
+            let provider = if app.config.active_provider == "zai" {
+                output.print_system("🔍 Web search enabled using Z.AI search")?;
+                "Z.AI"
+            } else {
+                output.print_system("🔍 Web search enabled using DuckDuckGo")?;
+                "DuckDuckGo"
+            };
+            output.print_system(&format!("ℹ Web search provider: {}", provider))?;
+        } else {
+            output.print_system("🔍 Web search disabled")?;
+        }
+
+        Ok(())
+    }
 
     /// Reset menu state
     pub fn reset(&mut self) {
