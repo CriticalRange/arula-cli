@@ -105,11 +105,11 @@ impl AgentClient {
                         return false;
                     }
 
-                    // For now, filter out dynamic MCP tools to prevent broken tools from reaching AI
-                    // TODO: Implement proper validation in a future update
+                    // Allow MCP tools now - they should be working properly
+                    // This was previously filtering out Context7 tools which are needed for research
                     if name.starts_with("mcp_") {
-                        eprintln!("⚠️ MCP Filtering: Excluding MCP tool '{}' to prevent broken tool calls", name);
-                        return false;
+                        debug_print(&format!("DEBUG: Including MCP tool '{}' for research", name));
+                        return true;
                     }
                 }
             }
@@ -235,12 +235,10 @@ impl AgentClient {
                         return false;
                     }
 
-                    // For dynamic MCP tools (mcp_server_name), verify they're actually functional
+                    // Allow MCP tools now - they should be working properly for research
                     if name.starts_with("mcp_") {
-                        // For now, skip MCP tools in streaming response to avoid complex validation
-                        // TODO: Implement async validation for streaming context
-                        eprintln!("⚠️ MCP Streaming: Skipping MCP tool '{}' in streaming context", name);
-                        return false;
+                        debug_print(&format!("DEBUG: Including MCP tool '{}' in streaming context", name));
+                        return true;
                     }
                 }
             }
@@ -271,7 +269,11 @@ impl AgentClient {
                     StreamingResponse::End(api_response) => {
                         // Check for tool calls in the response
                         if let Some(tool_calls) = api_response.tool_calls {
+                            let tool_calls_count = tool_calls.len();
                             response_tools.extend(tool_calls);
+                            debug_print(&format!("DEBUG: Stream ended with {} tool calls", tool_calls_count));
+                        } else {
+                            debug_print("DEBUG: Stream ended with no tool calls - AI will stop this turn");
                         }
                         break;
                     }
