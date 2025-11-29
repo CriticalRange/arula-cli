@@ -16,7 +16,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 
 /// Debug print helper that checks ARULA_DEBUG environment variable
 fn debug_print(msg: &str) {
-    if std::env::var("ARULA_DEBUG").is_ok() {
+    if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
         println!("🔧 DEBUG: {}", msg);
     }
 }

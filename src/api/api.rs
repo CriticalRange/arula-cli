@@ -46,7 +46,7 @@ impl ZAIApiError {
 
 /// Debug print helper that checks ARULA_DEBUG environment variable
 fn debug_print(msg: &str) {
-    if std::env::var("ARULA_DEBUG").is_ok() {
+    if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
         println!("🔧 DEBUG: {}", msg);
     }
 }
@@ -149,7 +149,7 @@ impl ApiClient {
             _ => AIProvider::Custom,
         };
 
-        if std::env::var("ARULA_DEBUG").is_ok() {
+        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
             debug_print(&format!(
                 "DEBUG: Provider = {:?}, Input = {}",
                 provider_type, provider
@@ -167,7 +167,7 @@ impl ApiClient {
             .user_agent("arula-cli/1.0")
             .http1_title_case_headers()
             .tcp_nodelay(true)
-            .connection_verbose(std::env::var("ARULA_DEBUG").is_ok())
+            .connection_verbose(std::env::var("ARULA_DEBUG").unwrap_or_default() == "1")
             .pool_idle_timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(5)
             .build()
@@ -1501,7 +1501,7 @@ impl ApiClient {
         }
 
         // Debug: Log the Z.AI request when debug mode is enabled
-        if std::env::var("ARULA_DEBUG").is_ok() {
+        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
             println!("🔧 DEBUG: Z.AI Tools Request: {}", serde_json::to_string_pretty(&request).unwrap_or_else(|_| "Failed to serialize request".to_string()));
             println!("🔧 DEBUG: Thinking enabled: {}", thinking_enabled);
         }
@@ -1512,7 +1512,7 @@ impl ApiClient {
             .user_agent("arula-cli/1.0")
             .http1_only() // Force HTTP/1.1 for Z.AI compatibility
             .tcp_nodelay(true)
-            .connection_verbose(std::env::var("ARULA_DEBUG").is_ok())
+            .connection_verbose(std::env::var("ARULA_DEBUG").unwrap_or_default() == "1")
             .build()
             .expect("Failed to create Z.AI HTTP client");
 
@@ -1525,7 +1525,7 @@ impl ApiClient {
                 request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        if std::env::var("ARULA_DEBUG").is_ok() {
+        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
             debug_print(&format!(
                 "DEBUG: Sending Z.AI request to: {}/chat/completions",
                 self.endpoint
@@ -1546,7 +1546,7 @@ impl ApiClient {
             let response_json: serde_json::Value = response.json().await?;
 
             // Debug: Log the full Z.AI response when debug mode is enabled
-            if std::env::var("ARULA_DEBUG").is_ok() {
+            if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
                 println!("🔧 DEBUG: Z.AI Tools Response: {}", serde_json::to_string_pretty(&response_json).unwrap_or_else(|_| "Failed to serialize response".to_string()));
             }
 
@@ -1563,7 +1563,7 @@ impl ApiClient {
                         .map(|s| s.to_string());
 
                     // Debug: Log reasoning content if present
-                    if std::env::var("ARULA_DEBUG").is_ok() {
+                    if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
                         if let Some(ref reasoning) = reasoning_content {
                             println!("🧠 DEBUG: Z.AI Tools Reasoning Content Found: {}", reasoning);
                         } else {

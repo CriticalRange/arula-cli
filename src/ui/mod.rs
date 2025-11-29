@@ -7,3 +7,4 @@ pub mod custom_spinner;
 pub mod input_handler;
 pub mod menus;
 pub mod output;
+pub mod response_display;

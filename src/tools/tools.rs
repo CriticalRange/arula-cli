@@ -665,7 +665,7 @@ Examples:
         let FileEditParams { path, operation } = params;
 
         // Debug output for edit_file operations
-        if std::env::var("ARULA_DEBUG").is_ok() {
+        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
             println!("🔧 DEBUG: edit_file called with path='{}'", path);
             println!("🔧 DEBUG: edit_file operation type: {:?}", operation);
         }
@@ -1003,7 +1003,7 @@ Examples:
         };
 
         // Debug output for edit_file completion
-        if std::env::var("ARULA_DEBUG").is_ok() {
+        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
             match &result {
                 Ok(success_result) => {
                     println!("🔧 DEBUG: edit_file completed successfully for '{}'", path);

@@ -63,7 +63,7 @@ impl McpClient {
         });
 
         // Debug logging
-        if std::env::var("ARULA_DEBUG").is_ok() {
+        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
             eprintln!("🔧 MCP Debug - Request URL: {}", self.config.url);
             eprintln!("🔧 MCP Debug - Request Body: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default());
             eprintln!("🔧 MCP Debug - Headers: {:?}", self.config.headers);

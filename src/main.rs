@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use std::io::Write;
+use std::io::{self, Write};
 
 #[derive(Parser)]
 #[command(name = "arula")]
@@ -37,6 +37,7 @@ mod input_handler;
 use app::App;
 use ui::output::OutputHandler;
 use ui::custom_spinner;
+use ui::response_display::{ResponseDisplay, LoadingType};
 
 fn graceful_exit() -> ! {
     std::process::exit(0);
@@ -109,13 +110,14 @@ async fn main() -> Result<()> {
 
     println!("✅ ARULA CLI started successfully!");
     println!("📝 Type your message and press Enter to send to AI");
-    println!("⚠️  Note: Advanced input features (persistent input during AI responses) are temporarily disabled");
+    println!("🔄 You can now type while AI is responding - concurrent input enabled!");
     println!("💡 Type 'exit' or 'quit' to exit");
 
-    // Simple input loop for now
-    loop {
-        use std::io;
+    // Initialize enhanced response display system
+    let mut response_display = ResponseDisplay::new(OutputHandler::new());
 
+    // Simple enhanced input loop for now
+    loop {
         print!("▶ ");
         io::stdout().flush()?;
 
@@ -135,7 +137,7 @@ async fn main() -> Result<()> {
                 if input == "exit" || input == "quit" {
                     if show_exit_confirmation(&mut output)? {
                         output.print_system("Goodbye! 👋")?;
-                        graceful_exit_with_app(&mut app);
+                        graceful_exit();
                     }
                     continue;
                 }
@@ -145,9 +147,64 @@ async fn main() -> Result<()> {
                     continue;
                 }
 
-                // For now, just echo back the input
+                // Show enhanced loading animation
                 output.print_user_message(&format!("You: {}", input))?;
-                output.print_ai_message("🤖 AI response functionality will be restored in the next update")?;
+
+                // Display thinking loading animation
+                let _ = response_display.display_loading_animation(
+                    LoadingType::Thinking,
+                    "AI is thinking..."
+                );
+
+                // Send to AI (simplified for now)
+                match app.send_to_ai(input).await {
+                    Ok(_) => {
+                        // Process AI responses with enhanced display
+                        response_display.display_separator()?;
+
+                        while let Some(response) = app.check_ai_response_nonblocking() {
+                            match response {
+                                app::AiResponse::AgentStreamStart => {
+                                    // Finalize any pending thinking content before starting stream
+                                    let _ = response_display.finalize_thinking_content();
+                                    output.start_ai_message()?;
+                                }
+                                app::AiResponse::AgentStreamText(chunk) => {
+                                    let _ = response_display.display_stream_text(&chunk);
+                                }
+                                app::AiResponse::AgentToolCall { id, name, arguments } => {
+                                    // Finalize any pending thinking content before showing tool call
+                                    let _ = response_display.finalize_thinking_content();
+                                    let _ = response_display.display_tool_call_start(&id, &name, &arguments);
+                                }
+                                app::AiResponse::AgentToolResult { tool_call_id, success, result } => {
+                                    // Create a mock ToolResult for display
+                                    let tool_result = crate::api::agent::ToolResult {
+                                        success,
+                                        data: result.clone(),
+                                        error: None,
+                                    };
+                                    let _ = response_display.display_tool_result(&tool_call_id, "Tool", &tool_result);
+                                }
+                                app::AiResponse::AgentReasoningContent(reasoning) => {
+                                    let _ = response_display.display_thinking_content(&reasoning);
+                                }
+                                app::AiResponse::AgentStreamEnd => {
+                                    // Finalize thinking content before ending
+                                    let _ = response_display.finalize_thinking_content();
+                                    output.end_line()?;
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        response_display.display_separator()?;
+                    }
+                    Err(e) => {
+                        output.print_error(&format!("❌ Error: {}", e))?;
+                    }
+                }
             }
             Err(e) => {
                 output.print_error(&format!("Input error: {}", e))?;
