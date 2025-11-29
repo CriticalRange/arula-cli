@@ -71,3 +71,7 @@ harness = false
 [[bench]]
 name = "tools_benchmarks"
 harness = false
+
+[[example]]
+name = "animation_demo"
+path = "examples/animation_demo.rs"

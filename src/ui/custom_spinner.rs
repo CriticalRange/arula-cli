@@ -38,11 +38,21 @@ const STAR_FRAMES: [&str; 12] = [
     "⢎⡂",  // 11: Dots rotating (cycle complete)
 ];
 
+/// Transition effects for animations
+#[derive(Clone)]
+pub enum Transition {
+    FadeOut,
+    SlideUp,
+    Pulse,
+    Rainbow,
+}
+
 /// Commands for controlling the spinner
 enum Cmd {
     SetMessage(String),
     StopOk(String),
     StopErr(String),
+    TransitionTo { frames: Vec<String>, transition: Transition },
     Shutdown,
 }
 
@@ -55,6 +65,17 @@ struct SpinnerState {
 fn random_dir() -> i32 {
     if fastrand::bool() { 1 } else { -1 }
 }
+
+/// Additional animation frame sets for transitions
+const ARC_FRAMES: [&str; 8] = [
+    "◜", "◠", "◝", "◞", "◡", "◟", "◜", "◠"
+];
+
+const DOTS_ORBIT: [&str; 20] = [
+    "⢀⠠", "⡀⢀", "⠄⡀", "⢄⠄", "⡄⢄", "⠌⡄", "⢌⠌", "⡌⢌",
+    "⠎⡌", "⢎⠎", "⡎⢎", "⠱⡎", "⢱⠱", "⡱⢱", "⠹⡱", "⢹⠹",
+    "⠼⢹", "⢼⠼", "⡼⢼", "⠧⡼"
+];
 
 /// ARULA Single-Character Star Pulse Spinner
 pub struct CustomSpinner {
@@ -113,6 +134,23 @@ impl CustomSpinner {
         let _ = self.tx.send(Cmd::SetMessage(msg.to_string()));
     }
 
+    /// Transition to a different animation style with smooth effect
+    pub fn transition_to(&self, new_frames: Vec<String>, transition: Transition) {
+        let _ = self.tx.send(Cmd::TransitionTo { frames: new_frames, transition });
+    }
+
+    /// Transition to arc animation
+    pub fn transition_to_arc(&self) {
+        let arc_frames: Vec<String> = ARC_FRAMES.iter().map(|&s| s.to_string()).collect();
+        self.transition_to(arc_frames, Transition::FadeOut);
+    }
+
+    /// Transition to dots orbit animation
+    pub fn transition_to_dots_orbit(&self) {
+        let dots_frames: Vec<String> = DOTS_ORBIT.iter().map(|&s| s.to_string()).collect();
+        self.transition_to(dots_frames, Transition::SlideUp);
+    }
+
     /// Stop the spinner
     pub fn stop(&mut self) {
         if let Ok(mut s) = self.state.lock() {
@@ -163,6 +201,7 @@ impl Drop for CustomSpinner {
     }
 }
 
+
 /// Internal star pulse spinner loop
 fn run_star_spinner(
     mut label: String,
@@ -172,6 +211,12 @@ fn run_star_spinner(
 ) -> io::Result<()> {
     let mut index: i32 = 0;
     let mut stdout = io::stdout();
+
+    // Start with star frames
+    let mut current_frames: Vec<String> = STAR_FRAMES.iter().map(|&s| s.to_string()).collect();
+    let mut transition_in_progress = false;
+    let mut transition_type: Option<Transition> = None;
+    let mut transition_frame_count = 0;
 
     execute!(stdout, cursor::SavePosition, cursor::Hide)?;
 
@@ -186,13 +231,19 @@ fn run_star_spinner(
         while let Ok(cmd) = rx.try_recv() {
             match cmd {
                 Cmd::SetMessage(m) => label = m,
+                Cmd::TransitionTo { frames, transition } => {
+                    current_frames = frames;
+                    transition_in_progress = true;
+                    transition_type = Some(transition);
+                    transition_frame_count = 0;
+                }
                 Cmd::StopOk(final_msg) => {
-                    draw_final(&label, &final_msg, false)?;
+                    draw_final_with_transition(&label, &final_msg, false, transition_in_progress)?;
                     finished = true;
                     break;
                 }
                 Cmd::StopErr(final_msg) => {
-                    draw_final(&label, &final_msg, true)?;
+                    draw_final_with_transition(&label, &final_msg, true, transition_in_progress)?;
                     finished = true;
                     break;
                 }
@@ -209,10 +260,24 @@ fn run_star_spinner(
 
         if last_draw.elapsed() >= frame_duration {
             // Random direction for organic breathing
-            index = (index + random_dir()).rem_euclid(STAR_FRAMES.len() as i32);
+            index = (index + random_dir()).rem_euclid(current_frames.len() as i32);
 
-            let star = STAR_FRAMES[index as usize];
-            draw_star(star, &label, frame_count)?;
+            let frame = &current_frames[index as usize];
+
+            if transition_in_progress {
+                if let Some(ref transition) = transition_type {
+                    draw_star_with_transition(frame, &label, frame_count, transition.clone(), transition_frame_count)?;
+                }
+                transition_frame_count += 1;
+
+                // End transition after some frames
+                if transition_frame_count > 10 {
+                    transition_in_progress = false;
+                    transition_type = None;
+                }
+            } else {
+                draw_star(frame, &label, frame_count)?;
+            }
 
             last_draw = Instant::now();
             frame_count += 1;
@@ -275,6 +340,108 @@ fn draw_star(star: &str, label: &str, frame_count: u64) -> io::Result<()> {
     execute!(stdout, ResetColor, cursor::RestorePosition)?;
     stdout.flush()?;
     Ok(())
+}
+
+/// Draw the single-character star with transition effects
+fn draw_star_with_transition(
+    star: &str,
+    label: &str,
+    _frame_count: u64,
+    transition: Transition,
+    transition_frame: u32,
+) -> io::Result<()> {
+    let mut stdout = io::stdout();
+
+    // ARULA golden color base
+    let golden_r = 232u8;
+    let golden_g = 197u8;
+    let golden_b = 71u8;
+
+    let (r, g, b) = match transition {
+        Transition::FadeOut => {
+            let fade_factor = (10 - transition_frame.min(10)) as f32 / 10.0;
+            let new_r = (golden_r as f32 * fade_factor) as u8;
+            let new_g = (golden_g as f32 * fade_factor) as u8;
+            let new_b = (golden_b as f32 * fade_factor) as u8;
+            (new_r, new_g, new_b)
+        }
+        Transition::Pulse => {
+            let pulse_phase = (transition_frame as f32 / 10.0) * std::f32::consts::PI;
+            let pulse_factor = pulse_phase.sin() * 0.5 + 0.5;
+            let new_r = (golden_r as f32 * pulse_factor) as u8;
+            let new_g = (golden_g as f32 * pulse_factor) as u8;
+            let new_b = (golden_b as f32 * pulse_factor) as u8;
+            (new_r, new_g, new_b)
+        }
+        Transition::Rainbow => {
+            let hue = (transition_frame as f32 / 10.0) * 360.0;
+            hsv_to_rgb(hue, 1.0, 1.0)
+        }
+        Transition::SlideUp => {
+            let slide_factor = (transition_frame.min(10) as f32) / 10.0;
+            let new_r = ((255 - golden_r) as f32 * slide_factor + golden_r as f32) as u8;
+            let new_g = ((255 - golden_g) as f32 * slide_factor + golden_g as f32) as u8;
+            let new_b = ((255 - golden_b) as f32 * slide_factor + golden_b as f32) as u8;
+            (new_r, new_g, new_b)
+        }
+    };
+
+    let pulsed_golden = Color::Rgb { r, g, b };
+    let text_color = Color::Rgb { r: 205, g: 209, b: 196 };
+
+    execute!(
+        stdout,
+        cursor::SavePosition,
+        cursor::MoveToColumn(0),
+        Clear(ClearType::CurrentLine),
+    )?;
+
+    // Draw: [star] label with transition effect
+    execute!(stdout, SetForegroundColor(pulsed_golden))?;
+    print!("{}", star);
+
+    if !label.is_empty() {
+        execute!(stdout, SetForegroundColor(text_color))?;
+        print!(" {}", label);
+    }
+
+    execute!(stdout, ResetColor, cursor::RestorePosition)?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Convert HSV to RGB for rainbow effects
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+    let c = v * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = v - c;
+
+    let (r_prime, g_prime, b_prime) = if h < 60.0 {
+        (c, x, 0.0)
+    } else if h < 120.0 {
+        (x, c, 0.0)
+    } else if h < 180.0 {
+        (0.0, c, x)
+    } else if h < 240.0 {
+        (0.0, x, c)
+    } else if h < 300.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+
+    let r = ((r_prime + m) * 255.0) as u8;
+    let g = ((g_prime + m) * 255.0) as u8;
+    let b = ((b_prime + m) * 255.0) as u8;
+
+    (r, g, b)
+}
+
+/// Draw final status message with optional transition effect
+fn draw_final_with_transition(label: &str, final_msg: &str, is_err: bool, _has_transition: bool) -> io::Result<()> {
+    // For now, just use the regular final drawing
+    // Could enhance this with transition animations if desired
+    draw_final(label, final_msg, is_err)
 }
 
 /// Draw final status message

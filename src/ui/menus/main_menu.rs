@@ -343,10 +343,13 @@ impl MainMenu {
                     Ok(result)
                 }
                 MainMenuItem::Settings => {
-                    // Clear screen before exiting
-                    stdout().execute(terminal::Clear(terminal::ClearType::All))?;
-                    stdout().flush()?;
-                    Ok(MenuResult::Settings)
+                    // Show configuration submenu
+                    use crate::ui::menus::ConfigMenu;
+                    let mut config_menu = ConfigMenu::new();
+                    let result = config_menu.show(app, output)?;
+
+                    // Return the result from config menu (could be Continue, BackToMain, etc.)
+                    Ok(result)
                 }
                 MainMenuItem::InfoHelp => {
                     self.show_info_and_help(app, output)?;

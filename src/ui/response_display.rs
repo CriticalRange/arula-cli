@@ -66,39 +66,35 @@ impl ResponseDisplay {
         ))
     }
 
-    /// Display thinking content with special formatting and proper line clearing
+    /// Display thinking content - now handled minimally to avoid conversation fragmentation
     pub fn display_thinking_content(&mut self, reasoning: &str) -> io::Result<()> {
-        // Process reasoning to handle multi-line content properly
-        let processed = reasoning.trim();
+        // For now, we don't display thinking content separately to maintain conversation flow
+        // The thinking is internal reasoning that doesn't need to be shown to user
+        // This prevents the conversation from feeling fragmented
 
+        // If you want to enable thinking display in the future, uncomment:
+        /*
+        let processed = reasoning.trim();
         if processed.is_empty() {
             return Ok(());
         }
 
-        // Replace newlines with spaces to create a flowing single-line display
-        let single_line = processed.lines().collect::<Vec<_>>().join(" ");
-
-        // Clear current line and display updated thinking content
-        if self.is_displaying_thinking {
-            // Only clear line if we're already displaying thinking content
-            self.clear_current_line()?;
-        } else {
-            // First time showing thinking content, add a small separator
+        if !self.is_displaying_thinking {
+            print!("🤔 ");
             self.is_displaying_thinking = true;
         }
 
-        print!("🧠 {}", style(&single_line).cyan());
+        print!("{}", style(processed).dim());
         io::stdout().flush()?;
+        */
+
         Ok(())
     }
 
-    /// Finalize thinking content by printing a newline and resetting flag
+    /// Complete thinking content - now a no-op since we don't display thinking
     pub fn finalize_thinking_content(&mut self) -> io::Result<()> {
-        if self.is_displaying_thinking {
-            println!();
-            io::stdout().flush()?;
-            self.is_displaying_thinking = false;
-        }
+        // Reset flag but don't add any visual breaks
+        self.is_displaying_thinking = false;
         Ok(())
     }
 
@@ -250,16 +246,22 @@ impl ResponseDisplay {
 
                 // Bold text
                 while let Some(start) = processed.find("**") {
-                    if let Some(end) = processed[start + 2..].find("**") {
-                        let before = &processed[..start];
-                        let content = &processed[start + 2..end];
-                        let after = &processed[end + 2..];
-                        processed = format!("{}{}**{}**{}",
-                            before,
-                            style(content).bold(),
-                            content,
-                            after
-                        );
+                    if let Some(relative_end) = processed[start + 2..].find("**") {
+                        let end = start + 2 + relative_end;
+                        // Ensure indices are valid
+                        if end <= processed.len() && end + 2 <= processed.len() {
+                            let before = &processed[..start];
+                            let content = &processed[start + 2..end];
+                            let after = &processed[end + 2..];
+                            processed = format!("{}{}**{}**{}",
+                                before,
+                                style(content).bold(),
+                                content,
+                                after
+                            );
+                        } else {
+                            break;
+                        }
                     } else {
                         break;
                     }
@@ -273,11 +275,9 @@ impl ResponseDisplay {
 
     /// Clear the current line for animations
     fn clear_current_line(&self) -> io::Result<()> {
-        print!("\r");
-        for _ in 0..200 {
-            print!(" ");
-        }
-        print!("\r");
+        // Use ANSI escape code to clear from cursor to end of line
+        // This is more precise than printing 200 spaces
+        print!("\r\x1b[K");
         io::stdout().flush()
     }
 

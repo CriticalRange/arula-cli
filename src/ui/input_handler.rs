@@ -335,4 +335,38 @@ impl InputHandler {
         self.buffer = input.to_string();
         self.cursor_pos = self.buffer.chars().count();
     }
+
+    /// Read input with menu detection using simple stdin
+    /// Returns: Some(input) for normal input, None for menu triggers
+    pub fn read_input_with_menu_detection(&mut self) -> io::Result<Option<String>> {
+        print!("{} ", self.prompt);
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        match io::stdin().read_line(&mut input) {
+            Ok(0) => {
+                // EOF
+                return Ok(Some(String::new()));
+            }
+            Ok(_) => {
+                let input = input.trim();
+
+                // Check for menu triggers
+                if input == "m" {
+                    return Ok(None);
+                }
+                if input == "esc" || input == "escape" {
+                    return Ok(None);
+                }
+
+                if !input.is_empty() {
+                    self.add_to_history(input.to_string());
+                    return Ok(Some(input.to_string()));
+                }
+
+                return Ok(Some(String::new()));
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
