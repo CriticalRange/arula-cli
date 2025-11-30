@@ -38,7 +38,7 @@ use app::App;
 use ui::output::OutputHandler;
 use ui::custom_spinner;
 use ui::response_display::ResponseDisplay;
-use ui::input_handler::InputHandler;
+use ui::input_handler::{InputHandler, InputBlocker};
 use ui::menus::main_menu::MainMenu;
 
 fn graceful_exit() -> ! {
@@ -115,11 +115,22 @@ async fn main() -> Result<()> {
     println!("🔄 You can now type while AI is responding - concurrent input enabled!");
     println!("💡 Type 'm' and press Enter to open menu, or 'exit'/'quit' to exit");
 
-    // Initialize enhanced response display system
-    let mut response_display = ResponseDisplay::new(OutputHandler::new());
+    // Create input blocker for shared state between input and AI response handling
+    let input_blocker = InputBlocker::new();
 
-    // Initialize input handler and menu system
-    let mut input_handler = InputHandler::new("▶ ");
+    // Initialize input handler with blocking support
+    let mut input_handler = InputHandler::new_with_blocking("▶ ", input_blocker.clone());
+
+    // Initialize full-duplex mode if possible
+    if let Err(e) = input_handler.initialize_full_duplex() {
+        println!("⚠️ Could not initialize full-duplex input mode: {}", e);
+        println!("💡 Falling back to standard input mode");
+    }
+
+    // Initialize response display system with input handler coordination
+    let mut response_display = ResponseDisplay::new(OutputHandler::new())
+        .with_input_handler(input_handler.clone());
+
     let mut main_menu = MainMenu::new();
 
     // Enhanced input loop with menu support
@@ -145,64 +156,31 @@ async fn main() -> Result<()> {
                     continue;
                 }
 
-                // Show user message and go directly to AI response
-                output.print_user_message(&format!("You: {}", input))?;
+                // Show user message - preserve input area
+                input_handler.print_preserving_input(|| {
+                    output.print_user_message(&format!("You: {}", input))
+                })?;
 
                 // Skip loading animation for more natural conversation flow
                 // Let the AI response start immediately without artificial delays
 
-                // Send to AI (simplified for now)
-                println!("DEBUG: Sending to AI: {}", input);
+                // Block input while AI is responding
+                input_blocker.block();
+
                 match app.send_to_ai(&input).await {
                     Ok(_) => {
-                        println!("DEBUG: AI send successful, waiting for responses...");
-                        // Process AI responses without separator for natural flow
-                        // response_display.display_separator()?;
-
-                        let mut response_count = 0;
-
                         // Continue polling for responses until stream ends
                         loop {
                             if let Some(response) = app.check_ai_response_nonblocking() {
-                                response_count += 1;
-
-                                // Enhanced debug logging - toggle with ARULA_DEBUG_RESPONSES=1
-                                let debug_responses = std::env::var("ARULA_DEBUG_RESPONSES").unwrap_or_default() == "1";
-
-                                let response_type = match &response {
-                                    app::AiResponse::AgentStreamStart => "AgentStreamStart",
-                                    app::AiResponse::AgentStreamText(chunk) => {
-                                        if debug_responses {
-                                            println!("DEBUG: AgentStreamText content: {:?}", chunk);
-                                        }
-                                        "AgentStreamText"
-                                    }
-                                    app::AiResponse::AgentToolCall { id, name, arguments } => {
-                                        if debug_responses {
-                                            println!("DEBUG: AgentToolCall - ID: {}, Name: {}, Args: {}", id, name, arguments);
-                                        }
-                                        "AgentToolCall"
-                                    }
-                                    app::AiResponse::AgentToolResult { tool_call_id, success, result } => {
-                                        if debug_responses {
-                                            println!("DEBUG: AgentToolResult - Tool: {}, Success: {}, Result: {:?}", tool_call_id, success, result);
-                                        }
-                                        "AgentToolResult"
-                                    }
-                                    app::AiResponse::AgentReasoningContent(reasoning) => {
-                                        if debug_responses {
-                                            println!("DEBUG: AgentReasoningContent: {:?}", reasoning);
-                                        }
-                                        "AgentReasoningContent"
-                                    }
-                                    app::AiResponse::AgentStreamEnd => "AgentStreamEnd",
-                                };
-                                println!("DEBUG: Got response #{} - Type: {}", response_count, response_type);
-                            match response {
+                                match response {
                                     app::AiResponse::AgentStreamStart => {
                                         // Finalize any pending thinking content before starting stream
                                         let _ = response_display.finalize_thinking_content();
-                                        output.start_ai_message()?;
+
+                                        // Start AI message with preserved input area
+                                        input_handler.print_preserving_input(|| {
+                                            output.start_ai_message()
+                                        })?;
                                     }
                                     app::AiResponse::AgentStreamText(chunk) => {
                                         let _ = response_display.display_stream_text(&chunk);
@@ -237,34 +215,58 @@ async fn main() -> Result<()> {
                                 std::thread::sleep(std::time::Duration::from_millis(50));
                             }
                         }
-
-                        println!("DEBUG: Total responses received: {}", response_count);
-                        // Remove separator to maintain natural conversation flow
-                        // response_display.display_separator()?;
                     }
                     Err(e) => {
-                        println!("DEBUG: AI send error: {}", e);
-                        output.print_error(&format!("❌ Error: {}", e))?;
+                        input_handler.print_preserving_input(|| {
+                            output.print_error(&format!("❌ Error: {}", e))
+                        })?;
                     }
                 }
+
+                // Unblock input now that AI response is complete
+                input_blocker.unblock();
+
+                // Ensure input line is redrawn after AI response
+                input_handler.draw_input_line().ok();
             }
             Ok(None) => {
                 // Menu trigger detected (ESC twice or 'm')
                 // Clear current line and show menu
-                print!("\r");
-                for _ in 0..80 {
-                    print!(" ");
+                if input_handler.use_full_duplex {
+                    // In full-duplex mode, we need to handle screen clearing differently
+                    let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
+                    let bottom_line = height.saturating_sub(1);
+
+                    // Move to bottom and clear the input line
+                    crossterm::execute!(
+                        io::stdout(),
+                        crossterm::cursor::MoveTo(0, bottom_line),
+                        crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
+                    )?;
+                } else {
+                    // Standard mode clearing
+                    print!("\r");
+                    for _ in 0..80 {
+                        print!(" ");
+                    }
+                    print!("\r");
                 }
-                print!("\r");
                 io::stdout().flush()?;
 
                 // Show main menu
                 match main_menu.show(&mut app, &mut output) {
                     Ok(_) => {
-                        // Menu completed successfully
+                        // Menu completed successfully, redraw input line if in full-duplex mode
+                        if input_handler.use_full_duplex {
+                            input_handler.draw_input_line().ok();
+                        }
                     }
                     Err(e) => {
                         output.print_error(&format!("Menu error: {}", e))?;
+                        // Redraw input line even on error
+                        if input_handler.use_full_duplex {
+                            input_handler.draw_input_line().ok();
+                        }
                     }
                 }
             }

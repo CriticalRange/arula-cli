@@ -15,6 +15,7 @@ use serde_json::Value;
 pub struct ResponseDisplay {
     output: OutputHandler,
     is_displaying_thinking: bool,
+    input_handler: Option<crate::ui::input_handler::InputHandler>,
 }
 
 /// Types of loading animations for different scenarios
@@ -32,7 +33,13 @@ impl ResponseDisplay {
         Self {
             output,
             is_displaying_thinking: false,
+            input_handler: None,
         }
+    }
+
+    pub fn with_input_handler(mut self, input_handler: crate::ui::input_handler::InputHandler) -> Self {
+        self.input_handler = Some(input_handler);
+        self
     }
 
     /// Display a tool call with beautiful formatting and animation
@@ -102,7 +109,16 @@ impl ResponseDisplay {
     pub fn display_stream_text(&mut self, text: &str) -> io::Result<()> {
         // Simple markdown processing for now - can be enhanced later
         let processed_text = self.process_markdown_inline(text);
-        self.output.print_ai_message(&processed_text)?;
+
+        // Use input handler if available to preserve input area
+        if let Some(input_handler) = &self.input_handler {
+            input_handler.print_preserving_input(|| {
+                self.output.print_ai_message(&processed_text)
+            })?;
+        } else {
+            self.output.print_ai_message(&processed_text)?;
+        }
+
         Ok(())
     }
 
