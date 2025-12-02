@@ -48,171 +48,6 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-/// Render markdown inline using the centralized markdown module
-fn render_markdown_line(line: &str) -> String {
-    crate::ui::output::markdown::render_markdown_inline(line)
-}
-
-/// Format a code block with simple borders for ExternalPrinter
-fn format_code_block(content: &str) -> String {
-    let mut result = String::new();
-
-    // Top border
-    result.push_str(&console::style("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n").black().to_string());
-
-    // Content lines with borders
-    for line in content.lines() {
-        result.push_str(&console::style("┃ ").black().to_string());
-        result.push_str(line);
-        result.push('\n');
-    }
-
-    // Bottom border
-    result.push_str(&console::style("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n").black().to_string());
-
-    result
-}
-
-/// Format tool call with icon and human-readable description
-fn format_tool_call(tool_name: &str, arguments: &str) -> String {
-    // Parse arguments to extract key information
-    let args: Result<Value, _> = serde_json::from_str(arguments);
-
-    let (icon, description) = match tool_name {
-        "list_directory" => {
-            let path = args.as_ref()
-                .ok()
-                .and_then(|v| v.get("path"))
-                .and_then(|p| p.as_str())
-                .unwrap_or(".");
-            ("📂", format!("Listing directory: {}", path))
-        },
-        "read_file" => {
-            let path = args.as_ref()
-                .ok()
-                .and_then(|v| v.get("path"))
-                .and_then(|p| p.as_str())
-                .unwrap_or("unknown");
-            ("📖", format!("Reading file: {}", path))
-        },
-        "write_file" => {
-            let path = args.as_ref()
-                .ok()
-                .and_then(|v| v.get("path"))
-                .and_then(|p| p.as_str())
-                .unwrap_or("unknown");
-            ("✍️", format!("Writing file: {}", path))
-        },
-        "edit_file" => {
-            let path = args.as_ref()
-                .ok()
-                .and_then(|v| v.get("path"))
-                .and_then(|p| p.as_str())
-                .unwrap_or("unknown");
-            ("✏️", format!("Editing file: {}", path))
-        },
-        "execute_bash" => {
-            let command = args.as_ref()
-                .ok()
-                .and_then(|v| v.get("command"))
-                .and_then(|c| c.as_str())
-                .unwrap_or("unknown");
-            // Truncate long commands
-            let display_cmd = if command.len() > 50 {
-                format!("{}...", &command[..47])
-            } else {
-                command.to_string()
-            };
-            ("⚙️", format!("Running: {}", display_cmd))
-        },
-        "search_files" => {
-            let query = args.as_ref()
-                .ok()
-                .and_then(|v| v.get("query"))
-                .and_then(|q| q.as_str())
-                .unwrap_or("unknown");
-            ("🔍", format!("Searching for: {}", query))
-        },
-        _ => ("🔧", format!("Running tool: {}", tool_name))
-    };
-
-    // Format with loading spinner and colored description
-    format!("{} {}",
-        console::style(icon).cyan(),
-        console::style(description).dim()
-    )
-}
-
-/// Summarize tool result in a human-readable format
-fn summarize_tool_result(result_value: &Value) -> String {
-    // Check for error in Err wrapper first (e.g., {"Err": "error message"})
-    if let Some(err_value) = result_value.get("Err") {
-        if let Some(err_str) = err_value.as_str() {
-            return format!("Error: {}", err_str);
-        }
-        // If Err value is not a string, show it as JSON
-        return format!("Error: {}", serde_json::to_string_pretty(err_value).unwrap_or_else(|_| err_value.to_string()));
-    }
-
-    // Try to parse as our standard tool result format
-    if let Some(ok_result) = result_value.get("Ok") {
-        // list_directory results
-        if let Some(entries) = ok_result.get("entries") {
-            if let Some(arr) = entries.as_array() {
-                let files = arr.iter().filter(|e| e.get("file_type").and_then(|t| t.as_str()) == Some("file")).count();
-                let dirs = arr.iter().filter(|e| e.get("file_type").and_then(|t| t.as_str()) == Some("directory")).count();
-                return format!("Found {} files and {} directories", files, dirs);
-            }
-        }
-
-        // execute_bash results
-        if let Some(stdout) = ok_result.get("stdout") {
-            if let Some(stdout_str) = stdout.as_str() {
-                let stderr = ok_result.get("stderr").and_then(|s| s.as_str()).unwrap_or("");
-                let exit_code = ok_result.get("exit_code").and_then(|c| c.as_i64()).unwrap_or(0);
-
-                if exit_code == 0 {
-                    if !stdout_str.trim().is_empty() {
-                        return format!("Command succeeded:\n{}", stdout_str.trim());
-                    } else {
-                        return "Command succeeded (no output)".to_string();
-                    }
-                } else {
-                    return format!("Command failed (exit code {}):\n{}", exit_code, stderr);
-                }
-            }
-        }
-
-        // read_file results
-        if let Some(lines) = ok_result.get("lines") {
-            return format!("Read {} lines", lines);
-        }
-
-        // write_file/edit_file results
-        if let Some(message) = ok_result.get("message") {
-            if let Some(msg_str) = message.as_str() {
-                return msg_str.to_string();
-            }
-        }
-
-        // search_files results
-        if let Some(total_matches) = ok_result.get("total_matches") {
-            let files_searched = ok_result.get("files_searched").and_then(|f| f.as_i64()).unwrap_or(0);
-            return format!("Found {} matches in {} files", total_matches, files_searched);
-        }
-
-        // Generic success with success flag
-        if ok_result.get("success").and_then(|s| s.as_bool()).unwrap_or(false) {
-            return "Success".to_string();
-        }
-    }
-
-    // Fallback: show compact JSON
-    serde_json::to_string_pretty(result_value).unwrap_or_else(|_| result_value.to_string())
-}
-
-// Debug utilities are now imported from crate::utils::debug
-
 #[derive(Debug, Clone)]
 pub enum AiResponse {
     AgentStreamStart,
@@ -310,7 +145,6 @@ impl App {
             debug: false,
             cancellation_token: CancellationToken::new(),
             current_task_handle: None,
-            // external_printer: None, // External printer removed
             openrouter_models: Arc::new(Mutex::new(None)),
             openai_models: Arc::new(Mutex::new(None)),
             anthropic_models: Arc::new(Mutex::new(None)),
@@ -483,7 +317,7 @@ You have access to various tools that you can use to help the user. When you nee
         let mcp_servers = self.config.get_mcp_servers();
         if !mcp_servers.is_empty() {
             info.push_str("### Configured MCP Servers:\n");
-            for (server_id, _config) in mcp_servers {
+            for server_id in mcp_servers.keys() {
                 match server_id.as_str() {
                     "context7" => {
                         info.push_str(&format!("- **{}**: Context7 library documentation server\n", server_id));
@@ -628,7 +462,7 @@ You have access to various tools that you can use to help the user. When you nee
         // Check if agent client is initialized
         if self.agent_client.is_none() {
             if self.debug {
-                debug_print(&format!("DEBUG: send_to_ai - agent_client is None, returning error"));
+                debug_print("DEBUG: send_to_ai - agent_client is None, returning error");
             }
             return Err(anyhow::anyhow!(
                 "AI client not initialized. Please configure AI settings using the /config command or application menu."
@@ -735,10 +569,6 @@ You have access to various tools that you can use to help the user. When you nee
                 _ = cancel_token.cancelled() => {
                     // Request was cancelled
                     let _ = tx.send(AiResponse::AgentStreamEnd);
-                    // External printer removed - using custom output system
-                    // // if let Some(ref printer) = external_printer { // External printer removed
-                    //     // let _ = printer.send("\n".to_string());
-                    // }
                 }
                 _result = async {
                     // Choose streaming or non-streaming based on config
@@ -810,7 +640,7 @@ You have access to various tools that you can use to help the user. When you nee
                                                 tool_call_id,
                                                 result,
                                             }) => {
-                                                let status = if result.success { "✓" } else { "✗" };
+                                                let _status = if result.success { "✓" } else { "✗" };
 
                                                 // Clone result data for all uses
                                                 let result_data = result.data.clone();
@@ -830,20 +660,11 @@ You have access to various tools that you can use to help the user. When you nee
                                                     execution_time_ms: 100,
                                                 });
 
-                                                // if let Some(ref printer) = external_printer { // External printer removed
-                                                    // Summarize the result in a compact format
-                                                    let summary = summarize_tool_result(&result_data);
-                                                    let result_display = format!("  {} {}", status, summary);
-                                                    // let _ = printer.send(format!("{}\n", result_display));
-                                                // }
                                             }
                                             Some(ContentBlock::Error { error }) => {
                                                 // Convert error to AgentStreamText to maintain compatibility
                                                 let error_msg = format!("[Error] {}", error);
                                                 let _ = tx.send(AiResponse::AgentStreamText(error_msg.clone()));
-                                                // if let Some(ref printer) = external_printer { // External printer removed
-                                                    // let _ = printer.send(format!("{}\n", error_msg));
-                                                // }
                                                 break;
                                             }
                                             None => {
@@ -895,18 +716,11 @@ You have access to various tools that you can use to help the user. When you nee
                             }
 
                             let _ = tx.send(AiResponse::AgentStreamEnd);
-                            // if let Some(ref printer) = external_printer { // External printer removed
-                                // let _ = printer.send("\n".to_string());
-                            // }
                         }
                         Err(e) => {
                             let error_msg = format!("**Error:** Failed to send message via agent: {}", e);
                             let _ = tx.send(AiResponse::AgentStreamText(error_msg.clone()));
                             let _ = tx.send(AiResponse::AgentStreamEnd);
-                            // if let Some(ref printer) = external_printer { // External printer removed
-                                let error_line = render_markdown_line(&error_msg);
-                                // let _ = printer.send(format!("{}\n\n", error_line));
-                            // }
                         }
                     }
                 } => {}
@@ -984,7 +798,7 @@ You have access to various tools that you can use to help the user. When you nee
                         }
                         AiResponse::AgentStreamText(text) => {
                             if let Some(msg) = &mut self.current_streaming_message {
-                                msg.push_str(&text);
+                                msg.push_str(text);
                             }
                         }
                         AiResponse::AgentThinkingStart => {
@@ -1105,10 +919,8 @@ You have access to various tools that you can use to help the user. When you nee
                 ));
             }
             self.pending_tool_results = Some(results);
-        } else {
-            if self.debug {
-                debug_print("DEBUG: execute_tools - No results to set");
-            }
+        } else if self.debug {
+            debug_print("DEBUG: execute_tools - No results to set");
         }
     }
 
@@ -1591,7 +1403,7 @@ You have access to various tools that you can use to help the user. When you nee
             }
         };
 
-        let request = client.get(&format!("{}/api/tags", api_url));
+        let request = client.get(format!("{}/api/tags", api_url));
 
         match request.send().await {
             Ok(response) => {

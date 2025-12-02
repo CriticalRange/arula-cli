@@ -63,6 +63,12 @@ pub struct MainMenu {
     items: Vec<MainMenuItem>,
 }
 
+impl Default for MainMenu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MainMenu {
     pub fn new() -> Self {
         Self {
@@ -398,9 +404,7 @@ impl MainMenu {
 
                         match key_event.code {
                             KeyCode::Up | KeyCode::Char('k') => {
-                                if scroll_offset > 0 {
-                                    scroll_offset -= 1;
-                                }
+                                scroll_offset = scroll_offset.saturating_sub(1);
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
                                 // Get help content and calculate max scroll

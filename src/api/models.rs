@@ -218,7 +218,7 @@ impl ModelCacheManager {
 
         // Get a handle to the current runtime
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            let default_ttl = self.default_ttl;
+            let _default_ttl = self.default_ttl;
 
             // We need to use a channel to communicate back since we can't
             // easily share the Mutex across the spawn boundary

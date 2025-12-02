@@ -31,6 +31,66 @@ async fn test_visioneer_tool_methods() {
 }
 
 #[tokio::test]
+async fn test_visioneer_with_vlm() {
+    let tool = VisioneerTool::with_vlm(
+        "http://localhost:11434".to_string(),
+        "llava".to_string()
+    );
+
+    // Test basic tool methods
+    assert_eq!(tool.name(), "visioneer");
+    assert!(tool.schema().description.contains("desktop automation"));
+    assert!(!tool.schema().parameters.is_empty());
+}
+
+#[tokio::test]
+async fn test_vlm_config() {
+    let vlm_config = VlmConfig {
+        model: Some("llava".to_string()),
+        endpoint: Some("http://localhost:11434".to_string()),
+        provider: Some("ollama".to_string()),
+        max_tokens: Some(1024),
+        temperature: Some(0.7),
+        detail: Some("medium".to_string()),
+    };
+
+    assert_eq!(vlm_config.model.unwrap(), "llava");
+    assert_eq!(vlm_config.endpoint.unwrap(), "http://localhost:11434");
+    assert_eq!(vlm_config.provider.unwrap(), "ollama");
+    assert_eq!(vlm_config.max_tokens.unwrap(), 1024);
+    assert_eq!(vlm_config.temperature.unwrap(), 0.7);
+    assert_eq!(vlm_config.detail.unwrap(), "medium");
+}
+
+#[tokio::test]
+async fn test_visioneer_with_vlm_config() {
+    let params = VisioneerParams {
+        target: "test_window".to_string(),
+        action: VisioneerAction::Analyze {
+            query: "What buttons are visible?".to_string(),
+            region: None,
+        },
+        ocr_config: None,
+        vlm_config: Some(VlmConfig {
+            model: Some("llava".to_string()),
+            endpoint: Some("http://localhost:11434".to_string()),
+            provider: Some("ollama".to_string()),
+            max_tokens: Some(1024),
+            temperature: Some(0.7),
+            detail: Some("medium".to_string()),
+        }),
+    };
+
+    assert_eq!(params.target, "test_window");
+    assert!(params.vlm_config.is_some());
+    
+    let vlm_config = params.vlm_config.unwrap();
+    assert_eq!(vlm_config.model.unwrap(), "llava");
+    assert_eq!(vlm_config.endpoint.unwrap(), "http://localhost:11434");
+    assert_eq!(vlm_config.provider.unwrap(), "ollama");
+}
+
+#[tokio::test]
 async fn test_visioneer_params_creation() {
     let params = VisioneerParams {
         target: "notepad.exe".to_string(),
@@ -92,13 +152,17 @@ async fn test_visioneer_ocr_config() {
 #[tokio::test]
 async fn test_visioneer_vlm_config() {
     let vlm_config = VlmConfig {
-        model: Some("gpt-4-vision".to_string()),
+        model: Some("llava".to_string()),
+        endpoint: Some("http://localhost:11434".to_string()),
+        provider: Some("ollama".to_string()),
         max_tokens: Some(500),
         temperature: Some(0.1),
         detail: Some("high".to_string()),
     };
 
-    assert_eq!(vlm_config.model, Some("gpt-4-vision".to_string()));
+    assert_eq!(vlm_config.model, Some("llava".to_string()));
+    assert_eq!(vlm_config.endpoint, Some("http://localhost:11434".to_string()));
+    assert_eq!(vlm_config.provider, Some("ollama".to_string()));
     assert_eq!(vlm_config.max_tokens, Some(500));
     assert_eq!(vlm_config.temperature, Some(0.1));
     assert_eq!(vlm_config.detail, Some("high".to_string()));

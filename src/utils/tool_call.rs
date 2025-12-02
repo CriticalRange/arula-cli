@@ -83,10 +83,10 @@ pub fn extract_tool_calls(content: &str) -> Vec<ToolCall> {
             in_code_block = false;
 
             // Try to parse as JSON first
-            if let Ok(tool_call) = serde_json::from_str::<ToolCall>(&current_code.trim()) {
+            if let Ok(tool_call) = serde_json::from_str::<ToolCall>(current_code.trim()) {
                 tool_calls.push(tool_call);
             } else if let Ok(tool_calls_array) =
-                serde_json::from_str::<Vec<ToolCall>>(&current_code.trim())
+                serde_json::from_str::<Vec<ToolCall>>(current_code.trim())
             {
                 tool_calls.extend(tool_calls_array);
             } else {
@@ -137,7 +137,7 @@ pub fn extract_tool_calls(content: &str) -> Vec<ToolCall> {
                 if brace_count == 0 && in_json {
                     in_json = false;
 
-                    if let Ok(tool_call) = serde_json::from_str::<ToolCall>(&current_json.trim()) {
+                    if let Ok(tool_call) = serde_json::from_str::<ToolCall>(current_json.trim()) {
                         tool_calls.push(tool_call);
                     }
 

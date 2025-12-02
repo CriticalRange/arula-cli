@@ -73,7 +73,7 @@ impl TerminalEffects {
     /// ```
     pub async fn typewriter_async(text: &str, base_delay: Duration) -> io::Result<()> {
         let chars: Vec<char> = text.chars().collect();
-        for (i, ch) in chars.iter().enumerate() {
+        for ch in chars.iter() {
             print!("{}", ch);
             io::stdout().flush()?;
 

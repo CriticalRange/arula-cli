@@ -160,6 +160,12 @@ pub struct MenuState {
     pub is_in_submenu: bool,
 }
 
+impl Default for MenuState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MenuState {
     pub fn new() -> Self {
         Self {

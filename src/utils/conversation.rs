@@ -226,7 +226,7 @@ impl Conversation {
         let mut title = words.join(" ");
 
         // Remove trailing punctuation that doesn't look good in titles
-        title = title.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':' | '!' | '?')).to_string();
+        title = title.trim_end_matches(['.', ',', ';', ':', '!', '?']).to_string();
 
         // Ensure title is reasonable length
         if title.len() > 60 {

@@ -193,6 +193,12 @@ pub struct McpManager {
     config: RwLock<Option<Config>>,
 }
 
+impl Default for McpManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl McpManager {
     pub fn new() -> Self {
         Self {
@@ -256,6 +262,12 @@ lazy_static::lazy_static! {
 
 /// MCP Tool for accessing MCP servers
 pub struct McpTool;
+
+impl Default for McpTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl McpTool {
     pub fn new() -> Self {
@@ -340,6 +352,12 @@ impl Tool for McpTool {
 
 /// MCP Discovery Tool - lists available MCP tools
 pub struct McpDiscoveryTool;
+
+impl Default for McpDiscoveryTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl McpDiscoveryTool {
     pub fn new() -> Self {

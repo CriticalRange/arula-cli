@@ -74,6 +74,12 @@ pub struct ConfigMenu {
     dialogs: Dialogs,
 }
 
+impl Default for ConfigMenu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfigMenu {
     pub fn new() -> Self {
         Self {
@@ -252,8 +258,7 @@ impl ConfigMenu {
             "DuckDuckGo"
         };
 
-        let display_options = vec![
-            format!("Provider: {}", MenuUtils::truncate_text(&config.active_provider, max_item_width.saturating_sub(11))),
+        let display_options = [format!("Provider: {}", MenuUtils::truncate_text(&config.active_provider, max_item_width.saturating_sub(11))),
             format!("Model: {}", MenuUtils::truncate_text(&config.get_model(), max_item_width.saturating_sub(9))),
             format!("API URL: {}", MenuUtils::truncate_text(&config.get_active_provider_config()
                 .and_then(|c| c.api_url.clone())
@@ -267,8 +272,7 @@ impl ConfigMenu {
                 }
             ),
             format!("Thinking: {}", if thinking_enabled { "Enabled" } else { "Disabled" }),
-            format!("Web Search: {} ({})", if web_search_enabled { "Enabled" } else { "Disabled" }, web_search_provider),
-        ];
+            format!("Web Search: {} ({})", if web_search_enabled { "Enabled" } else { "Disabled" }, web_search_provider)];
 
         let menu_height = 14; // Increased height to accommodate new menu items
         let start_x = (cols - menu_width) / 2;

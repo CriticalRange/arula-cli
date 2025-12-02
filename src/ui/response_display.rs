@@ -16,7 +16,6 @@ use serde_json::Value;
 pub struct ResponseDisplay {
     output: OutputHandler,
     is_displaying_thinking: bool,
-    input_handler: Option<crate::ui::input_handler::InputHandler>,
     accumulated_text: String,
     /// Track last tool call for updating display on completion
     last_tool_call: Option<(String, String, String)>, // (id, name, arguments)
@@ -37,15 +36,9 @@ impl ResponseDisplay {
         Self {
             output,
             is_displaying_thinking: false,
-            input_handler: None,
             accumulated_text: String::new(),
             last_tool_call: None,
         }
-    }
-
-    pub fn with_input_handler(mut self, input_handler: crate::ui::input_handler::InputHandler) -> Self {
-        self.input_handler = Some(input_handler);
-        self
     }
 
     /// Finalize accumulated text when stream ends
@@ -174,7 +167,7 @@ impl ResponseDisplay {
     fn display_last_lines(&self, content: &str, max_lines: usize, indent: &str) -> io::Result<()> {
         let lines: Vec<&str> = content.lines().collect();
         let total = lines.len();
-        let start = if total > max_lines { total - max_lines } else { 0 };
+        let start = total.saturating_sub(max_lines);
         
         if start > 0 {
             println!("{}...", indent);
@@ -449,7 +442,7 @@ impl ResponseDisplay {
     }
 
     /// Display thinking content - now handled minimally to avoid conversation fragmentation
-    pub fn display_thinking_content(&mut self, reasoning: &str) -> io::Result<()> {
+    pub fn display_thinking_content(&mut self, _reasoning: &str) -> io::Result<()> {
         // For now, we don't display thinking content separately to maintain conversation flow
         // The thinking is internal reasoning that doesn't need to be shown to user
         // This prevents the conversation from feeling fragmented
@@ -717,7 +710,7 @@ impl ResponseDisplay {
             }
         }
         if arguments.len() > 60 {
-            format!("{}", &arguments[..57])
+            arguments[..57].to_string()
         } else if arguments.is_empty() {
             String::new()
         } else {
@@ -852,7 +845,7 @@ impl ResponseDisplay {
     fn print_with_animation(&self, text: &str) -> io::Result<()> {
         let chars: Vec<char> = text.chars().collect();
 
-        for (_i, ch) in chars.iter().enumerate() {
+        for ch in chars.iter() {
             print!("{}", ch);
             io::stdout().flush()?;
             std::thread::sleep(Duration::from_millis(10));
@@ -915,7 +908,7 @@ impl ResponseProcessor {
     pub async fn process_responses_stream(
         &mut self,
         receiver: Receiver<CrossbeamResponse>,
-        buffer_sender: Sender<String>,
+        _buffer_sender: Sender<String>,
     ) -> anyhow::Result<()> {
         while let Ok(response) = receiver.recv() {
             match response {

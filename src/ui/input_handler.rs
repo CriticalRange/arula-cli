@@ -23,6 +23,12 @@ pub struct InputBlocker {
     queued_input: Arc<Mutex<Option<String>>>,
 }
 
+impl Default for InputBlocker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InputBlocker {
     pub fn new() -> Self {
         Self {
@@ -145,7 +151,7 @@ impl InputHandler {
         if remaining_chars == 0 {
             1
         } else {
-            1 + (remaining_chars + width - 1) / width
+            1 + remaining_chars.div_ceil(width)
         }
     }
 
@@ -265,7 +271,7 @@ impl InputHandler {
             return Ok(());
         }
 
-        let (_, height) = terminal::size()?;
+        let (_, _height) = terminal::size()?;
 
         // Move cursor up one line to make room for output
         queue!(
@@ -284,7 +290,7 @@ impl InputHandler {
             return Ok(());
         }
 
-        let (_, height) = terminal::size()?;
+        let (_, _height) = terminal::size()?;
 
         // Print newlines to scroll content up
         for _ in 0..lines {
@@ -1003,14 +1009,13 @@ impl AsyncInputReader {
                                 let input = buffer.clone();
                                 
                                 // Add to history
-                                if !input.trim().is_empty() {
-                                    if history.back() != Some(&input) {
+                                if !input.trim().is_empty()
+                                    && history.back() != Some(&input) {
                                         history.push_back(input.clone());
                                         if history.len() > 1000 {
                                             history.pop_front();
                                         }
                                     }
-                                }
                                 
                                 buffer.clear();
                                 cursor_pos = 0;

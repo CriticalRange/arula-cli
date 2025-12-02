@@ -210,7 +210,7 @@ async fn test_mcp_tools_available_to_zai() -> Result<(), Box<dyn std::error::Err
     // Check for MCP tools in registry
     let mcp_tools: Vec<&str> = all_tools.iter()
         .filter(|tool| tool.starts_with("mcp_"))
-        .map(|s| s.as_str())
+        .map(|s| &**s)
         .collect();
 
     println!("🔧 Found {} MCP tools in registry: {:?}", mcp_tools.len(), mcp_tools);

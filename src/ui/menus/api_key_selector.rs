@@ -295,53 +295,48 @@ impl ApiKeySelector {
 
             // Handle input
             if crossterm::event::poll(Duration::from_millis(100))? {
-                match crossterm::event::read()? {
-                    Event::Key(key_event) => {
-                        if key_event.kind != KeyEventKind::Press {
-                            continue;
-                        }
+                if let Event::Key(key_event) = crossterm::event::read()? {
+                    if key_event.kind != KeyEventKind::Press {
+                        continue;
+                    }
 
-                        match key_event.code {
-                            KeyCode::Enter => {
-                                return if input.trim().is_empty() && !has_existing {
-                                    Ok(None)
-                                } else {
-                                    Ok(Some(input))
-                                };
+                    match key_event.code {
+                        KeyCode::Enter => {
+                            return if input.trim().is_empty() && !has_existing {
+                                Ok(None)
+                            } else {
+                                Ok(Some(input))
+                            };
+                        }
+                        KeyCode::Esc => {
+                            return Ok(None);
+                        }
+                        KeyCode::Backspace => {
+                            if cursor_pos > 0 {
+                                input.remove(cursor_pos - 1);
+                                cursor_pos -= 1;
                             }
-                            KeyCode::Esc => {
-                                return Ok(None);
-                            }
-                            KeyCode::Backspace => {
-                                if cursor_pos > 0 {
-                                    input.remove(cursor_pos - 1);
-                                    cursor_pos -= 1;
-                                }
-                            }
-                            KeyCode::Left => {
-                                if cursor_pos > 0 {
-                                    cursor_pos -= 1;
-                                }
-                            }
-                            KeyCode::Right => {
-                                if cursor_pos < input.len() {
-                                    cursor_pos += 1;
-                                }
-                            }
-                            KeyCode::Home => {
-                                cursor_pos = 0;
-                            }
-                            KeyCode::End => {
-                                cursor_pos = input.len();
-                            }
-                            KeyCode::Char(c) => {
-                                input.insert(cursor_pos, c);
+                        }
+                        KeyCode::Left => {
+                            cursor_pos = cursor_pos.saturating_sub(1);
+                        }
+                        KeyCode::Right => {
+                            if cursor_pos < input.len() {
                                 cursor_pos += 1;
                             }
-                            _ => {}
                         }
+                        KeyCode::Home => {
+                            cursor_pos = 0;
+                        }
+                        KeyCode::End => {
+                            cursor_pos = input.len();
+                        }
+                        KeyCode::Char(c) => {
+                            input.insert(cursor_pos, c);
+                            cursor_pos += 1;
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
         }

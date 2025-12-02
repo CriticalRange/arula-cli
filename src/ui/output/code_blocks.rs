@@ -30,7 +30,7 @@ static THEME_SET: OnceLock<ThemeSet> = OnceLock::new();
 /// ```
 #[inline]
 pub fn get_syntax_set() -> &'static SyntaxSet {
-    SYNTAX_SET.get_or_init(|| SyntaxSet::load_defaults_newlines())
+    SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
 /// Get the global theme set, loading defaults on first access
@@ -257,8 +257,11 @@ mod tests {
 
     #[test]
     fn test_is_supported() {
+        // Test by extension
         assert!(CodeHighlighter::is_supported("rs"));
-        assert!(CodeHighlighter::is_supported("rust"));
+        // Test by name (syntect uses "Rust" not "rust")
+        assert!(CodeHighlighter::is_supported("Rust"));
+        // Test unsupported
         assert!(!CodeHighlighter::is_supported("definitelynotreal"));
     }
 }

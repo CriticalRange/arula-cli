@@ -93,9 +93,7 @@ impl Dialogs {
                         }
                     }
                     KeyCode::Left => {
-                        if cursor_pos > 0 {
-                            cursor_pos -= 1;
-                        }
+                        cursor_pos = cursor_pos.saturating_sub(1);
                     }
                     KeyCode::Right => {
                         if cursor_pos < input.len() {
@@ -284,7 +282,7 @@ impl Dialogs {
         let field_width = dialog_width - 4;
         stdout().execute(crossterm::style::SetBackgroundColor(Color::DarkGrey))?;
         for _ in 0..field_width {
-            println!("{}", " ");
+            println!(" ");
         }
         stdout().execute(crossterm::style::ResetColor)?;
 
@@ -338,7 +336,7 @@ impl Dialogs {
         let field_width = dialog_width - 4;
         stdout().execute(crossterm::style::SetBackgroundColor(Color::DarkGrey))?;
         for _ in 0..field_width {
-            println!("{}", " ");
+            println!(" ");
         }
         stdout().execute(crossterm::style::ResetColor)?;
 

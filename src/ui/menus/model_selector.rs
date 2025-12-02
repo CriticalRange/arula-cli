@@ -329,11 +329,11 @@ impl ModelSelector {
                                 if loading_spinner {
                                     // When loading, clear cache
                                     match provider.to_lowercase().as_str() {
-                                        "openai" => { let _ = app.cache_openai_models(Vec::new()); },
-                                        "anthropic" => { let _ = app.cache_anthropic_models(Vec::new()); },
-                                        "ollama" => { let _ = app.cache_ollama_models(Vec::new()); },
-                                        "z.ai coding plan" | "z.ai" | "zai" => { let _ = app.cache_zai_models(Vec::new()); },
-                                        "openrouter" => { let _ = app.cache_openrouter_models(Vec::new()); },
+                                        "openai" => { app.cache_openai_models(Vec::new()); },
+                                        "anthropic" => { app.cache_anthropic_models(Vec::new()); },
+                                        "ollama" => { app.cache_ollama_models(Vec::new()); },
+                                        "z.ai coding plan" | "z.ai" | "zai" => { app.cache_zai_models(Vec::new()); },
+                                        "openrouter" => { app.cache_openrouter_models(Vec::new()); },
                                         _ => {}
                                     }
                                     let _ = output.print_system("🗑️ Cache cleared");

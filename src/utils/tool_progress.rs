@@ -213,7 +213,7 @@ impl ToolProgressManager {
 
         // Clear each line completely
         for _ in 0..self.lines_reserved {
-            write!(stdout, "\x1b[2K\n")?;
+            writeln!(stdout, "\x1b[2K")?;
         }
 
         // Move back up to where we started

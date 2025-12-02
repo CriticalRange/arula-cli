@@ -7,7 +7,7 @@ Visioneer is a powerful hybrid perception-and-action tool for ARULA CLI that com
 ### 🔍 **Perception Layer**
 - **Screen Capture**: High-quality screen capture with region selection and multiple output formats
 - **OCR Engine**: Tesseract-based text extraction with confidence scores and bounding boxes
-- **Vision-Language Model Integration**: AI-powered UI analysis and understanding
+- **Vision-Language Model Integration**: AI-powered UI analysis and understanding using Ollama VLM models
 
 ### 🎯 **Action Layer**
 - **Click Actions**: Coordinate, text-based, pattern-based, and element-based clicking
@@ -21,6 +21,7 @@ Visioneer is a powerful hybrid perception-and-action tool for ARULA CLI that com
 - **Region-based Operations**: Focus on specific screen areas for precision
 - **Multi-format Support**: Base64 encoding, file saving, and memory buffers
 - **Cross-platform Architecture**: Designed for Windows with extensible platform support
+- **Ollama Integration**: Uses local Ollama VLM models for intelligent UI analysis
 
 ## Usage
 
@@ -34,8 +35,51 @@ Visioneer is a powerful hybrid perception-and-action tool for ARULA CLI that com
     "parameters": "..."
   },
   "ocr_config": { ... },
-  "vlm_config": { ... }
+  "vlm_config": {
+    "model": "llava",
+    "endpoint": "http://localhost:11434",
+    "provider": "ollama",
+    "max_tokens": 1024,
+    "temperature": 0.7,
+    "detail": "medium"
+  }
 }
+```
+
+### VLM Configuration
+
+The `vlm_config` parameter allows you to configure the vision-language model for UI analysis:
+
+```json
+{
+  "vlm_config": {
+    "model": "llava",                    // Ollama model name (required)
+    "endpoint": "http://localhost:11434", // Ollama endpoint (optional, defaults to localhost:11434)
+    "provider": "ollama",                // Provider type (optional, defaults to ollama)
+    "max_tokens": 1024,                  // Maximum tokens in response (optional)
+    "temperature": 0.7,                   // Temperature for response generation (optional)
+    "detail": "medium"                    // Detail level for analysis: "low", "medium", "high" (optional)
+  }
+}
+```
+
+### Supported Ollama VLM Models
+
+Visioneer works with any Ollama model that supports vision capabilities. Some popular options include:
+
+- **llava**: A general-purpose vision-language model
+- **llava-llama3**: LLaVA based on Llama 3
+- **bakllava**: A compact vision model
+- **moondream**: A lightweight vision model
+
+To use a model with Ollama:
+
+```bash
+# Pull a vision model
+ollama pull llava
+
+# Start Ollama server
+ollama serve
 ```
 
 ### Action Types
@@ -69,15 +113,20 @@ Visioneer is a powerful hybrid perception-and-action tool for ARULA CLI that com
 }
 ```
 
-#### 3. UI Analysis
+#### 3. UI Analysis with VLM
 ```json
 {
   "type": "Analyze",
   "query": "What buttons are visible and how can I click them?",
-  "region": null,
-  "context": "User wants to complete a form"
+  "region": null
 }
 ```
+
+When using the Analyze action with a VLM configuration, Visioneer will:
+1. Capture the specified screen region
+2. Send the image and query to the configured Ollama VLM
+3. Parse the response to extract UI elements and suggestions
+4. Return structured analysis results
 
 #### 4. Click Actions
 ```json
@@ -138,7 +187,49 @@ Visioneer is a powerful hybrid perception-and-action tool for ARULA CLI that com
 
 ## Examples
 
-### Example 1: Automate Notepad Text Entry
+### Example 1: Analyze UI with Ollama VLM
+
+```json
+{
+  "target": "Calculator",
+  "vlm_config": {
+    "model": "llava",
+    "endpoint": "http://localhost:11434",
+    "provider": "ollama",
+    "temperature": 0.7
+  },
+  "action": {
+    "type": "Analyze",
+    "query": "Identify all buttons on this calculator interface and their positions",
+    "region": null
+  }
+}
+```
+
+### Example 2: Find and Click a Button Using VLM
+
+```json
+{
+  "target": "Chrome",
+  "vlm_config": {
+    "model": "llava-llama3",
+    "endpoint": "http://localhost:11434",
+    "provider": "ollama"
+  },
+  "action": {
+    "type": "Analyze",
+    "query": "Find the download button and provide its coordinates",
+    "region": {
+      "x": 0,
+      "y": 0,
+      "width": 1200,
+      "height": 800
+    }
+  }
+}
+```
+
+### Example 3: Automate Notepad Text Entry
 
 ```json
 {
@@ -152,7 +243,7 @@ Visioneer is a powerful hybrid perception-and-action tool for ARULA CLI that com
 }
 ```
 
-### Example 2: Extract Text from Calculator
+### Example 4: Extract Text from Calculator
 
 ```json
 {
@@ -174,7 +265,7 @@ Visioneer is a powerful hybrid perception-and-action tool for ARULA CLI that com
 }
 ```
 
-### Example 3: Smart Button Clicking
+### Example 5: Smart Button Clicking
 
 ```json
 {
@@ -196,7 +287,7 @@ Visioneer is a powerful hybrid perception-and-action tool for ARULA CLI that com
 }
 ```
 
-### Example 4: UI Analysis with Vision Model
+### Example 6: UI Analysis with Vision Model
 
 ```json
 {
@@ -215,7 +306,7 @@ Visioneer is a powerful hybrid perception-and-action tool for ARULA CLI that com
 }
 ```
 
-### Example 5: Complex Automation Workflow
+### Example 7: Complex Automation Workflow
 
 ```json
 {

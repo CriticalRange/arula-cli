@@ -6,10 +6,12 @@
 use crate::api::agent::{Tool, ToolSchema, ToolSchemaBuilder};
 use async_trait::async_trait;
 use base64::Engine;
+#[cfg(target_os = "windows")]
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tokio::process::Command as TokioCommand;
 
 /// Visioneer tool parameters
@@ -143,10 +145,12 @@ pub struct OcrPreprocessing {
 /// Vision-language model configuration
 #[derive(Debug, Deserialize)]
 pub struct VlmConfig {
-    pub model: Option<String>, // "gpt-4-vision", "claude-3-vision", etc.
+    pub model: Option<String>, // "gpt-4-vision", "claude-3-vision", "llava", etc.
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub detail: Option<String>, // "low", "medium", "high"
+    pub endpoint: Option<String>, // Ollama endpoint URL
+    pub provider: Option<String>, // "ollama", "openai", "claude", etc.
 }
 
 /// Visioneer execution results
@@ -230,6 +234,7 @@ pub struct ActionResult {
 /// Main Visioneer tool implementation
 pub struct VisioneerTool {
     ocr_engine: Option<Box<dyn OcrEngine>>,
+    vlm_engine: Arc<Mutex<Option<Box<dyn VlmEngine>>>>,
     screen_capture: Box<dyn ScreenCapture>,
     action_executor: Box<dyn ActionExecutor>,
 }
@@ -238,6 +243,7 @@ impl std::fmt::Debug for VisioneerTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VisioneerTool")
             .field("has_ocr_engine", &self.ocr_engine.is_some())
+            .field("has_vlm_engine", &self.vlm_engine.lock().unwrap().is_some())
             .finish()
     }
 }
@@ -246,9 +252,33 @@ impl VisioneerTool {
     pub fn new() -> Self {
         Self {
             ocr_engine: Some(Box::new(TesseractOcrEngine::new())),
+            vlm_engine: Arc::new(Mutex::new(None)),
             screen_capture: Box::new(WindowsScreenCapture::new()),
             action_executor: Box::new(WindowsActionExecutor::new()),
         }
+    }
+
+    pub fn with_vlm(endpoint: String, model: String) -> Self {
+        Self {
+            ocr_engine: Some(Box::new(TesseractOcrEngine::new())),
+            vlm_engine: Arc::new(Mutex::new(Some(Box::new(OllamaVlmEngine::new(endpoint, model))))),
+            screen_capture: Box::new(WindowsScreenCapture::new()),
+            action_executor: Box::new(WindowsActionExecutor::new()),
+        }
+    }
+
+    fn get_or_init_vlm_engine(&self, config: &VlmConfig) -> Result<Arc<Mutex<Option<Box<dyn VlmEngine>>>>, String> {
+        let mut vlm_engine_guard = self.vlm_engine.lock().unwrap();
+        if vlm_engine_guard.is_none() {
+            let endpoint = config.endpoint.clone()
+                .unwrap_or_else(|| "http://localhost:11434".to_string());
+            let model = config.model.clone()
+                .unwrap_or_else(|| "llava".to_string());
+            
+            *vlm_engine_guard = Some(Box::new(OllamaVlmEngine::new(endpoint, model)));
+        }
+        
+        Ok(Arc::clone(&self.vlm_engine))
     }
 }
 
@@ -357,7 +387,7 @@ impl Tool for VisioneerTool {
                 ("extract_text".to_string(), serde_json::to_value(text_result).unwrap_or(Value::Null))
             }
             VisioneerAction::Analyze { query, region } => {
-                let analyze_result = self.analyze_ui(window_handle, &query, region).await?;
+                let analyze_result = self.analyze_ui(window_handle, &query, region, params.vlm_config).await?;
                 ("analyze".to_string(), serde_json::to_value(analyze_result).unwrap_or(Value::Null))
             }
             VisioneerAction::Click { target: click_target, button, double_click } => {
@@ -400,6 +430,7 @@ impl Tool for VisioneerTool {
 }
 
 impl VisioneerTool {
+    #[allow(unused_variables)]
     fn find_target_window(&self, target: &str) -> Result<WindowHandle, String> {
         #[cfg(target_os = "windows")]
         {
@@ -462,18 +493,52 @@ impl VisioneerTool {
         window: WindowHandle,
         query: &str,
         region: Option<CaptureRegion>,
+        vlm_config: Option<VlmConfig>,
     ) -> Result<AnalyzeResult, String> {
         // Capture the screen first
-        let _capture_result = self.capture_screen(window, region, None, true).await?;
-
-        // For now, return a mock analysis - in a real implementation, this would call a VLM API
-        Ok(AnalyzeResult {
-            analysis: format!("Mock analysis for query: {}", query),
-            elements: vec![],
-            confidence: 0.8,
-            suggestions: vec!["Consider implementing VLM integration".to_string()],
-            region: None,
-        })
+        let capture_result = self.capture_screen(window, region, None, true).await?;
+        
+        // Check if we have base64 image data
+        let base64_data = capture_result.base64_data
+            .as_ref()
+            .ok_or("No base64 image data found in capture result")?;
+        
+        // Use VLM if configured, otherwise return mock analysis
+        if let Some(config) = vlm_config {
+            // Initialize VLM engine if needed
+            let vlm_engine_ref = self.get_or_init_vlm_engine(&config)?;
+            
+            // Extract the VLM engine from the mutex
+            let vlm_engine = {
+                let guard = vlm_engine_ref.lock().unwrap();
+                if guard.is_some() {
+                    // We need to create a new engine since we can't clone the trait object
+                    let endpoint = config.endpoint.clone()
+                        .unwrap_or_else(|| "http://localhost:11434".to_string());
+                    let model = config.model.clone()
+                        .unwrap_or_else(|| "llava".to_string());
+                    Some(OllamaVlmEngine::new(endpoint, model))
+                } else {
+                    None
+                }
+            };
+            
+            if let Some(vlm) = vlm_engine {
+                // Use the VLM to analyze the image
+                vlm.analyze_image(base64_data, query, &config).await
+            } else {
+                Err("Failed to initialize VLM engine".to_string())
+            }
+        } else {
+            // Fallback to mock analysis if no VLM config provided
+            Ok(AnalyzeResult {
+                analysis: format!("Mock analysis for query: {}. Please configure a VLM provider in the vlm_config parameter.", query),
+                elements: vec![],
+                confidence: 0.0,
+                suggestions: vec!["Configure a VLM provider to enable real UI analysis".to_string()],
+                region: None,
+            })
+        }
     }
 
     async fn execute_click(
@@ -706,6 +771,16 @@ trait OcrEngine: Send + Sync {
 }
 
 #[async_trait]
+trait VlmEngine: Send + Sync {
+    async fn analyze_image(
+        &self,
+        image_base64: &str,
+        query: &str,
+        config: &VlmConfig,
+    ) -> Result<AnalyzeResult, String>;
+}
+
+#[async_trait]
 trait ActionExecutor: Send + Sync {
     async fn click(
         &self,
@@ -741,6 +816,179 @@ trait ActionExecutor: Send + Sync {
     ) -> Result<ActionResult, String>;
 }
 
+// Ollama VLM Engine implementation
+struct OllamaVlmEngine {
+    client: reqwest::Client,
+    endpoint: String,
+    model: String,
+}
+
+impl OllamaVlmEngine {
+    fn new(endpoint: String, model: String) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .expect("Failed to create HTTP client");
+        
+        Self {
+            client,
+            endpoint,
+            model,
+        }
+    }
+}
+
+#[async_trait]
+impl VlmEngine for OllamaVlmEngine {
+    async fn analyze_image(
+        &self,
+        image_base64: &str,
+        query: &str,
+        config: &VlmConfig,
+    ) -> Result<AnalyzeResult, String> {
+        // Extract base64 data if it has a data URL prefix
+        let base64_data = if image_base64.starts_with("data:") {
+            image_base64.split(',').nth(1).unwrap_or(image_base64)
+        } else {
+            image_base64
+        };
+
+        // Prepare the request payload for Ollama vision API
+        let mut request_payload = serde_json::json!({
+            "model": config.model.as_ref().unwrap_or(&self.model),
+            "prompt": query,
+            "images": [base64_data],
+            "stream": false,
+            "options": {
+                "temperature": config.temperature.unwrap_or(0.7),
+                "num_predict": config.max_tokens.unwrap_or(1024)
+            }
+        });
+
+        // Add detail level if specified
+        if let Some(detail) = &config.detail {
+            request_payload["options"]["detail"] = serde_json::Value::String(detail.clone());
+        }
+
+        let request_url = format!("{}/api/generate", self.endpoint);
+        
+        let response = self.client
+            .post(&request_url)
+            .json(&request_payload)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to send request to Ollama: {}", e))?;
+
+        if response.status().is_success() {
+            let ollama_response: serde_json::Value = response
+                .json()
+                .await
+                .map_err(|e| format!("Failed to parse Ollama response: {}", e))?;
+
+            if let Some(response_text) = ollama_response["response"].as_str() {
+                // Parse the response to extract UI elements and suggestions
+                let analysis = response_text.to_string();
+                let elements = parse_ui_elements_from_response(&analysis);
+                let suggestions = parse_suggestions_from_response(&analysis);
+                
+                Ok(AnalyzeResult {
+                    analysis,
+                    elements,
+                    confidence: 0.8, // Default confidence since Ollama doesn't provide it
+                    suggestions,
+                    region: None,
+                })
+            } else {
+                Err("Invalid response format from Ollama".to_string())
+            }
+        } else {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            Err(format!("Ollama API request failed: {}", error_text))
+        }
+    }
+}
+
+// Helper functions to parse VLM responses
+fn parse_ui_elements_from_response(response: &str) -> Vec<UiElement> {
+    // This is a simple implementation - in a real scenario, you might want to use
+    // more sophisticated parsing or ask the VLM to return structured JSON
+    let mut elements = Vec::new();
+    
+    // Look for patterns like "Button: [text]" or "Input field: [placeholder]"
+    let lines: Vec<&str> = response.lines().collect();
+    for line in lines.iter() {
+        if line.to_lowercase().contains("button") {
+            if let Some(text) = extract_text_after_colon(line) {
+                elements.push(UiElement {
+                    element_type: "button".to_string(),
+                    text: Some(text),
+                    bbox: BoundingBox { x: 0, y: 0, width: 0, height: 0 }, // Placeholder
+                    confidence: 0.8,
+                    attributes: std::collections::HashMap::new(),
+                });
+            }
+        } else if line.to_lowercase().contains("input") || line.to_lowercase().contains("field") {
+            if let Some(text) = extract_text_after_colon(line) {
+                elements.push(UiElement {
+                    element_type: "input".to_string(),
+                    text: Some(text),
+                    bbox: BoundingBox { x: 0, y: 0, width: 0, height: 0 }, // Placeholder
+                    confidence: 0.8,
+                    attributes: std::collections::HashMap::new(),
+                });
+            }
+        } else if line.to_lowercase().contains("link") {
+            if let Some(text) = extract_text_after_colon(line) {
+                elements.push(UiElement {
+                    element_type: "link".to_string(),
+                    text: Some(text),
+                    bbox: BoundingBox { x: 0, y: 0, width: 0, height: 0 }, // Placeholder
+                    confidence: 0.8,
+                    attributes: std::collections::HashMap::new(),
+                });
+            }
+        }
+    }
+    
+    elements
+}
+
+fn parse_suggestions_from_response(response: &str) -> Vec<String> {
+    let mut suggestions = Vec::new();
+    
+    // Look for suggestion patterns like "Suggestion: ..." or "You can ..."
+    let lines: Vec<&str> = response.lines().collect();
+    for line in lines {
+        if line.to_lowercase().contains("suggestion") {
+            if let Some(suggestion) = extract_text_after_colon(line) {
+                suggestions.push(suggestion);
+            }
+        } else if line.to_lowercase().contains("you can") {
+            suggestions.push(line.trim().to_string());
+        }
+    }
+    
+    // If no explicit suggestions found, add a default one
+    if suggestions.is_empty() {
+        suggestions.push("Consider using the analyze action with more specific queries".to_string());
+    }
+    
+    suggestions
+}
+
+fn extract_text_after_colon(line: &str) -> Option<String> {
+    if let Some(colon_pos) = line.find(':') {
+        let text = line[colon_pos + 1..].trim();
+        if !text.is_empty() {
+            return Some(text.to_string());
+        }
+    }
+    None
+}
+
 // Windows-specific implementations
 
 struct WindowsScreenCapture;
@@ -753,6 +1001,7 @@ impl WindowsScreenCapture {
 
 #[async_trait]
 impl ScreenCapture for WindowsScreenCapture {
+    #[allow(unused_variables)]
     async fn capture(
         &self,
         _window: WindowHandle,
@@ -868,6 +1117,7 @@ impl OcrEngine for TesseractOcrEngine {
 
         // Configure Tesseract with real parameters
         let lang = language.unwrap_or_else(|| "eng".to_string());
+        #[allow(unused_mut)]
         let mut args = Args {
             lang: lang.clone(),
             config_variables: HashMap::from([

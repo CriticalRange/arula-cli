@@ -105,7 +105,7 @@ impl ThinkingWidget {
         let frame_char = frames[self.frame % frames.len()];
         
         // Pulse effect: alternate between bright and dim
-        let is_bright = (self.frame / 2) % 2 == 0;
+        let is_bright = (self.frame / 2).is_multiple_of(2);
         
         if is_bright {
             print!(

@@ -313,6 +313,12 @@ pub struct AgentOptionsBuilder {
     debug: bool,
 }
 
+impl Default for AgentOptionsBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AgentOptionsBuilder {
     pub fn new() -> Self {
         Self {

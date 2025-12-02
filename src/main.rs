@@ -30,9 +30,6 @@ mod tools;
 mod ui;
 mod utils;
 
-// Legacy input handling modules
-mod input_handler;
-
 // Re-export for easier imports
 use app::App;
 use ui::output::OutputHandler;

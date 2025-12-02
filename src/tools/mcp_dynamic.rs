@@ -107,7 +107,7 @@ impl Tool for ServerMcpTool {
         // Extract tool_name and parameters from the unified parameter structure
         let tool_name = params.get("tool_name")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| "Missing 'tool_name' parameter")?;
+            .ok_or("Missing 'tool_name' parameter")?;
 
         let parameters = params.get("parameters").cloned()
             .unwrap_or(json!({}));
@@ -120,6 +120,12 @@ impl Tool for ServerMcpTool {
 pub struct DynamicMcpRegistry {
     discovered_servers: RwLock<Vec<DiscoveredMcpServer>>,
     config: RwLock<Option<Config>>,
+}
+
+impl Default for DynamicMcpRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DynamicMcpRegistry {
@@ -136,8 +142,6 @@ impl DynamicMcpRegistry {
 
         // Get all configured MCP servers
         let mcp_servers = config.get_mcp_servers();
-        for server_id in mcp_servers.keys() {
-        }
 
         // Discover tools from all configured MCP servers
         let mut total_servers = 0;
@@ -149,7 +153,8 @@ impl DynamicMcpRegistry {
                     total_servers += 1;
                     all_servers.push(server_info);
                 }
-                Err(e) => {
+                Err(_e) => {
+                    // Server discovery failed, skip this server
                 }
             }
         }
@@ -224,7 +229,6 @@ pub async fn get_discovered_mcp_servers() -> Vec<DiscoveredMcpServer> {
 /// Register dynamic MCP tools in the provided tool registry
 pub async fn register_dynamic_mcp_tools(registry: &mut crate::api::agent::ToolRegistry) -> Result<usize, String> {
     let server_tools = DYNAMIC_MCP_REGISTRY.get_server_tools().await;
-    let count = server_tools.len();
 
     let mut registered_count = 0;
     for tool in server_tools {

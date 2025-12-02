@@ -1,7 +1,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,19 +100,17 @@ impl Default for Logger {
     }
 }
 
-// Global static logger instance
-static mut GLOBAL_LOGGER: Option<Logger> = None;
+// Global static logger instance using OnceLock for Rust 2024 compatibility
+static GLOBAL_LOGGER: OnceLock<Logger> = OnceLock::new();
 
 pub fn init_global_logger() -> Result<(), Box<dyn std::error::Error>> {
     let logger = Logger::new()?;
-    unsafe {
-        GLOBAL_LOGGER = Some(logger);
-    }
+    GLOBAL_LOGGER.set(logger).map_err(|_| "Logger already initialized")?;
     Ok(())
 }
 
 pub fn get_global_logger() -> Option<&'static Logger> {
-    unsafe { GLOBAL_LOGGER.as_ref() }
+    GLOBAL_LOGGER.get()
 }
 
 // Convenience functions for global logging

@@ -83,6 +83,12 @@ pub struct CustomSpinner {
     state: Arc<Mutex<SpinnerState>>,
 }
 
+impl Default for CustomSpinner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CustomSpinner {
     /// Create a new spinner (not started)
     pub fn new() -> Self {

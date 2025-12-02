@@ -97,7 +97,7 @@ pub enum MenuSelection {
 }
 
 /// Collection of all dependencies for dependency injection
-#[derive(Clone)]
+/// Note: Clone is not derived as trait objects cannot implement Clone
 pub struct Dependencies {
     pub output: Box<dyn OutputHandler>,
     pub config: Box<dyn ConfigManager>,

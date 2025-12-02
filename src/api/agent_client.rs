@@ -620,7 +620,7 @@ impl AgentClient {
         // Add conversation history if provided
         if let Some(history) = conversation_history {
             // Check if the last message in history is already the current user message
-            let history_has_current_message = history.last().map_or(false, |last| {
+            let history_has_current_message = history.last().is_some_and(|last| {
                 last.role == "user" && last.content.as_deref() == Some(message)
             });
 

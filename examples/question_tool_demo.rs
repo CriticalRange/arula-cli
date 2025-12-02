@@ -1,8 +1,7 @@
 //! Demonstration of the Question Tool functionality
 
-use arula_cli::tools::{QuestionTool, QuestionParams, QuestionType};
-use arula_cli::agent::Tool;
-use serde_json;
+use arula_cli::tools::builtin::{QuestionTool, QuestionParams, QuestionResult};
+use arula_cli::api::agent::Tool;
 
 #[test]
 fn test_question_tool_basic_properties() {
@@ -10,25 +9,21 @@ fn test_question_tool_basic_properties() {
 
     // Test tool name and description
     assert_eq!(tool.name(), "ask_question");
-    assert!(tool.description().contains("beautiful animated dialog"));
+    assert!(tool.description().contains("clarifying question"));
 
     // Test schema generation
     let schema = tool.schema();
     assert_eq!(schema.name, "ask_question");
     assert!(schema.parameters.contains_key("question"));
     assert!(schema.parameters.contains_key("options"));
-    assert!(schema.parameters.contains_key("allow_custom_response"));
-    assert!(schema.parameters.contains_key("question_type"));
 }
 
 #[test]
 fn test_question_params_serialization() -> Result<(), Box<dyn std::error::Error>> {
-    // Test multiple choice question
+    // Test question with options
     let params = QuestionParams {
         question: "What is your favorite color?".to_string(),
-        options: vec!["Red".to_string(), "Blue".to_string(), "Green".to_string()],
-        allow_custom_response: false,
-        question_type: QuestionType::MultipleChoice,
+        options: Some(vec!["Red".to_string(), "Blue".to_string(), "Green".to_string()]),
     };
 
     // Test JSON serialization
@@ -37,85 +32,48 @@ fn test_question_params_serialization() -> Result<(), Box<dyn std::error::Error>
 
     assert_eq!(params.question, deserialized.question);
     assert_eq!(params.options, deserialized.options);
-    assert_eq!(params.allow_custom_response, deserialized.allow_custom_response);
 
-    // Test confirmation question
-    let confirmation_params = QuestionParams {
-        question: "Do you want to continue?".to_string(),
-        options: vec!["Yes".to_string(), "No".to_string()],
-        allow_custom_response: false,
-        question_type: QuestionType::Confirmation,
-    };
-
-    let json_str = serde_json::to_string(&confirmation_params)?;
-    let confirmation_deserialized: QuestionParams = serde_json::from_str(&json_str)?;
-
-    assert_eq!(confirmation_params.question, confirmation_deserialized.question);
-    assert_eq!(confirmation_params.question_type, confirmation_deserialized.question_type);
-
-    // Test text input question
-    let text_params = QuestionParams {
+    // Test question without options
+    let simple_params = QuestionParams {
         question: "Enter your name:".to_string(),
-        options: vec![],
-        allow_custom_response: true,
-        question_type: QuestionType::TextInput,
+        options: None,
     };
 
-    let json_str = serde_json::to_string(&text_params)?;
-    let text_deserialized: QuestionParams = serde_json::from_str(&json_str)?;
+    let json_str = serde_json::to_string(&simple_params)?;
+    let simple_deserialized: QuestionParams = serde_json::from_str(&json_str)?;
 
-    assert_eq!(text_params.question, text_deserialized.question);
-    assert_eq!(text_params.allow_custom_response, text_deserialized.allow_custom_response);
-    assert_eq!(text_params.question_type, text_deserialized.question_type);
+    assert_eq!(simple_params.question, simple_deserialized.question);
+    assert!(simple_deserialized.options.is_none());
 
     Ok(())
 }
 
 #[test]
 fn test_question_result_structure() {
-    use arula_cli::tools::QuestionResult;
-
     let result = QuestionResult {
         question: "Test question?".to_string(),
-        response: "Test answer".to_string(),
-        question_type: "multiple_choice".to_string(),
-        was_custom: false,
+        awaiting_response: true,
         success: true,
     };
 
     assert_eq!(result.question, "Test question?");
-    assert_eq!(result.response, "Test answer");
-    assert_eq!(result.question_type, "multiple_choice");
-    assert!(!result.was_custom);
+    assert!(result.awaiting_response);
     assert!(result.success);
 }
 
 #[test]
 fn test_question_tool_in_registry() {
-    use arula_cli::tools::create_default_tool_registry;
+    use arula_cli::tools::tools::create_default_tool_registry;
 
     let registry = create_default_tool_registry();
     let tool_names = registry.get_tools();
 
     // Verify that the question tool is registered
-    assert!(tool_names.contains(&"ask_question"));
+    assert!(tool_names.contains(&"ask_question".to_string()));
 
-    // Count total tools (should include our new question tool)
+    // Count total tools (should include our question tool)
     println!("Available tools: {:?}", tool_names);
-    assert!(tool_names.len() > 0); // At least our question tool should be there
-}
-
-#[test]
-fn test_question_type_defaults() {
-    // Test default question type
-    let params = QuestionParams {
-        question: "Test?".to_string(),
-        options: vec!["Yes".to_string(), "No".to_string()],
-        allow_custom_response: false,
-        question_type: QuestionType::MultipleChoice, // Default
-    };
-
-    assert!(matches!(params.question_type, QuestionType::MultipleChoice));
+    assert!(!tool_names.is_empty()); // At least our question tool should be there
 }
 
 #[tokio::test]
@@ -125,30 +83,25 @@ async fn test_question_tool_validation() {
     // Test validation - empty question should fail
     let empty_params = QuestionParams {
         question: "".to_string(),
-        options: vec![],
-        allow_custom_response: false,
-        question_type: QuestionType::MultipleChoice,
+        options: None,
     };
 
     // This should return an error result since the question is empty
     let result = tool.execute(empty_params).await;
     assert!(result.is_err());
 
-    // Test valid text input question
+    // Test valid question
     let valid_params = QuestionParams {
         question: "What is your name?".to_string(),
-        options: vec![],
-        allow_custom_response: true,
-        question_type: QuestionType::TextInput,
+        options: Some(vec!["Alice".to_string(), "Bob".to_string()]),
     };
 
-    // This should not error out during validation
-    // Note: In a real test, this would show a dialog, but for testing we just check validation
     let result = tool.execute(valid_params).await;
-    // Result might be Ok (user cancelled) or Err (validation error), but shouldn't panic
-    match result {
-        Ok(_) | Err(_) => {}, // Both are acceptable for this test
-    }
+    assert!(result.is_ok());
+    
+    let response = result.unwrap();
+    assert!(response.success);
+    assert!(response.awaiting_response);
 }
 
 fn main() {
@@ -160,28 +113,17 @@ fn main() {
     println!("Tool Name: {}", tool.name());
     println!("Description: {}", tool.description());
 
-    // Show available question types
-    println!("\nSupported Question Types:");
-    println!("- Multiple Choice: Present a list of options");
-    println!("- Confirmation: Yes/No type questions");
-    println!("- Text Input: Free-form text entry");
-    println!("- Info: Display information with confirmation");
-
     // Example usage scenarios
     println!("\nExample Usage Scenarios:");
-    println!("1. Confirmation: 'Do you want to delete this file?'");
-    println!("2. Multiple Choice: 'Which deployment environment?'");
-    println!("3. Text Input: 'Enter your API key:'");
-    println!("4. Info: 'Operation completed. Continue?'");
+    println!("1. Clarification: 'What directory should I save the file to?'");
+    println!("2. Confirmation: 'Do you want to proceed with this action?'");
+    println!("3. Choice: 'Which option do you prefer?'");
 
     println!("\nFeatures:");
-    println!("✨ Beautiful animated dialog boxes");
-    println!("🎨 Gradient color effects");
-    println!("⚡ Smooth selection animations");
-    println!("🔄 Tab switching between options and custom input");
-    println!("⌨️  Keyboard navigation (↑↓, Enter, Esc)");
-    println!("📱 Responsive terminal sizing");
-    println!("🎯 Context-appropriate icons");
+    println!("✨ Simple parameter structure");
+    println!("🎯 Optional suggested answers");
+    println!("📝 Clear question/response model");
+    println!("✅ Async execution support");
 
     println!("\nIntegration:");
     println!("✅ Tool registered as 'ask_question'");
