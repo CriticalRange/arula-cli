@@ -1,4 +1,0 @@
-Testing write_file tool functionality.
-This is a new test file created to verify the tool works properly.
-Timestamp: 2025-06-17
-This line was added using the edit_file tool.

@@ -152,27 +152,151 @@ where
     let mut model = String::new();
     let mut stream_id = String::new();
 
-    // Read the response as text chunks (SSE format)
+    // Read the response as text chunks
     let body = response.text().await?;
 
     for line in body.lines() {
-        // SSE format: each event starts with "data: "
-        if !line.starts_with("data: ") {
+        let line = line.trim();
+        if line.is_empty() {
             continue;
         }
 
-        let data = &line[6..]; // Skip "data: " prefix
+        // Determine the data to parse based on format:
+        // - SSE format: lines start with "data: "
+        // - Ollama/NDJSON format: plain JSON objects
+        let data = if line.starts_with("data: ") {
+            let data = &line[6..]; // Skip "data: " prefix
+            // Stream end marker (SSE)
+            if data == "[DONE]" {
+                break;
+            }
+            data
+        } else if line.starts_with("{") {
+            // Plain JSON line (Ollama format)
+            line
+        } else {
+            // Skip unknown lines
+            continue;
+        };
 
-        // Stream end marker
-        if data == "[DONE]" {
-            break;
+        // Check for Ollama's done marker
+        if let Ok(ollama_check) = serde_json::from_str::<serde_json::Value>(data) {
+            if ollama_check.get("done").and_then(|v| v.as_bool()) == Some(true) {
+                // Ollama stream complete - extract final message if present
+                if let Some(message) = ollama_check.get("message") {
+                    if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                        if !content.is_empty() && !accumulated_content.contains(content) {
+                            accumulated_content.push_str(content);
+                            callback(StreamEvent::TextDelta(content.to_string()));
+                        }
+                    }
+                    
+                    // Extract tool calls from final Ollama response
+                    if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array()) {
+                        for (index, tc) in tool_calls.iter().enumerate() {
+                            if let Some(function) = tc.get("function") {
+                                let name = function.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                                let arguments = if let Some(args) = function.get("arguments") {
+                                    if args.is_string() {
+                                        args.as_str().unwrap_or("{}").to_string()
+                                    } else {
+                                        serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string())
+                                    }
+                                } else {
+                                    "{}".to_string()
+                                };
+                                
+                                let id = format!("ollama_call_{}", index);
+                                
+                                // Only add if not already tracked
+                                if !tool_accumulators.contains_key(&index) {
+                                    callback(StreamEvent::ToolCallStart {
+                                        index,
+                                        id: id.clone(),
+                                        name: name.clone(),
+                                    });
+                                    callback(StreamEvent::ToolCallDelta {
+                                        index,
+                                        arguments: arguments.clone(),
+                                    });
+                                    tool_accumulators.insert(index, ToolCallAccumulator {
+                                        id,
+                                        name,
+                                        arguments,
+                                    });
+                                }
+                            }
+                        }
+                        finish_reason = "tool_calls".to_string();
+                    } else {
+                        finish_reason = "stop".to_string();
+                    }
+                } else {
+                    finish_reason = "stop".to_string();
+                }
+                break;
+            }
         }
 
-        // Parse the JSON chunk
+        // Parse the JSON chunk (try OpenAI format first)
         let chunk: StreamChunk = match serde_json::from_str(data) {
             Ok(c) => c,
-            Err(e) => {
-                debug_print(&format!("Failed to parse stream chunk: {} - data: {}", e, data));
+            Err(_) => {
+                // Try Ollama format
+                if let Ok(ollama) = serde_json::from_str::<serde_json::Value>(data) {
+                    // Extract content from Ollama response
+                    if let Some(message) = ollama.get("message") {
+                        // Extract text content
+                        if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                            if !content.is_empty() {
+                                accumulated_content.push_str(content);
+                                callback(StreamEvent::TextDelta(content.to_string()));
+                            }
+                        }
+                        
+                        // Extract tool calls from Ollama response
+                        // Ollama format: { "message": { "tool_calls": [{ "function": { "name": "...", "arguments": {...} } }] } }
+                        if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array()) {
+                            for (index, tc) in tool_calls.iter().enumerate() {
+                                if let Some(function) = tc.get("function") {
+                                    let name = function.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                                    // Ollama returns arguments as object, convert to string
+                                    let arguments = if let Some(args) = function.get("arguments") {
+                                        if args.is_string() {
+                                            args.as_str().unwrap_or("{}").to_string()
+                                        } else {
+                                            serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string())
+                                        }
+                                    } else {
+                                        "{}".to_string()
+                                    };
+                                    
+                                    // Generate a unique ID for the tool call
+                                    let id = format!("ollama_call_{}", index);
+                                    
+                                    callback(StreamEvent::ToolCallStart {
+                                        index,
+                                        id: id.clone(),
+                                        name: name.clone(),
+                                    });
+                                    callback(StreamEvent::ToolCallDelta {
+                                        index,
+                                        arguments: arguments.clone(),
+                                    });
+                                    
+                                    // Store in accumulator
+                                    tool_accumulators.insert(index, ToolCallAccumulator {
+                                        id,
+                                        name,
+                                        arguments,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+                debug_print(&format!("Failed to parse stream chunk: {}", data));
                 continue;
             }
         };
@@ -330,7 +454,6 @@ pub fn build_streaming_request(
 /// Z.AI has specific requirements:
 /// - Does not support stream_options (pass include_stream_options: false)
 /// - Does not support tool_choice with streaming (pass include_tool_choice: false)
-/// - Requires tool_stream: true for streaming with tools (handled in api.rs)
 pub fn build_streaming_request_with_options(
     model: &str,
     messages: &[Value],

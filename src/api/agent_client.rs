@@ -308,6 +308,7 @@ impl AgentClient {
                         content: if response.response.is_empty() { None } else { Some(response.response.clone()) },
                         tool_calls: Some(calls.clone()),
                         tool_call_id: None,
+                        tool_name: None,
                     });
 
                     // Execute each tool call
@@ -358,6 +359,7 @@ impl AgentClient {
                             content: Some(result_content),
                             tool_calls: None,
                             tool_call_id: Some(tool_call.id.clone()),
+                            tool_name: Some(tool_call.function.name.clone()),
                         });
                     }
 
@@ -496,6 +498,7 @@ impl AgentClient {
                         content: if accumulated_text.is_empty() { None } else { Some(accumulated_text.clone()) },
                         tool_calls: Some(calls.clone()),
                         tool_call_id: None,
+                        tool_name: None,
                     });
 
                     // Execute each tool call
@@ -546,6 +549,7 @@ impl AgentClient {
                             content: Some(result_content),
                             tool_calls: None,
                             tool_call_id: Some(tool_call.id.clone()),
+                            tool_name: Some(tool_call.function.name.clone()),
                         });
                     }
 
@@ -609,26 +613,33 @@ impl AgentClient {
     ) -> Result<Vec<ChatMessage>> {
         let mut messages = Vec::new();
 
-        // Add system message
-        messages.push(ChatMessage {
-            role: "system".to_string(),
-            content: Some(self.options.system_prompt.clone()),
-            tool_calls: None,
-            tool_call_id: None,
-        });
-
-        // Add conversation history if provided
+        // Check if we have conversation history
         if let Some(history) = conversation_history {
-            // Check if the last message in history is already the current user message
-            let history_has_current_message = history.last().is_some_and(|last| {
-                last.role == "user" && last.content.as_deref() == Some(message)
-            });
+            // Check if the first message is a system message
+            let has_system_message = history.first().map_or(false, |msg| msg.role == "system");
 
+            // Add system message only if not already in history
+            if !has_system_message {
+                messages.push(ChatMessage {
+                    role: "system".to_string(),
+                    content: Some(self.options.system_prompt.clone()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    tool_name: None,
+                });
+            }
+
+            // Add all messages from history
             for msg in history {
-                if msg.role != "system" {
+                if msg.role != "system" || !has_system_message {
                     messages.push(msg);
                 }
             }
+
+            // Check if the last message in history is already the current user message
+            let history_has_current_message = messages.last().is_some_and(|last| {
+                last.role == "user" && last.content.as_deref() == Some(message)
+            });
 
             // Only add current user message if it's not already in history
             if !history_has_current_message {
@@ -637,15 +648,25 @@ impl AgentClient {
                     content: Some(message.to_string()),
                     tool_calls: None,
                     tool_call_id: None,
+                    tool_name: None,
                 });
             }
         } else {
-            // No history provided, add the user message
+            // No history provided, add system message and user message
+            messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: Some(self.options.system_prompt.clone()),
+                tool_calls: None,
+                tool_call_id: None,
+                tool_name: None,
+            });
+            
             messages.push(ChatMessage {
                 role: "user".to_string(),
                 content: Some(message.to_string()),
                 tool_calls: None,
                 tool_call_id: None,
+                tool_name: None,
             });
         }
 
@@ -727,6 +748,7 @@ impl AgentClient {
                 content: assistant_content,
                 tool_calls: Some(response_tools.clone()),
                 tool_call_id: None,
+                tool_name: None,
             });
 
             // Execute tools if auto-execute is enabled
@@ -812,6 +834,7 @@ impl AgentClient {
                                     content: Some(result_json.to_string()),
                                     tool_calls: None,
                                     tool_call_id: Some(tool_call_id.clone()),
+                                    tool_name: Some(tool_name.clone()),
                                 });
                             } else {
                                 let error_msg = format!("Tool '{}' not found", tool_name);
@@ -831,6 +854,7 @@ impl AgentClient {
                                     ),
                                     tool_calls: None,
                                     tool_call_id: Some(tool_call_id.clone()),
+                                    tool_name: Some(tool_name.clone()),
                                 });
                             }
                         }
@@ -852,6 +876,7 @@ impl AgentClient {
                                 ),
                                 tool_calls: None,
                                 tool_call_id: Some(tool_call_id.clone()),
+                                tool_name: Some(tool_name.clone()),
                             });
                         }
                     }

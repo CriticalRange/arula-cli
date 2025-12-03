@@ -103,6 +103,9 @@ pub struct ChatMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Tool name for Ollama tool responses (Ollama uses tool_name instead of tool_call_id)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,6 +203,17 @@ impl ApiClient {
             provider_type = AIProvider::ZAiCoding;
         }
 
+        // Normalize endpoint URL - remove trailing slashes and common API paths
+        // This prevents double paths like /api/chat/api/chat
+        let normalized_endpoint = endpoint
+            .trim_end_matches('/')
+            .trim_end_matches("/api/chat")
+            .trim_end_matches("/api/generate")
+            .trim_end_matches("/v1/chat/completions")
+            .trim_end_matches("/v1")
+            .trim_end_matches("/chat/completions")
+            .to_string();
+
         if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
             debug_print(&format!(
                 "DEBUG: Provider = {:?}, Input = {}",
@@ -228,7 +242,7 @@ impl ApiClient {
         Self {
             client,
             provider: provider_type,
-            endpoint,
+            endpoint: normalized_endpoint,
             api_key,
             model,
         }
@@ -247,6 +261,7 @@ impl ApiClient {
             content: Some("You are ARULA, an Autonomous AI Interface assistant. You help users with coding, shell commands, and general software development tasks. Be concise, helpful, and provide practical solutions.".to_string()),
             tool_calls: None,
             tool_call_id: None,
+            tool_name: None,
         });
 
         // Add conversation history if provided
@@ -264,6 +279,7 @@ impl ApiClient {
             content: Some(message.to_string()),
             tool_calls: None,
             tool_call_id: None,
+            tool_name: None,
         });
 
         match self.provider {
@@ -289,6 +305,7 @@ impl ApiClient {
             content: Some("You are ARULA, an Autonomous AI Interface assistant. You help users with coding, shell commands, and general software development tasks. Be concise, helpful, and provide practical solutions.".to_string()),
             tool_calls: None,
             tool_call_id: None,
+            tool_name: None,
         });
 
         // Add conversation history if provided
@@ -306,6 +323,7 @@ impl ApiClient {
             content: Some(message.to_string()),
             tool_calls: None,
             tool_call_id: None,
+            tool_name: None,
         });
 
         let (tx, rx) = mpsc::unbounded_channel();
@@ -516,7 +534,11 @@ impl ApiClient {
             request_body["reasoning_effort"] = serde_json::json!("medium");
         }
 
-        let request_url = format!("{}/chat/completions", self.endpoint);
+        // Use provider-specific endpoint
+        let request_url = match self.provider {
+            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
+            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
+        };
         let mut request_builder = self
             .client
             .post(&request_url)
@@ -856,62 +878,79 @@ impl ApiClient {
         let usage_tracking = config.get_zai_usage_tracking_enabled().unwrap_or(true);
 
         // Convert ChatMessage format to plain objects for Z.AI
+        // Filter out tool-related messages to avoid error 1210
         let zai_messages: Vec<Value> = messages
             .into_iter()
+            .filter(|msg| {
+                // Skip tool role messages
+                if msg.role == "tool" {
+                    return false;
+                }
+                // Skip assistant messages that only have tool_calls (no content)
+                if msg.role == "assistant" && msg.content.is_none() && msg.tool_calls.is_some() {
+                    return false;
+                }
+                true
+            })
             .map(|msg| {
-                let mut msg_obj = json!({
+                // Build simple message with only role and content
+                json!({
                     "role": msg.role,
-                });
-
-                // Handle content field based on role and presence of tool_calls
-                match (msg.content, &msg.tool_calls, msg.role.as_str()) {
-                    (Some(content), _, _) => {
-                        msg_obj["content"] = json!(content);
-                    }
-                    (None, Some(_), "assistant") => {
-                        msg_obj["content"] = json!(null);
-                    }
-                    (None, _, "tool") => {
-                        msg_obj["content"] = json!("");
-                    }
-                    _ => {
-                        msg_obj["content"] = json!("");
-                    }
-                }
-
-                if let Some(tool_calls) = msg.tool_calls {
-                    msg_obj["tool_calls"] = json!(tool_calls);
-                }
-
-                if let Some(tool_call_id) = msg.tool_call_id {
-                    msg_obj["tool_call_id"] = json!(tool_call_id);
-                }
-
-                msg_obj
+                    "content": msg.content.unwrap_or_default()
+                })
             })
             .collect();
 
-        // Z.AI uses OpenAI-compatible format with thinking mode support
+        // Set up model-specific parameters based on official GLM specs
+        let max_tokens = match self.model.as_str() {
+            "GLM-4.6" => 65536, // Official default for GLM-4.6
+            "GLM-4.5" | "GLM-4.5-AIR" | "GLM-4.5-X" | "GLM-4.5-AIRX" | "GLM-4.5-FLASH" | "GLM-4.5V" => 65536, // Official default for GLM-4.5 series
+            "GLM-4-32B-0414-128K" => 16384, // Official default for older model
+            _ => 2048, // Fallback for other models
+        };
+        
+        // Log the model being used for debugging
+        debug_print(&format!("Using model: {} with max_tokens: {}", self.model, max_tokens));
+        
+        // Set up the base request with model-appropriate defaults
         let mut request = json!({
-            "model": self.model,
+            "model": &self.model,
             "messages": zai_messages,
-            "temperature": 0.7f32,  // Use f32 to ensure consistent precision
-            "max_tokens": 2048,
+            "temperature": 0.7,   // Use default temperature for GLM models
+            "max_tokens": max_tokens,
             "stream": false
         });
 
-        // Add thinking mode if enabled
-        if thinking_enabled {
+        // Add optional GLM parameters for better control
+        // Note: Temperature and top_p should be mutually exclusive per GLM docs
+        // We're using temperature=0.7 for balanced output
+        request["do_sample"] = json!(true); // Enable sampling for diversity
+        
+        // Add thinking parameter for GLM-4.5 and above models
+        if thinking_enabled && (self.model.starts_with("GLM-4.5") || self.model.starts_with("GLM-4.6")) {
             request["thinking"] = json!({
                 "type": "enabled"
             });
         }
+        
+        // Log the final request payload
+        let request_str = serde_json::to_string_pretty(&request).unwrap_or_default();
+        debug_print(&format!("Final request payload: {}", request_str));
 
         // Implement retry logic
         for attempt in 0..=max_retries {
+            // Use provider-specific endpoint
+            let endpoint = match self.provider {
+                AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
+                _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
+            };
+            
+            // Store a reference to the endpoint for logging
+            let endpoint_str = endpoint.as_str();
+            
             let mut request_builder = self
                 .client
-                .post(format!("{}/chat/completions", self.endpoint))
+                .post(&endpoint)  // Borrow endpoint here
                 .timeout(timeout)
                 .json(&request);
 
@@ -924,8 +963,21 @@ impl ApiClient {
             let mut request_headers = reqwest::header::HeaderMap::new();
             request_headers.insert("Authorization", format!("Bearer {}", self.api_key).parse().unwrap());
             request_headers.insert("Accept-Language", "en-US,en".parse().unwrap());
+            
+            // Add Content-Type header explicitly
+            request_headers.insert("Content-Type", "application/json".parse().unwrap());
+            
             let body_str = serde_json::to_string_pretty(&request).unwrap_or_default();
-            log_http_request("POST", &format!("{}/chat/completions", self.endpoint), &request_headers, Some(&body_str));
+            
+            // Log the full request for debugging
+            debug_print(&format!("Sending request to {}: {}", endpoint_str, body_str));
+            
+            // Use provider-specific endpoint for logging
+            let log_url = match self.provider {
+                AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
+                _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
+            };
+            log_http_request("POST", &log_url, &request_headers, Some(&body_str));
 
             let response = request_builder.send().await;
             match response {
@@ -1018,10 +1070,13 @@ impl ApiClient {
                             status.as_u16(),
                             &error_body
                         );
+                        
+                        // Log detailed error information
+                        debug_print(&format!("Z.AI API error ({}): {}", status, error_body));
 
                         // Don't retry on client errors (4xx)
                         if status.is_client_error() {
-                            return Err(anyhow!("Z.AI API error: {}", api_error));
+                            return Err(anyhow!("Z.AI API error ({}): {}", status, api_error));
                         }
 
                         // Log retry attempt
@@ -1056,8 +1111,8 @@ impl ApiClient {
     fn calculate_zai_cost(&self, model: &str, total_tokens: u64) -> Option<f64> {
         // Rough cost estimates (per 1M tokens)
         let cost_per_million = match model {
-            "glm-4" | "glm-4.6" => 0.0025, // $2.50 per 1M tokens
-            "glm-4.5" => 0.0015, // $1.50 per 1M tokens
+            "GLM-4" | "GLM-4.6" => 0.0025, // $2.50 per 1M tokens
+            "GLM-4.5" => 0.0015, // $1.50 per 1M tokens
             "claude-instant-1.2" => 0.0008, // $0.80 per 1M tokens
             _ => return None,
         };
@@ -1076,7 +1131,11 @@ impl ApiClient {
             "max_tokens": 2048
         });
 
-        let request_url = format!("{}/chat/completions", self.endpoint);
+        // Use provider-specific endpoint
+        let request_url = match self.provider {
+            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
+            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
+        };
         let mut request_builder = self
             .client
             .post(&request_url)
@@ -1229,38 +1288,26 @@ impl ApiClient {
             self.api_key.len()
         ));
         // Convert ChatMessage format to plain objects for Z.AI
+        // Filter out tool-related messages to avoid error 1210
         let zai_messages: Vec<Value> = messages
             .into_iter()
+            .filter(|msg| {
+                // Skip tool role messages
+                if msg.role == "tool" {
+                    return false;
+                }
+                // Skip assistant messages that only have tool_calls (no content)
+                if msg.role == "assistant" && msg.content.is_none() && msg.tool_calls.is_some() {
+                    return false;
+                }
+                true
+            })
             .map(|msg| {
-                let mut msg_obj = json!({
+                // Build simple message with only role and content
+                json!({
                     "role": msg.role,
-                });
-
-                // Handle content field based on role and presence of tool_calls
-                match (msg.content, &msg.tool_calls, msg.role.as_str()) {
-                    (Some(content), _, _) => {
-                        msg_obj["content"] = json!(content);
-                    }
-                    (None, Some(_), "assistant") => {
-                        msg_obj["content"] = json!(null);
-                    }
-                    (None, _, "tool") => {
-                        msg_obj["content"] = json!("");
-                    }
-                    _ => {
-                        msg_obj["content"] = json!("");
-                    }
-                }
-
-                if let Some(tool_calls) = msg.tool_calls {
-                    msg_obj["tool_calls"] = json!(tool_calls);
-                }
-
-                if let Some(tool_call_id) = msg.tool_call_id {
-                    msg_obj["tool_call_id"] = json!(tool_call_id);
-                }
-
-                msg_obj
+                    "content": msg.content.unwrap_or_default()
+                })
             })
             .collect();
 
@@ -1293,11 +1340,16 @@ impl ApiClient {
                 }
             }
         ]);
-        request["tool_choice"] = json!("required");
+        request["tool_choice"] = json!("auto");  // "required" is not supported by Z.AI
 
+        // Use provider-specific endpoint
+        let endpoint = match self.provider {
+            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
+            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
+        };
         let mut request_builder = self
             .client
-            .post(format!("{}/chat/completions", self.endpoint)) // Z.AI uses this exact path
+            .post(endpoint)
             .json(&request);
 
         // Add authorization header if API key is provided
@@ -1436,6 +1488,7 @@ impl ApiClient {
         // This ensures proper handling even if provider detection failed
         let is_zai = matches!(self.provider, AIProvider::ZAiCoding) 
             || self.endpoint.contains("api.z.ai");
+        let is_ollama = matches!(self.provider, AIProvider::Ollama);
 
         // Convert ChatMessage to JSON format
         // Z.AI has strict requirements - only include role and content
@@ -1471,11 +1524,35 @@ impl ApiClient {
                 // Only include tool-related fields for non-Z.AI providers
                 if !is_zai {
                     if let Some(tool_calls) = &msg.tool_calls {
-                        obj["tool_calls"] = serde_json::json!(tool_calls);
+                        // For Ollama, convert arguments from string to object
+                        if is_ollama {
+                            let converted_calls: Vec<serde_json::Value> = tool_calls.iter().map(|tc| {
+                                // Parse arguments string to JSON object
+                                let args_obj = serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
+                                    .unwrap_or_else(|_| serde_json::json!({}));
+                                serde_json::json!({
+                                    "function": {
+                                        "name": tc.function.name,
+                                        "arguments": args_obj  // Object, not string
+                                    }
+                                })
+                            }).collect();
+                            obj["tool_calls"] = serde_json::json!(converted_calls);
+                        } else {
+                            obj["tool_calls"] = serde_json::json!(tool_calls);
+                        }
                     }
                     
-                    if let Some(tool_call_id) = &msg.tool_call_id {
-                        obj["tool_call_id"] = serde_json::json!(tool_call_id);
+                    if is_ollama {
+                        // Ollama uses tool_name instead of tool_call_id for tool responses
+                        if let Some(tool_name) = &msg.tool_name {
+                            obj["tool_name"] = serde_json::json!(tool_name);
+                        }
+                    } else {
+                        // OpenAI-compatible APIs use tool_call_id
+                        if let Some(tool_call_id) = &msg.tool_call_id {
+                            obj["tool_call_id"] = serde_json::json!(tool_call_id);
+                        }
                     }
                 }
                 
@@ -1487,16 +1564,16 @@ impl ApiClient {
         // Z.AI has specific requirements (from docs.z.ai):
         // - Does NOT support stream_options parameter (returns error 1210)
         // - Does NOT support tool_choice with streaming
-        // - Requires tool_stream: true for function calls with streaming (GLM-4.6 only)
-        let include_stream_options = !is_zai;
-        let include_tool_choice = !is_zai; // Z.AI doesn't support tool_choice with streaming
+        // Ollama also doesn't support stream_options or tool_choice
+        let include_stream_options = !is_zai && !is_ollama;
+        let include_tool_choice = !is_zai && !is_ollama;
         
         // For Z.AI, we need special handling for tools with streaming
         // Based on Z.AI docs: all streaming + tool examples only use primitive types (string, number, boolean)
         // Complex types (object, array) in tool parameters may cause error 1210
         // 
-        // Strategy: Filter tools to only include those with simple parameter types for Z.AI
-        let (tools_ref, use_tool_stream): (Option<&[serde_json::Value]>, bool) = if is_zai {
+        // For Z.AI, filter out tools with complex parameter types to avoid error 1210
+        let tools_ref = if is_zai {
             // Filter to only tools with simple parameter types
             let simple_tools: Vec<&serde_json::Value> = tools.iter()
                 .filter(|tool| {
@@ -1526,51 +1603,84 @@ impl ApiClient {
             
             debug_print(&format!("DEBUG: Z.AI - {} of {} tools have simple params", simple_tools.len(), tools.len()));
             
-            if simple_tools.is_empty() {
-                // No compatible tools - stream without tools
-                (None, false)
-            } else {
-                // We have compatible tools - but we need owned data
-                // For now, just don't include tools in streaming to avoid the error
-                // Tool calls will be handled via non-streaming fallback
+            // For Z.AI, we don't include tools in streaming requests to avoid error 1210
+            // Tool calls will be handled via non-streaming fallback
+            if !simple_tools.is_empty() {
                 debug_print("DEBUG: Z.AI streaming - excluding tools to avoid error 1210");
-                (None, false)
             }
+            None
         } else if !tools.is_empty() {
-            (Some(tools), false)
+            Some(tools)
         } else {
-            (None, false)
+            None
         };
         
+        // Use model-specific parameters for streaming (matching non-streaming logic)
+        let max_tokens = match self.model.as_str() {
+            "GLM-4.6" => 65536, // Official default for GLM-4.6
+            "GLM-4.5" | "GLM-4.5-AIR" | "GLM-4.5-X" | "GLM-4.5-AIRX" | "GLM-4.5-FLASH" | "GLM-4.5V" => 65536, // Official default for GLM-4.5 series
+            "GLM-4-32B-0414-128K" => 16384, // Official default for older model
+            _ => 2048, // Fallback for other models
+        };
+
         let mut request_body = build_streaming_request_full(
             &self.model,
             &json_messages,
             tools_ref,
-            0.7,
-            2048,
+            0.7, // Use default temperature for GLM models
+            max_tokens,
             include_stream_options,
             include_tool_choice,
         );
-        
-        // Add tool_stream parameter for Z.AI when tools are present
-        // Note: tool_stream is ONLY supported by GLM-4.6
-        if use_tool_stream {
-            // Only add tool_stream if model supports it (GLM-4.6)
-            if self.model.contains("glm-4.6") || self.model.contains("glm-4-6") {
-                request_body["tool_stream"] = serde_json::json!(true);
-            } else {
-                // For non-GLM-4.6 models, remove tools from streaming request
-                // as they don't support tool_stream
-                request_body.as_object_mut().map(|obj| obj.remove("tools"));
+
+        // Ollama-specific request formatting
+        if is_ollama {
+            // Convert max_tokens to options.num_predict for Ollama
+            if let Some(obj) = request_body.as_object_mut() {
+                let max_tokens = obj.remove("max_tokens").and_then(|v| v.as_u64()).unwrap_or(2048);
+                let temperature = obj.remove("temperature").and_then(|v| v.as_f64()).unwrap_or(0.7);
+                obj.insert("options".to_string(), serde_json::json!({
+                    "num_predict": max_tokens,
+                    "temperature": temperature
+                }));
             }
         }
 
-        let request_url = format!("{}/chat/completions", self.endpoint);
-        
+        // Z.AI-specific request formatting
+        // Rebuild request with ONLY supported parameters to avoid error 1210
+        // Z.AI docs explicitly support: model, messages, stream, temperature, top_p, max_tokens, stop, user_id
+        // Note: Z.AI Coding API (api.z.ai/api/coding/...) may have different supported params
+        if is_zai {
+            let model = request_body.get("model").cloned().unwrap_or(serde_json::json!(self.model.clone()));
+            let messages = request_body.get("messages").cloned().unwrap_or_else(|| serde_json::json!([]));
+            let temperature = request_body.get("temperature").cloned().unwrap_or(serde_json::json!(0.7));
+            let max_tokens = request_body.get("max_tokens").cloned().unwrap_or(serde_json::json!(2048));
+            
+            // For Z.AI, we need to be very specific about which fields we include
+            // to avoid error 1210 (Invalid API parameter)
+            request_body = serde_json::json!({
+                "model": model,
+                "messages": messages,
+                "stream": true,
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            });
+            
+            // Note: We're not including tools in streaming requests for Z.AI
+            // to prevent error 1210
+            debug_print(&format!("DEBUG: Z.AI cleaned request body: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default()));
+        }
+
+        // Use provider-specific endpoint
+        let request_url = match self.provider {
+            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
+            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
+        };
+
         debug_print(&format!("DEBUG: Streaming request to {}", request_url));
-        debug_print(&format!("DEBUG: Provider type: {:?}, is_zai: {}", self.provider, is_zai));
+        debug_print(&format!("DEBUG: Provider type: {:?}, is_zai: {}, is_ollama: {}", self.provider, is_zai, is_ollama));
         debug_print(&format!("DEBUG: include_stream_options: {}, include_tool_choice: {}", include_stream_options, include_tool_choice));
-        debug_print(&format!("DEBUG: Z.AI streaming request body: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default()));
+        debug_print(&format!("DEBUG: Streaming request body: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default()));
         
         let mut request_builder = self
             .client
@@ -1600,8 +1710,15 @@ impl ApiClient {
         let response = request_builder.send().await?;
         
         if !response.status().is_success() {
+            let status = response.status();
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(anyhow::anyhow!("API request failed: {}", error_text));
+            // Truncate HTML error pages to show just the first meaningful part
+            let error_display = if error_text.contains("<!DOCTYPE") || error_text.contains("<html") {
+                format!("{} (HTML error page received - check if the endpoint URL is correct)", status)
+            } else {
+                error_text
+            };
+            return Err(anyhow::anyhow!("API request to {} failed: {}", request_url, error_display));
         }
 
         // Process the streaming response
@@ -1738,7 +1855,11 @@ impl ApiClient {
             request_body["reasoning_effort"] = serde_json::json!("medium");
         }
 
-        let request_url = format!("{}/chat/completions", self.endpoint);
+        // Use provider-specific endpoint
+        let request_url = match self.provider {
+            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
+            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
+        };
         let mut request_builder = self
             .client
             .post(&request_url)
@@ -1928,43 +2049,61 @@ impl ApiClient {
         
         debug_print(&format!("DEBUG: Z.AI non-streaming - {} of {} tools have simple params", filtered_tools.len(), tools.len()));
         
+        // Track if we've already added a system message
+        let mut has_system_message = false;
+
+        // For tool-enabled requests, we need to include tool_calls and tool results properly
+        // But filter out problematic message patterns
         let zai_messages: Vec<serde_json::Value> = messages
             .into_iter()
-            .map(|msg| {
-                let mut msg_obj = serde_json::json!({
-                    "role": msg.role,
-                });
+            .filter_map(|msg| {
+                // Handle system messages first
+                if msg.role == "system" {
+                    if has_system_message {
+                        // Skip duplicate system messages
+                        return None;
+                    }
+                    has_system_message = true;
+                    return Some(serde_json::json!({
+                        "role": "system",
+                        "content": msg.content.unwrap_or_default()
+                    }));
+                }
 
-                // Handle content field based on role and presence of tool_calls
-                // For assistant messages with tool_calls, content can be null
-                // For tool messages, content is required
-                match (msg.content, &msg.tool_calls, msg.role.as_str()) {
-                    (Some(content), _, _) => {
-                        msg_obj["content"] = serde_json::json!(content);
+                // Handle other message types
+                match msg.role.as_str() {
+                    "tool" => {
+                        // Tool result message - Z.AI expects this format
+                        Some(serde_json::json!({
+                            "role": "tool",
+                            "content": msg.content.unwrap_or_default(),
+                            "tool_call_id": msg.tool_call_id.unwrap_or_default()
+                        }))
                     }
-                    (None, Some(_), "assistant") => {
-                        // Assistant with tool_calls but no content - explicitly set null
-                        msg_obj["content"] = serde_json::json!(null);
-                    }
-                    (None, _, "tool") => {
-                        // Tool messages should always have content, but handle gracefully
-                        msg_obj["content"] = serde_json::json!("");
+                    "assistant" => {
+                        if let Some(tool_calls) = msg.tool_calls {
+                            // Assistant with tool calls
+                            Some(serde_json::json!({
+                                "role": "assistant",
+                                "content": msg.content.unwrap_or_default(), // Ensure content is not None
+                                "tool_calls": tool_calls
+                            }))
+                        } else {
+                            // Regular assistant message
+                            Some(serde_json::json!({
+                                "role": "assistant",
+                                "content": msg.content.unwrap_or_default()
+                            }))
+                        }
                     }
                     _ => {
-                        // For other cases (user, system), content is typically required
-                        msg_obj["content"] = serde_json::json!("");
+                        // User and other message types
+                        Some(serde_json::json!({
+                            "role": msg.role,
+                            "content": msg.content.unwrap_or_default()
+                        }))
                     }
                 }
-
-                if let Some(tool_calls) = msg.tool_calls {
-                    msg_obj["tool_calls"] = serde_json::json!(tool_calls);
-                }
-
-                if let Some(tool_call_id) = msg.tool_call_id {
-                    msg_obj["tool_call_id"] = serde_json::json!(tool_call_id);
-                }
-
-                msg_obj
             })
             .collect();
 
@@ -2001,14 +2140,24 @@ impl ApiClient {
             .build()
             .expect("Failed to create Z.AI HTTP client");
 
+        // Use provider-specific endpoint
+        let endpoint = match self.provider {
+            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
+            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
+        };
         let mut request_builder = zai_client
-            .post(format!("{}/chat/completions", self.endpoint))
+            .post(endpoint)
             .json(&request);
 
         // Log the outgoing request
         let request_headers = reqwest::header::HeaderMap::new();
         let body_str = serde_json::to_string_pretty(&request).unwrap_or_default();
-        log_http_request("POST", &format!("{}/chat/completions", self.endpoint), &request_headers, Some(&body_str));
+        // Use provider-specific endpoint for logging
+        let log_url = match self.provider {
+            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
+            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
+        };
+        log_http_request("POST", &log_url, &request_headers, Some(&body_str));
 
         if !self.api_key.is_empty() {
             request_builder =
@@ -2167,6 +2316,7 @@ mod tests {
             content: Some(content.to_string()),
             tool_calls: None,
             tool_call_id: None,
+            tool_name: None,
         }
     }
 
@@ -2219,6 +2369,7 @@ mod tests {
             content: Some("I'll run a command".to_string()),
             tool_calls: Some(vec![tool_call.clone()]),
             tool_call_id: None,
+            tool_name: None,
         };
 
         // Test serialization
@@ -2397,6 +2548,7 @@ mod tests {
             content: None,
             tool_calls: None,
             tool_call_id: None,
+            tool_name: None,
         };
 
         let json_str = serde_json::to_string(&empty_message).unwrap();
@@ -2410,6 +2562,7 @@ mod tests {
             content: None,
             tool_calls: Some(vec![create_test_tool_call()]),
             tool_call_id: None,
+            tool_name: None,
         };
 
         let json_str = serde_json::to_string(&tool_only_message).unwrap();
@@ -2455,6 +2608,7 @@ mod tests {
             content: Some("Special chars: \"quotes\" and \n newlines \t tabs".to_string()),
             tool_calls: None,
             tool_call_id: None,
+            tool_name: None,
         };
 
         let json_str = serde_json::to_string(&special_message).unwrap();
@@ -2467,6 +2621,7 @@ mod tests {
             content: Some("Unicode: 🚀🎉中文字符".to_string()),
             tool_calls: None,
             tool_call_id: None,
+            tool_name: None,
         };
 
         let json_str = serde_json::to_string(&unicode_message).unwrap();

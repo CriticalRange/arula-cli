@@ -27,6 +27,7 @@ pub enum ConfigMenuItem {
     APIKey,
     ThinkingMode,
     WebSearch,
+    OllamaTools,
 }
 
 impl ConfigMenuItem {
@@ -38,7 +39,27 @@ impl ConfigMenuItem {
             ConfigMenuItem::APIKey,
             ConfigMenuItem::ThinkingMode,
             ConfigMenuItem::WebSearch,
+            ConfigMenuItem::OllamaTools,
         ]
+    }
+
+    /// Get items based on current provider (some items only show for specific providers)
+    pub fn for_provider(provider: &str) -> Vec<Self> {
+        let mut items = vec![
+            ConfigMenuItem::AIProvider,
+            ConfigMenuItem::AIModel,
+            ConfigMenuItem::APIUrl,
+            ConfigMenuItem::APIKey,
+            ConfigMenuItem::ThinkingMode,
+            ConfigMenuItem::WebSearch,
+        ];
+
+        // Only show OllamaTools for Ollama provider
+        if provider.to_lowercase() == "ollama" {
+            items.push(ConfigMenuItem::OllamaTools);
+        }
+
+        items
     }
 
     pub fn label(&self) -> &str {
@@ -49,6 +70,7 @@ impl ConfigMenuItem {
             ConfigMenuItem::APIKey => "API Key",
             ConfigMenuItem::ThinkingMode => "Thinking Mode",
             ConfigMenuItem::WebSearch => "Web Search",
+            ConfigMenuItem::OllamaTools => "Ollama Tools",
         }
     }
 
@@ -60,6 +82,7 @@ impl ConfigMenuItem {
             ConfigMenuItem::APIKey => "Configure API authentication key",
             ConfigMenuItem::ThinkingMode => "Toggle thinking mode (show AI reasoning)",
             ConfigMenuItem::WebSearch => "Toggle web search provider (DuckDuckGo/Z.AI)",
+            ConfigMenuItem::OllamaTools => "Enable/disable tool calling for Ollama models",
         }
     }
 }
@@ -127,6 +150,8 @@ impl ConfigMenu {
         let mut needs_render = true; // Render first time
 
         loop {
+            // Update items based on current provider (OllamaTools only for Ollama)
+            self.items = ConfigMenuItem::for_provider(&app.config.active_provider);
             // Ensure we don't start on non-editable API URL (index 2)
             if self.state.selected_index == 2 && !app.config.is_field_editable(crate::utils::config::ProviderField::ApiUrl) {
                 self.state.selected_index = if self.state.selected_index + 1 < self.items.len() {
@@ -258,7 +283,11 @@ impl ConfigMenu {
             "DuckDuckGo"
         };
 
-        let display_options = [format!("Provider: {}", MenuUtils::truncate_text(&config.active_provider, max_item_width.saturating_sub(11))),
+        let tools_enabled = config.get_tools_enabled();
+        let is_ollama = config.active_provider.to_lowercase() == "ollama";
+        
+        let mut display_options = vec![
+            format!("Provider: {}", MenuUtils::truncate_text(&config.active_provider, max_item_width.saturating_sub(11))),
             format!("Model: {}", MenuUtils::truncate_text(&config.get_model(), max_item_width.saturating_sub(9))),
             format!("API URL: {}", MenuUtils::truncate_text(&config.get_active_provider_config()
                 .and_then(|c| c.api_url.clone())
@@ -272,7 +301,13 @@ impl ConfigMenu {
                 }
             ),
             format!("Thinking: {}", if thinking_enabled { "Enabled" } else { "Disabled" }),
-            format!("Web Search: {} ({})", if web_search_enabled { "Enabled" } else { "Disabled" }, web_search_provider)];
+            format!("Web Search: {} ({})", if web_search_enabled { "Enabled" } else { "Disabled" }, web_search_provider),
+        ];
+        
+        // Add Ollama Tools option only for Ollama provider
+        if is_ollama {
+            display_options.push(format!("Ollama Tools: {}", if tools_enabled { "Enabled" } else { "Disabled" }));
+        }
 
         let menu_height = 14; // Increased height to accommodate new menu items
         let start_x = (cols - menu_width) / 2;
@@ -461,6 +496,10 @@ impl ConfigMenu {
                 };
                 (Some(format!("{} ({})", if enabled { "Enabled" } else { "Disabled" }, provider)), item.description().to_string())
             }
+            ConfigMenuItem::OllamaTools => {
+                let enabled = app.config.get_tools_enabled();
+                (Some(if enabled { "Enabled" } else { "Disabled" }.to_string()), item.description().to_string())
+            }
         }
     }
 
@@ -496,7 +535,6 @@ impl ConfigMenu {
                 }
                 ConfigMenuItem::AIModel => {
                     self.configure_model(app, output)?;
-                    // Clear any pending events that might have been generated during the model selector
                     while crossterm::event::poll(Duration::from_millis(0))? {
                         let _ = crossterm::event::read()?;
                     }
@@ -508,7 +546,6 @@ impl ConfigMenu {
                 }
                 ConfigMenuItem::APIKey => {
                     self.api_key_selector.show(app, output)?;
-                    // Clear any pending events that might have been generated during the API key selector
                     while crossterm::event::poll(Duration::from_millis(0))? {
                         let _ = crossterm::event::read()?;
                     }
@@ -522,18 +559,20 @@ impl ConfigMenu {
                     self.toggle_web_search(app, output)?;
                     Ok(MenuAction::Continue)
                 }
+                ConfigMenuItem::OllamaTools => {
+                    self.toggle_ollama_tools(app, output)?;
+                    Ok(MenuAction::Continue)
+                }
             }
         } else {
             Ok(MenuAction::Continue)
         }
     }
 
-    /// Configure AI model
     fn configure_model(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
         self.model_selector.show_model_selector(app, output)
     }
 
-    /// Configure API URL
     fn configure_api_url(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
         let current_url = app.config.get_active_provider_config()
             .and_then(|c| c.api_url.clone())
@@ -543,63 +582,55 @@ impl ConfigMenu {
         } else {
             format!("Enter API URL (current: {}):", current_url)
         };
-
         if let Some(new_url) = self.dialogs.input_dialog(&prompt, Some(&current_url), output)? {
             if !new_url.trim().is_empty() {
                 if let Some(config) = app.config.get_active_provider_config_mut() {
-            config.api_url = Some(new_url.to_string());
-        }
-                output.print_system(&format!("API URL updated to: {}", new_url))?;
+                    config.api_url = Some(new_url.to_string());
+                }
+                // Save config to disk and reinitialize client
+                if let Err(e) = app.config.save() {
+                    output.print_error(&format!("Failed to save configuration: {}", e))?;
+                } else {
+                    output.print_system(&format!("API URL updated to: {}", new_url))?;
+                    // Reinitialize agent client with new URL
+                    let _ = app.initialize_agent_client();
+                }
             }
         }
         Ok(())
     }
 
-
-    /// Toggle thinking mode for AI providers
     fn toggle_thinking_mode(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
         let current_enabled = app.config.get_active_provider_config()
             .and_then(|c| c.thinking_enabled)
             .unwrap_or(false);
-
         let new_enabled = !current_enabled;
-
         if let Some(config) = app.config.get_active_provider_config_mut() {
             config.thinking_enabled = Some(new_enabled);
         }
-
-        // Save the configuration to persist the change
         if let Err(e) = app.config.save() {
             output.print_error(&format!("Failed to save configuration: {}", e))?;
         }
-
         let provider_name = &app.config.active_provider;
         if new_enabled {
             output.print_system(&format!("💭 Thinking mode enabled for {} - AI will show reasoning", provider_name))?;
         } else {
             output.print_system(&format!("💭 Thinking mode disabled for {} - AI will give direct answers", provider_name))?;
         }
-
         Ok(())
     }
 
-    /// Toggle web search provider and settings
     fn toggle_web_search(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
         let current_enabled = app.config.get_active_provider_config()
             .and_then(|c| c.web_search_enabled)
             .unwrap_or(false);
-
         let new_enabled = !current_enabled;
-
         if let Some(config) = app.config.get_active_provider_config_mut() {
             config.web_search_enabled = Some(new_enabled);
         }
-
-        // Save the configuration to persist the change
         if let Err(e) = app.config.save() {
             output.print_error(&format!("Failed to save configuration: {}", e))?;
         }
-
         if new_enabled {
             let provider = if app.config.active_provider.contains("z.ai") {
                 output.print_system("🔍 Web search enabled using Z.AI search")?;
@@ -612,11 +643,27 @@ impl ConfigMenu {
         } else {
             output.print_system("🔍 Web search disabled")?;
         }
-
         Ok(())
     }
 
-    /// Reset menu state
+    fn toggle_ollama_tools(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
+        let current_enabled = app.config.get_tools_enabled();
+        let new_enabled = !current_enabled;
+        if let Err(e) = app.config.set_tools_enabled(new_enabled) {
+            output.print_error(&format!("Failed to save configuration: {}", e))?;
+            return Ok(());
+        }
+        // Reinitialize agent client with new setting
+        let _ = app.initialize_agent_client();
+        if new_enabled {
+            output.print_system("🔧 Ollama tools enabled - function calling will be sent to Ollama models")?;
+            output.print_system("⚠️  Note: Not all Ollama models support tools. If you get errors, disable this.")?;
+        } else {
+            output.print_system("🔧 Ollama tools disabled - function calling will not be used")?;
+        }
+        Ok(())
+    }
+
     pub fn reset(&mut self) {
         self.state.reset();
     }

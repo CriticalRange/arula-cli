@@ -248,28 +248,34 @@ The user will manually rebuild after exiting the application.
         prompt_parts.push(r#"
 ## Tool Usage
 
-You have access to various tools that you can use to help the user. When you need to perform actions like:
-- Running shell commands
-- Reading or writing files
-- Searching the codebase
-- Listing directories
-
-**Use the available tools directly through function calls.** The tools will be executed automatically and their results returned to you.
+You have access to tools for file operations, shell commands, and more. Use them when the user's request requires it.
 
 ### Available Tools:
-- `execute_bash`: Run shell commands (use for: git, npm, cargo, etc.)
-- `read_file`: Read file contents
+- `execute_bash`: Run shell commands (git, npm, cargo, ls, cat, etc.)
+- `read_file`: Read file contents  
 - `write_file`: Create or overwrite files
 - `edit_file`: Make targeted edits to existing files
 - `list_directory`: List files and directories
 - `search_files`: Search for patterns in files
-- `web_search`: Search the web for information
 
-### Guidelines:
-1. **Use tools proactively** - Don't ask for permission to use tools, just use them
-2. **Chain tools as needed** - Read a file, modify it, write it back
-3. **Handle errors gracefully** - If a tool fails, try an alternative approach
-4. **Be efficient** - Use the most appropriate tool for each task
+### When to use tools:
+- User asks to run a command → call execute_bash
+- User asks to read/view a file → call read_file
+- User asks to list/show files → call list_directory
+- User asks to edit/modify a file → call read_file, then edit_file
+- User asks to analyze code → call read_file to read it first
+
+### Important:
+- Only use tools when the user's request requires an action
+- Don't use tools just to demonstrate capabilities
+- For simple questions or conversation, just respond normally
+- When you do need a tool, call it directly without asking permission
+
+### Tool Call Format (CRITICAL):
+- DO NOT output tool calls as text like `<function=tool_name>` or `</function>`
+- Tools are called through the API's function calling mechanism, not as text output
+- If you find yourself typing `<function=` you are doing it WRONG
+- Just describe what you want to do and the system will make the tool call for you
 "#.to_string());
 
         // Add built-in tools information
@@ -540,6 +546,7 @@ You have access to various tools that you can use to help the user. When you nee
                     content: Some(m.content.clone()),
                     tool_calls: None,
                     tool_call_id: None,
+                    tool_name: None,
                 }
             })
             .collect();
@@ -645,6 +652,12 @@ You have access to various tools that you can use to help the user. When you nee
                                                 // Clone result data for all uses
                                                 let result_data = result.data.clone();
 
+                                                // Look up tool name from tracked tool calls
+                                                let tool_name = tool_calls_list.iter()
+                                                    .find(|(id, _, _)| id == &tool_call_id)
+                                                    .map(|(_, name, _)| name.clone())
+                                                    .unwrap_or_else(|| "unknown".to_string());
+
                                                 let _ = tx.send(AiResponse::AgentToolResult {
                                                     tool_call_id: tool_call_id.clone(),
                                                     success: result.success,
@@ -654,7 +667,7 @@ You have access to various tools that you can use to help the user. When you nee
                                                 // Send tracking command for tool result
                                                 let _ = track_tx.send(TrackingCommand::ToolResult {
                                                     tool_call_id,
-                                                    tool_name: "unknown".to_string(),
+                                                    tool_name,
                                                     result: result_data.clone(),
                                                     success: result.success,
                                                     execution_time_ms: 100,
@@ -845,14 +858,8 @@ You have access to various tools that you can use to help the user. When you nee
                                 ),
                             ));
 
-                            // Track tool result in conversation (assuming 100ms execution time as placeholder)
-                            self.track_tool_result(
-                                tool_call_id.clone(),
-                                "unknown".to_string(), // Tool name not available in this context
-                                result.clone(),
-                                *success,
-                                100
-                            );
+                            // Note: Tool result tracking with proper name is handled via TrackingCommand
+                            // This is a fallback that shouldn't normally be hit since we track via the async task
                         }
                         AiResponse::AgentStreamEnd => {
                             if let Some(full_message) = self.current_streaming_message.take() {
@@ -1381,9 +1388,9 @@ You have access to various tools that you can use to help the user. When you nee
     async fn fetch_zai_models_async(_api_key: &str) -> Vec<String> {
         // Z.AI doesn't have a public models endpoint, so return known models
         vec![
-            "glm-4.6".to_string(),
-            "glm-4.5".to_string(),
-            "glm-4.5-air".to_string(),
+            "GLM-4.6".to_string(),
+            "GLM-4.5".to_string(),
+            "GLM-4.5-AIR".to_string(),
         ]
     }
 

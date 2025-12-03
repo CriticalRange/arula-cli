@@ -48,6 +48,11 @@ pub struct ProviderConfig {
     /// When disabled, waits for complete response before displaying
     #[serde(skip_serializing_if = "Option::is_none")]
     pub streaming: Option<bool>,
+    
+    /// Enable tools/function calling for Ollama (default: false)
+    /// Some Ollama models support tool calling, but it may cause issues with others
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,7 +81,7 @@ impl AiConfig {
         match provider.to_lowercase().as_str() {
             "z.ai coding plan" | "z.ai" | "zai" => AiConfig {
                 provider: "z.ai coding plan".to_string(),
-                model: "glm-4.6".to_string(),
+                model: "GLM-4.6".to_string(),
                 api_url: "https://api.z.ai/api/coding/paas/v4".to_string(),
                 api_key: std::env::var("ZAI_API_KEY").unwrap_or_default(),
             },
@@ -137,7 +142,7 @@ impl AiConfig {
     /// Check if a field is editable for the current provider
     pub fn is_field_editable(&self, field: ProviderField) -> bool {
         match self.provider.to_lowercase().as_str() {
-            "custom" => true, // All fields editable for custom
+            "custom" | "ollama" => true, // All fields editable for custom and ollama
             _ => match field {
                 ProviderField::Model => true,  // Model always editable
                 ProviderField::ApiKey => true, // API key always editable
@@ -246,6 +251,7 @@ impl Config {
                 enable_usage_tracking: None,
                 web_search_enabled: None,
                 streaming: None,
+                tools_enabled: None,
             };
 
             self.providers.insert(legacy.provider.clone(), provider_config);
@@ -280,6 +286,7 @@ impl Config {
                     enable_usage_tracking: Some(true),
                     web_search_enabled: Some(false),
                     streaming: None,
+                    tools_enabled: None,
                 },
             );
         }
@@ -353,6 +360,25 @@ impl Config {
         Ok(())
     }
 
+    /// Get tools enabled setting for the active provider (primarily for Ollama)
+    /// Returns false by default - tools are opt-in for Ollama
+    pub fn get_tools_enabled(&self) -> bool {
+        if let Some(config) = self.get_active_provider_config() {
+            config.tools_enabled.unwrap_or(false)
+        } else {
+            false
+        }
+    }
+
+    /// Set tools enabled for the active provider
+    pub fn set_tools_enabled(&mut self, enabled: bool) -> Result<()> {
+        if let Some(config) = self.get_active_provider_config_mut() {
+            config.tools_enabled = Some(enabled);
+        }
+        self.save_to_file(Self::get_config_path())?;
+        Ok(())
+    }
+
     /// Get Z.AI usage tracking enabled setting
     pub fn get_zai_usage_tracking_enabled(&self) -> Option<bool> {
         if let Some(config) = self.get_active_provider_config() {
@@ -390,7 +416,7 @@ impl Config {
             .unwrap_or_else(|_| "https://api.z.ai/api/paas/v4/".to_string());
 
         let model = std::env::var("ZAI_MODEL")
-            .unwrap_or_else(|_| "glm-4.6".to_string());
+            .unwrap_or_else(|_| "GLM-4.6".to_string());
 
         let mut config = Self::default();
         config.active_provider = "z.ai coding plan".to_string();
@@ -418,6 +444,7 @@ impl Config {
             streaming: std::env::var("ARULA_STREAMING")
                 .ok()
                 .and_then(|v| v.parse().ok()),
+            tools_enabled: None,
         });
 
         Ok(config)
@@ -500,7 +527,7 @@ impl Config {
     /// Check if a field is editable for the current provider
     pub fn is_field_editable(&self, field: ProviderField) -> bool {
         match self.active_provider.to_lowercase().as_str() {
-            "custom" => true, // All fields editable for custom
+            "custom" | "ollama" => true, // All fields editable for custom and ollama
             _ => match field {
                 ProviderField::Model => true,  // Model always editable
                 ProviderField::ApiKey => true, // API key always editable
@@ -530,6 +557,7 @@ impl Config {
                 enable_usage_tracking: None,
                 web_search_enabled: None,
                 streaming: None,
+                tools_enabled: None,
             },
         );
         Ok(())
@@ -552,6 +580,7 @@ impl Config {
                 enable_usage_tracking: None,
                 web_search_enabled: None,
                 streaming: None, // Defaults to true when not set
+                tools_enabled: None,
             },
         );
 
@@ -580,6 +609,7 @@ impl Config {
                 enable_usage_tracking: None,
                 web_search_enabled: None,
                 streaming: None, // Defaults to true when not set
+                tools_enabled: None,
             },
         );
 
@@ -606,6 +636,7 @@ impl Config {
                 enable_usage_tracking: None,
                 web_search_enabled: None,
                 streaming: None,
+                tools_enabled: None,
             },
         );
 

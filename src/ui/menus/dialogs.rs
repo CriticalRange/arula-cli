@@ -255,9 +255,6 @@ impl Dialogs {
         let dialog_width = 60.min(cols);
         let dialog_height = 6;
 
-        // Clear screen
-        stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
-
         // Calculate center position
         let start_col = (cols - dialog_width) / 2;
         let start_row = (rows - dialog_height) / 2;
@@ -266,12 +263,12 @@ impl Dialogs {
         let frame = MenuUtils::render_box("Input", dialog_width, dialog_height);
         for (i, line) in frame.iter().enumerate() {
             stdout().execute(crossterm::cursor::MoveTo(start_col, start_row + i as u16))?;
-            println!("{}", line);
+            print!("{}", line);
         }
 
         // Render prompt
         stdout().execute(crossterm::cursor::MoveTo(start_col + 2, start_row + 2))?;
-        println!("{}", style(prompt).yellow());
+        print!("{}", style(prompt).yellow());
 
         // Render input field
         let input_row = start_row + 3;
@@ -282,13 +279,13 @@ impl Dialogs {
         let field_width = dialog_width - 4;
         stdout().execute(crossterm::style::SetBackgroundColor(Color::DarkGrey))?;
         for _ in 0..field_width {
-            println!(" ");
+            print!(" ");
         }
         stdout().execute(crossterm::style::ResetColor)?;
 
         // Input text
         stdout().execute(crossterm::cursor::MoveTo(input_col, input_row))?;
-        println!("{}", style(&input).white());
+        print!("{}", style(input).white());
 
         // Cursor
         stdout().execute(crossterm::cursor::MoveTo(input_col + cursor_pos as u16, input_row))?;
@@ -320,12 +317,12 @@ impl Dialogs {
         let frame = MenuUtils::render_box("Password", dialog_width, dialog_height);
         for (i, line) in frame.iter().enumerate() {
             stdout().execute(crossterm::cursor::MoveTo(start_col, start_row + i as u16))?;
-            println!("{}", line);
+            print!("{}", line);
         }
 
         // Render prompt
         stdout().execute(crossterm::cursor::MoveTo(start_col + 2, start_row + 2))?;
-        println!("{}", style(prompt).yellow());
+        print!("{}", style(prompt).yellow());
 
         // Render password field (show bullets instead of actual characters)
         let password_row = start_row + 3;
@@ -336,14 +333,14 @@ impl Dialogs {
         let field_width = dialog_width - 4;
         stdout().execute(crossterm::style::SetBackgroundColor(Color::DarkGrey))?;
         for _ in 0..field_width {
-            println!(" ");
+            print!(" ");
         }
         stdout().execute(crossterm::style::ResetColor)?;
 
         // Password bullets
         stdout().execute(crossterm::cursor::MoveTo(password_col, password_row))?;
         for _ in 0..password_len {
-            println!("{}", style("•").white());
+            print!("{}", style("•").white());
         }
 
         // Cursor at end

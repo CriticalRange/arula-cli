@@ -97,6 +97,8 @@ impl ApiKeySelector {
                                                     output.print_error(&format!("Failed to save config: {}", e))?;
                                                 } else {
                                                     output.print_system("✅ API key updated successfully")?;
+                                                    // Reinitialize agent client with new API key
+                                                    let _ = app.initialize_agent_client();
                                                 }
                                             } else if !has_key {
                                                 output.print_error("⚠️ API key cannot be empty")?;
@@ -111,6 +113,8 @@ impl ApiKeySelector {
                                                 output.print_error(&format!("Failed to save config: {}", e))?;
                                             } else {
                                                 output.print_system("✅ API key cleared")?;
+                                                // Reinitialize agent client
+                                                let _ = app.initialize_agent_client();
                                             }
                                         }
                                     }

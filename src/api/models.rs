@@ -466,9 +466,9 @@ impl ModelFetcher for ZaiFetcher {
     async fn fetch_models(&self, _api_key: &str, _api_url: Option<&str>) -> Vec<String> {
         // Z.AI doesn't have a public models endpoint
         vec![
-            "glm-4.6".to_string(),
-            "glm-4.5".to_string(),
-            "glm-4.5-air".to_string(),
+            "GLM-4.6".to_string(),
+            "GLM-4.5".to_string(),
+            "GLM-4.5-AIR".to_string(),
         ]
     }
 
