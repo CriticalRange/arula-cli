@@ -296,7 +296,9 @@ impl AgentClient {
 
             // Send the complete text response
             if !response.response.is_empty() {
-                let _ = tx.send(ContentBlock::Text { text: response.response.clone() });
+                let _ = tx.send(ContentBlock::Text {
+                    text: response.response.clone(),
+                });
             }
 
             // Check for tool calls
@@ -305,7 +307,11 @@ impl AgentClient {
                     // Add assistant message with tool calls
                     current_messages.push(ChatMessage {
                         role: "assistant".to_string(),
-                        content: if response.response.is_empty() { None } else { Some(response.response.clone()) },
+                        content: if response.response.is_empty() {
+                            None
+                        } else {
+                            Some(response.response.clone())
+                        },
                         tool_calls: Some(calls.clone()),
                         tool_call_id: None,
                         tool_name: None,
@@ -321,8 +327,9 @@ impl AgentClient {
                         ));
 
                         // Parse arguments and execute
-                        let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
-                            .unwrap_or(json!({}));
+                        let args: serde_json::Value =
+                            serde_json::from_str(&tool_call.function.arguments)
+                                .unwrap_or(json!({}));
 
                         let tool_result = tool_registry
                             .execute_tool(&tool_call.function.name, args.clone())
@@ -335,7 +342,7 @@ impl AgentClient {
                                     tool_call.id.clone(),
                                     result.clone(),
                                 ));
-                                
+
                                 // Format for message history
                                 if result.success {
                                     result.data.to_string()
@@ -344,7 +351,8 @@ impl AgentClient {
                                 }
                             }
                             None => {
-                                let error_msg = format!("Tool not found: {}", tool_call.function.name);
+                                let error_msg =
+                                    format!("Tool not found: {}", tool_call.function.name);
                                 let _ = tx.send(ContentBlock::tool_result(
                                     tool_call.id.clone(),
                                     crate::api::agent::ToolResult::error(error_msg.clone()),
@@ -397,7 +405,7 @@ impl AgentClient {
         tool_registry: &crate::api::agent::ToolRegistry,
     ) -> Result<()> {
         use crate::api::streaming::StreamEvent;
-        
+
         let mut current_messages = messages;
         let mut iterations = 0;
 
@@ -495,7 +503,11 @@ impl AgentClient {
                     // Add assistant message with tool calls
                     current_messages.push(ChatMessage {
                         role: "assistant".to_string(),
-                        content: if accumulated_text.is_empty() { None } else { Some(accumulated_text.clone()) },
+                        content: if accumulated_text.is_empty() {
+                            None
+                        } else {
+                            Some(accumulated_text.clone())
+                        },
                         tool_calls: Some(calls.clone()),
                         tool_call_id: None,
                         tool_name: None,
@@ -511,8 +523,9 @@ impl AgentClient {
                         ));
 
                         // Parse arguments and execute
-                        let args: serde_json::Value = serde_json::from_str(&tool_call.function.arguments)
-                            .unwrap_or(json!({}));
+                        let args: serde_json::Value =
+                            serde_json::from_str(&tool_call.function.arguments)
+                                .unwrap_or(json!({}));
 
                         let tool_result = tool_registry
                             .execute_tool(&tool_call.function.name, args.clone())
@@ -525,7 +538,7 @@ impl AgentClient {
                                     tool_call.id.clone(),
                                     result.clone(),
                                 ));
-                                
+
                                 // Format for message history
                                 if result.success {
                                     result.data.to_string()
@@ -534,7 +547,8 @@ impl AgentClient {
                                 }
                             }
                             None => {
-                                let error_msg = format!("Tool not found: {}", tool_call.function.name);
+                                let error_msg =
+                                    format!("Tool not found: {}", tool_call.function.name);
                                 let _ = tx.send(ContentBlock::tool_result(
                                     tool_call.id.clone(),
                                     ToolResult::error(error_msg.clone()),
@@ -583,12 +597,17 @@ impl AgentClient {
     /// Initialize MCP tools lazily (called when needed)
     async fn ensure_mcp_tools_initialized(&mut self) {
         // Check if MCP tools are already initialized by looking for MCP server tools
-        let has_mcp_tools = self.tool_registry.get_tools().iter().any(|tool| {
-            tool.starts_with("__mcp_") || tool.starts_with("mcp_")
-        });
+        let has_mcp_tools = self
+            .tool_registry
+            .get_tools()
+            .iter()
+            .any(|tool| tool.starts_with("__mcp_") || tool.starts_with("mcp_"));
 
         if !has_mcp_tools {
-            if let Err(e) = crate::tools::tools::initialize_mcp_tools(&mut self.tool_registry, &self.config).await {
+            if let Err(e) =
+                crate::tools::tools::initialize_mcp_tools(&mut self.tool_registry, &self.config)
+                    .await
+            {
                 eprintln!("⚠️ Failed to initialize MCP tools: {}", e);
             }
         }
@@ -597,7 +616,11 @@ impl AgentClient {
     /// Get available tools (with lazy MCP initialization)
     pub async fn get_available_tools(&mut self) -> Vec<String> {
         self.ensure_mcp_tools_initialized().await;
-        self.tool_registry.get_tools().into_iter().map(|s| s.to_string()).collect()
+        self.tool_registry
+            .get_tools()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     /// Get available tools (sync version without MCP initialization)
@@ -660,7 +683,7 @@ impl AgentClient {
                 tool_call_id: None,
                 tool_name: None,
             });
-            
+
             messages.push(ChatMessage {
                 role: "user".to_string(),
                 content: Some(message.to_string()),
@@ -684,7 +707,6 @@ impl AgentClient {
         debug: bool,
         tool_registry: &crate::api::agent::ToolRegistry,
     ) -> Result<()> {
-
         // Use the tools passed in (already filtered in query method)
         let tools = _tools;
 

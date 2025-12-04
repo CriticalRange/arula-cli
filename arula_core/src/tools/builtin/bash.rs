@@ -134,9 +134,12 @@ mod tests {
     #[tokio::test]
     async fn test_echo_command() {
         let tool = BashTool::new();
-        let result = tool.execute(BashParams {
-            command: "echo hello".to_string(),
-        }).await.unwrap();
+        let result = tool
+            .execute(BashParams {
+                command: "echo hello".to_string(),
+            })
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert!(result.stdout.contains("hello"));
@@ -146,9 +149,11 @@ mod tests {
     #[tokio::test]
     async fn test_empty_command_error() {
         let tool = BashTool::new();
-        let result = tool.execute(BashParams {
-            command: "   ".to_string(),
-        }).await;
+        let result = tool
+            .execute(BashParams {
+                command: "   ".to_string(),
+            })
+            .await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("empty"));
@@ -158,12 +163,14 @@ mod tests {
     async fn test_failing_command() {
         let tool = BashTool::new();
         // This command should fail on both Windows and Unix
-        let result = tool.execute(BashParams {
-            command: "exit 1".to_string(),
-        }).await.unwrap();
+        let result = tool
+            .execute(BashParams {
+                command: "exit 1".to_string(),
+            })
+            .await
+            .unwrap();
 
         assert!(!result.success);
         assert_eq!(result.exit_code, 1);
     }
 }
-

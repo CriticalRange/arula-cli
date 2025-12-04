@@ -35,8 +35,8 @@
 //! output.stream_ai_response("Hello!")?;
 //! ```
 
-pub mod handler;
 pub mod code_blocks;
+pub mod handler;
 pub mod markdown;
 pub mod spinners;
 pub mod tool_display;
@@ -55,4 +55,3 @@ pub const DEFAULT_TERMINAL_WIDTH: usize = 80;
 
 /// Maximum code block preview lines
 pub const MAX_CODE_PREVIEW_LINES: usize = 50;
-

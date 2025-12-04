@@ -54,7 +54,10 @@ impl ColorTheme {
 
     /// Primary style with background
     pub fn primary_on_background() -> Style {
-        Style::new().color256(PRIMARY_ANSI).on_color256(BACKGROUND_ANSI).bold()
+        Style::new()
+            .color256(PRIMARY_ANSI)
+            .on_color256(BACKGROUND_ANSI)
+            .bold()
     }
 
     /// Misc style with background for inline code
@@ -94,7 +97,10 @@ impl ColorTheme {
 
     /// Cursor/selection style
     pub fn selection() -> Style {
-        Style::new().color256(PRIMARY_ANSI).on_color256(SECONDARY_ANSI).bold()
+        Style::new()
+            .color256(PRIMARY_ANSI)
+            .on_color256(SECONDARY_ANSI)
+            .bold()
     }
 }
 

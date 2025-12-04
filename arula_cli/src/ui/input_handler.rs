@@ -1,12 +1,11 @@
 //! Async-first input handler with tokio integration
-//! 
+//!
 //! Provides non-blocking input handling that works seamlessly with async code.
 
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
-    execute,
-    queue,
+    execute, queue,
     terminal::{self, ClearType},
 };
 use std::collections::VecDeque;
@@ -71,7 +70,10 @@ impl InputBlocker {
 
     /// Check if there's queued input
     pub fn has_queued_input(&self) -> bool {
-        self.queued_input.lock().map(|q| q.is_some()).unwrap_or(false)
+        self.queued_input
+            .lock()
+            .map(|q| q.is_some())
+            .unwrap_or(false)
     }
 }
 
@@ -139,15 +141,15 @@ impl InputHandler {
         let prompt_len = self.prompt.chars().count();
         let buffer_len = self.buffer.chars().count();
         let total_len = prompt_len + buffer_len;
-        
+
         if total_len == 0 {
             return 1;
         }
-        
+
         // First line has prompt, subsequent lines are full width
         let first_line_chars = width.saturating_sub(prompt_len).min(buffer_len);
         let remaining_chars = buffer_len.saturating_sub(first_line_chars);
-        
+
         if remaining_chars == 0 {
             1
         } else {
@@ -166,15 +168,15 @@ impl InputHandler {
         let prompt_len = self.prompt.chars().count();
         let buffer_chars: Vec<char> = self.buffer.chars().collect();
         let buffer_len = buffer_chars.len();
-        
+
         // Calculate how many lines we need
         let num_lines = self.calculate_input_lines(width);
         let max_lines = 5.min(height as usize / 4); // Limit to 5 lines or 1/4 of screen
         let display_lines = num_lines.min(max_lines);
-        
+
         // Calculate starting row for input area
         let start_row = height.saturating_sub(display_lines as u16);
-        
+
         // Clear the input area
         for i in 0..display_lines {
             queue!(
@@ -183,34 +185,36 @@ impl InputHandler {
                 terminal::Clear(ClearType::CurrentLine),
             )?;
         }
-        
+
         // Move to start of input area
         queue!(io::stdout(), cursor::MoveTo(0, start_row))?;
-        
+
         // Print prompt
         queue!(io::stdout(), crossterm::style::Print(&self.prompt))?;
-        
+
         // Print buffer content with wrapping
         let mut current_col = prompt_len;
         let mut current_row = start_row;
         let mut char_index = 0;
-        
+
         // If buffer is too long, scroll to show cursor
         let chars_before_cursor = self.cursor_pos;
         let max_visible_chars = display_lines * width - prompt_len;
-        
-        let scroll_offset = if buffer_len > max_visible_chars && chars_before_cursor > max_visible_chars / 2 {
-            // Scroll to keep cursor roughly in the middle
-            (chars_before_cursor - max_visible_chars / 2).min(buffer_len.saturating_sub(max_visible_chars))
-        } else {
-            0
-        };
-        
+
+        let scroll_offset =
+            if buffer_len > max_visible_chars && chars_before_cursor > max_visible_chars / 2 {
+                // Scroll to keep cursor roughly in the middle
+                (chars_before_cursor - max_visible_chars / 2)
+                    .min(buffer_len.saturating_sub(max_visible_chars))
+            } else {
+                0
+            };
+
         for (i, &ch) in buffer_chars.iter().enumerate().skip(scroll_offset) {
             if current_row >= height {
                 break;
             }
-            
+
             // Check if we need to wrap
             if current_col >= width {
                 current_row += 1;
@@ -220,29 +224,29 @@ impl InputHandler {
                 }
                 queue!(io::stdout(), cursor::MoveTo(0, current_row))?;
             }
-            
+
             queue!(io::stdout(), crossterm::style::Print(ch))?;
             current_col += 1;
             char_index = i + 1;
         }
-        
+
         // Show indicator if there's more content
         if scroll_offset > 0 || char_index < buffer_len {
             // There's hidden content
         }
-        
+
         // Calculate cursor position
         let cursor_pos_in_view = self.cursor_pos.saturating_sub(scroll_offset);
         let cursor_row;
         let cursor_col;
-        
+
         if cursor_pos_in_view == 0 {
             cursor_row = start_row;
             cursor_col = prompt_len as u16;
         } else {
             // First line can hold (width - prompt_len) chars
             let first_line_capacity = width.saturating_sub(prompt_len);
-            
+
             if cursor_pos_in_view <= first_line_capacity {
                 cursor_row = start_row;
                 cursor_col = (prompt_len + cursor_pos_in_view) as u16;
@@ -255,12 +259,12 @@ impl InputHandler {
                 cursor_col = col_in_line as u16;
             }
         }
-        
+
         // Position cursor
         if cursor_row < height {
             queue!(io::stdout(), cursor::MoveTo(cursor_col, cursor_row))?;
         }
-        
+
         io::stdout().flush()?;
         Ok(())
     }
@@ -274,11 +278,7 @@ impl InputHandler {
         let (_, _height) = terminal::size()?;
 
         // Move cursor up one line to make room for output
-        queue!(
-            io::stdout(),
-            cursor::MoveToColumn(0),
-            cursor::MoveUp(1),
-        )?;
+        queue!(io::stdout(), cursor::MoveToColumn(0), cursor::MoveUp(1),)?;
 
         io::stdout().flush()?;
         Ok(())
@@ -407,12 +407,18 @@ impl InputHandler {
                 self.prompt.clone()
             } else if self.cursor_pos < available_width {
                 // Cursor is in the first screen position
-                let visible_end = self.buffer.chars().take(available_width).collect::<String>();
+                let visible_end = self
+                    .buffer
+                    .chars()
+                    .take(available_width)
+                    .collect::<String>();
                 format!("{}{}", self.prompt, visible_end)
             } else {
                 // Cursor is beyond the first screen - scroll to keep cursor visible
                 let scroll_start = self.cursor_pos - available_width + 1;
-                let visible_chars: String = self.buffer.chars()
+                let visible_chars: String = self
+                    .buffer
+                    .chars()
                     .skip(scroll_start)
                     .take(available_width)
                     .collect();
@@ -466,7 +472,7 @@ impl InputHandler {
                     self.cursor_pos = 0;
                     self.history_index = None;
                     self.temp_buffer = None;
-                    
+
                     // Show queued feedback
                     self.show_queued_feedback()?;
                     return Ok(None);
@@ -781,7 +787,7 @@ impl InputHandler {
     pub async fn read_input_async(&mut self) -> io::Result<Option<String>> {
         // Draw initial input line
         self.draw_input_line()?;
-        
+
         loop {
             // Poll for key events (non-blocking)
             match self.poll_key_event() {
@@ -871,7 +877,7 @@ pub enum InputEvent {
 pub struct SharedInputState {
     buffer: Arc<Mutex<String>>,
     cursor_pos: Arc<Mutex<usize>>,
-    output_active: Arc<Mutex<bool>>,  // True when AI output is streaming
+    output_active: Arc<Mutex<bool>>, // True when AI output is streaming
     prompt: String,
     use_full_duplex: bool,
 }
@@ -926,20 +932,20 @@ impl SharedInputState {
         if !self.use_full_duplex {
             return Ok(());
         }
-        
+
         let buffer = self.get_buffer();
         let cursor_pos = self.get_cursor_pos();
-        
+
         // Move to new line and print prompt with any buffered content
         print!("\n{}{}", self.prompt, buffer);
-        
+
         // Position cursor correctly (only if not at end)
         let buffer_len = buffer.chars().count();
         if cursor_pos < buffer_len {
             let move_back = buffer_len - cursor_pos;
             print!("\x1b[{}D", move_back);
         }
-        
+
         io::stdout().flush()?;
         Ok(())
     }
@@ -959,7 +965,7 @@ impl AsyncInputReader {
         let (tx, rx) = mpsc::unbounded_channel();
         let shared_state = SharedInputState::new(&handler.prompt);
         let state_clone = shared_state.clone();
-        
+
         // Clone handler fields we need
         let prompt = handler.prompt.clone();
         let mut buffer = handler.buffer.clone();
@@ -968,11 +974,11 @@ impl AsyncInputReader {
         let mut history_index: Option<usize> = None;
         let mut temp_buffer: Option<String> = None;
         let input_blocker = handler.input_blocker.clone();
-        
+
         let handle = tokio::spawn(async move {
             // Don't print initial prompt - main.rs already printed startup messages
             // The prompt will be shown after the first redraw
-            
+
             loop {
                 // Poll for key events (non-blocking)
                 if event::poll(Duration::from_millis(0)).unwrap_or(false) {
@@ -980,23 +986,27 @@ impl AsyncInputReader {
                         if key.kind != KeyEventKind::Press {
                             continue;
                         }
-                        
+
                         match key.code {
                             KeyCode::Enter => {
                                 if buffer.trim().is_empty() {
                                     continue;
                                 }
-                                
+
                                 // Check if blocked - queue input instead
                                 if input_blocker.is_blocked() {
                                     input_blocker.queue_input(buffer.clone());
                                     buffer.clear();
                                     cursor_pos = 0;
-                                    
+
                                     // Update shared state
-                                    if let Ok(mut b) = state_clone.buffer.lock() { *b = buffer.clone(); }
-                                    if let Ok(mut p) = state_clone.cursor_pos.lock() { *p = cursor_pos; }
-                                    
+                                    if let Ok(mut b) = state_clone.buffer.lock() {
+                                        *b = buffer.clone();
+                                    }
+                                    if let Ok(mut p) = state_clone.cursor_pos.lock() {
+                                        *p = cursor_pos;
+                                    }
+
                                     // Show queued feedback briefly
                                     print!("\r\x1b[K📝 Message queued");
                                     let _ = io::stdout().flush();
@@ -1005,27 +1015,30 @@ impl AsyncInputReader {
                                     let _ = io::stdout().flush();
                                     continue;
                                 }
-                                
+
                                 let input = buffer.clone();
-                                
+
                                 // Add to history
-                                if !input.trim().is_empty()
-                                    && history.back() != Some(&input) {
-                                        history.push_back(input.clone());
-                                        if history.len() > 1000 {
-                                            history.pop_front();
-                                        }
+                                if !input.trim().is_empty() && history.back() != Some(&input) {
+                                    history.push_back(input.clone());
+                                    if history.len() > 1000 {
+                                        history.pop_front();
                                     }
-                                
+                                }
+
                                 buffer.clear();
                                 cursor_pos = 0;
                                 history_index = None;
                                 temp_buffer = None;
-                                
+
                                 // Update shared state
-                                if let Ok(mut b) = state_clone.buffer.lock() { *b = buffer.clone(); }
-                                if let Ok(mut p) = state_clone.cursor_pos.lock() { *p = cursor_pos; }
-                                
+                                if let Ok(mut b) = state_clone.buffer.lock() {
+                                    *b = buffer.clone();
+                                }
+                                if let Ok(mut p) = state_clone.cursor_pos.lock() {
+                                    *p = cursor_pos;
+                                }
+
                                 // Send input event
                                 let event = InputEvent::Input(input);
                                 if tx.send(event).is_err() {
@@ -1063,11 +1076,15 @@ impl AsyncInputReader {
                                     buffer = new_buffer;
                                     cursor_pos += 1;
                                 }
-                                
+
                                 // Update shared state
-                                if let Ok(mut b) = state_clone.buffer.lock() { *b = buffer.clone(); }
-                                if let Ok(mut p) = state_clone.cursor_pos.lock() { *p = cursor_pos; }
-                                
+                                if let Ok(mut b) = state_clone.buffer.lock() {
+                                    *b = buffer.clone();
+                                }
+                                if let Ok(mut p) = state_clone.cursor_pos.lock() {
+                                    *p = cursor_pos;
+                                }
+
                                 // Always redraw - use carriage return to overwrite current line
                                 print!("\r\x1b[K{}{}", prompt, buffer);
                                 let cursor_col = prompt.chars().count() + cursor_pos;
@@ -1082,10 +1099,14 @@ impl AsyncInputReader {
                                     new_buffer.extend(chars[cursor_pos..].iter());
                                     buffer = new_buffer;
                                     cursor_pos -= 1;
-                                    
-                                    if let Ok(mut b) = state_clone.buffer.lock() { *b = buffer.clone(); }
-                                    if let Ok(mut p) = state_clone.cursor_pos.lock() { *p = cursor_pos; }
-                                    
+
+                                    if let Ok(mut b) = state_clone.buffer.lock() {
+                                        *b = buffer.clone();
+                                    }
+                                    if let Ok(mut p) = state_clone.cursor_pos.lock() {
+                                        *p = cursor_pos;
+                                    }
+
                                     print!("\r\x1b[K{}{}", prompt, buffer);
                                     let cursor_col = prompt.chars().count() + cursor_pos;
                                     print!("\r\x1b[{}C", cursor_col);
@@ -1095,7 +1116,9 @@ impl AsyncInputReader {
                             KeyCode::Left => {
                                 if cursor_pos > 0 {
                                     cursor_pos -= 1;
-                                    if let Ok(mut p) = state_clone.cursor_pos.lock() { *p = cursor_pos; }
+                                    if let Ok(mut p) = state_clone.cursor_pos.lock() {
+                                        *p = cursor_pos;
+                                    }
                                     print!("\x1b[D");
                                     let _ = io::stdout().flush();
                                 }
@@ -1103,7 +1126,9 @@ impl AsyncInputReader {
                             KeyCode::Right => {
                                 if cursor_pos < buffer.chars().count() {
                                     cursor_pos += 1;
-                                    if let Ok(mut p) = state_clone.cursor_pos.lock() { *p = cursor_pos; }
+                                    if let Ok(mut p) = state_clone.cursor_pos.lock() {
+                                        *p = cursor_pos;
+                                    }
                                     print!("\x1b[C");
                                     let _ = io::stdout().flush();
                                 }
@@ -1121,10 +1146,14 @@ impl AsyncInputReader {
                                     if let Some(idx) = history_index {
                                         buffer = history[idx].clone();
                                         cursor_pos = buffer.chars().count();
-                                        
-                                        if let Ok(mut b) = state_clone.buffer.lock() { *b = buffer.clone(); }
-                                        if let Ok(mut p) = state_clone.cursor_pos.lock() { *p = cursor_pos; }
-                                        
+
+                                        if let Ok(mut b) = state_clone.buffer.lock() {
+                                            *b = buffer.clone();
+                                        }
+                                        if let Ok(mut p) = state_clone.cursor_pos.lock() {
+                                            *p = cursor_pos;
+                                        }
+
                                         print!("\r\x1b[K{}{}", prompt, buffer);
                                         let _ = io::stdout().flush();
                                     }
@@ -1140,10 +1169,14 @@ impl AsyncInputReader {
                                         buffer = temp_buffer.take().unwrap_or_default();
                                     }
                                     cursor_pos = buffer.chars().count();
-                                    
-                                    if let Ok(mut b) = state_clone.buffer.lock() { *b = buffer.clone(); }
-                                    if let Ok(mut p) = state_clone.cursor_pos.lock() { *p = cursor_pos; }
-                                    
+
+                                    if let Ok(mut b) = state_clone.buffer.lock() {
+                                        *b = buffer.clone();
+                                    }
+                                    if let Ok(mut p) = state_clone.cursor_pos.lock() {
+                                        *p = cursor_pos;
+                                    }
+
                                     print!("\r\x1b[K{}{}", prompt, buffer);
                                     let _ = io::stdout().flush();
                                 }
@@ -1153,14 +1186,18 @@ impl AsyncInputReader {
                             }
                             KeyCode::Home => {
                                 cursor_pos = 0;
-                                if let Ok(mut p) = state_clone.cursor_pos.lock() { *p = cursor_pos; }
+                                if let Ok(mut p) = state_clone.cursor_pos.lock() {
+                                    *p = cursor_pos;
+                                }
                                 let cursor_col = prompt.chars().count();
                                 print!("\r\x1b[{}C", cursor_col);
                                 let _ = io::stdout().flush();
                             }
                             KeyCode::End => {
                                 cursor_pos = buffer.chars().count();
-                                if let Ok(mut p) = state_clone.cursor_pos.lock() { *p = cursor_pos; }
+                                if let Ok(mut p) = state_clone.cursor_pos.lock() {
+                                    *p = cursor_pos;
+                                }
                                 let cursor_col = prompt.chars().count() + cursor_pos;
                                 print!("\r\x1b[{}C", cursor_col);
                                 let _ = io::stdout().flush();
@@ -1174,20 +1211,24 @@ impl AsyncInputReader {
                 }
             }
         });
-        
-        Self { rx, shared_state, _handle: handle }
+
+        Self {
+            rx,
+            shared_state,
+            _handle: handle,
+        }
     }
-    
+
     /// Get shared state for clearing/redrawing input line
     pub fn shared_state(&self) -> &SharedInputState {
         &self.shared_state
     }
-    
+
     /// Receive the next input event
     pub async fn recv(&mut self) -> Option<InputEvent> {
         self.rx.recv().await
     }
-    
+
     /// Try to receive an input event without blocking
     pub fn try_recv(&mut self) -> Option<InputEvent> {
         self.rx.try_recv().ok()

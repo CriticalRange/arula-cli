@@ -197,7 +197,6 @@ pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn Tool<Params = serde_json::Value, Result = serde_json::Value>>>,
 }
 
-
 impl std::fmt::Debug for ToolRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ToolRegistry")
@@ -430,7 +429,9 @@ impl ContentBlock {
     }
 
     pub fn reasoning(reasoning: impl Into<String>) -> Self {
-        Self::Reasoning { reasoning: reasoning.into() }
+        Self::Reasoning {
+            reasoning: reasoning.into(),
+        }
     }
 
     pub fn tool_call(id: String, name: String, arguments: String) -> Self {

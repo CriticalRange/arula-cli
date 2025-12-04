@@ -74,16 +74,13 @@ impl SpinnerStyle {
 pub fn create_spinner(style: SpinnerStyle, message: &str) -> ProgressBar {
     let spinner = ProgressBar::new_spinner();
 
-    let template = format!(
-        "{{spinner:.cyan}} {} {{msg}}",
-        style.icon()
-    );
+    let template = format!("{{spinner:.cyan}} {} {{msg}}", style.icon());
 
     spinner.set_style(
         ProgressStyle::default_spinner()
             .tick_chars(style.tick_chars())
             .template(&template)
-            .expect("Invalid spinner template")
+            .expect("Invalid spinner template"),
     );
 
     spinner.set_message(message.to_string());
@@ -116,7 +113,7 @@ pub fn create_progress_bar(total: u64, message: &str) -> ProgressBar {
         ProgressStyle::default_bar()
             .template("{spinner:.cyan} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
             .expect("Invalid progress bar template")
-            .progress_chars("█▓░")
+            .progress_chars("█▓░"),
     );
 
     bar.set_message(message.to_string());
@@ -133,7 +130,7 @@ pub fn create_download_bar(total: u64, message: &str) -> ProgressBar {
         ProgressStyle::default_bar()
             .template("{spinner:.green} {msg}\n{wide_bar:.cyan/blue} {bytes}/{total_bytes} ({eta})")
             .expect("Invalid download bar template")
-            .progress_chars("━━╸")
+            .progress_chars("━━╸"),
     );
 
     bar.set_message(message.to_string());
@@ -150,7 +147,7 @@ pub fn create_indeterminate_bar(message: &str) -> ProgressBar {
         ProgressStyle::default_spinner()
             .tick_chars("▰▰▰▰▰▱▱▱▱▱")
             .template("{spinner:.cyan} {msg}")
-            .expect("Invalid indeterminate bar template")
+            .expect("Invalid indeterminate bar template"),
     );
 
     bar.set_message(message.to_string());
@@ -256,4 +253,3 @@ mod tests {
         assert!(!manager.is_running());
     }
 }
-

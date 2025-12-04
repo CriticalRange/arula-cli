@@ -71,7 +71,9 @@ impl CodeHighlighter {
     /// Get the current theme
     pub fn get_theme(&self) -> &Theme {
         let theme_set = get_theme_set();
-        theme_set.themes.get(&self.theme_name)
+        theme_set
+            .themes
+            .get(&self.theme_name)
             .unwrap_or_else(|| theme_set.themes.get(DEFAULT_THEME).unwrap())
     }
 
@@ -181,7 +183,11 @@ pub fn format_code_box(code: &str, language: &str, width: usize) -> String {
     let highlighted = highlighter.highlight(code, language);
 
     let inner_width = width.saturating_sub(4); // Account for borders
-    let lang_label = if language.is_empty() { "code" } else { language };
+    let lang_label = if language.is_empty() {
+        "code"
+    } else {
+        language
+    };
 
     let mut output = String::with_capacity(code.len() * 3);
 
@@ -265,4 +271,3 @@ mod tests {
         assert!(!CodeHighlighter::is_supported("definitelynotreal"));
     }
 }
-

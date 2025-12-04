@@ -39,19 +39,33 @@ fn get_skin() -> &'static MadSkin {
         // Configure colors for a pleasant terminal experience
         // Bold - Yellow for emphasis
         skin.bold.set_fg(TMColor::Yellow);
-        skin.bold.add_attr(termimad::crossterm::style::Attribute::Bold);
+        skin.bold
+            .add_attr(termimad::crossterm::style::Attribute::Bold);
 
-        // Italic - Cyan for subtle emphasis  
+        // Italic - Cyan for subtle emphasis
         skin.italic.set_fg(TMColor::Cyan);
-        skin.italic.add_attr(termimad::crossterm::style::Attribute::Italic);
+        skin.italic
+            .add_attr(termimad::crossterm::style::Attribute::Italic);
 
         // Inline code - Cyan background for visibility
-        skin.inline_code.set_fg(TMColor::Rgb { r: 230, g: 230, b: 230 });
-        skin.inline_code.set_bg(TMColor::Rgb { r: 45, g: 45, b: 45 });
+        skin.inline_code.set_fg(TMColor::Rgb {
+            r: 230,
+            g: 230,
+            b: 230,
+        });
+        skin.inline_code.set_bg(TMColor::Rgb {
+            r: 45,
+            g: 45,
+            b: 45,
+        });
 
         // Code blocks - Green on dark background
         skin.code_block.set_fg(TMColor::Green);
-        skin.code_block.set_bg(TMColor::Rgb { r: 30, g: 30, b: 30 });
+        skin.code_block.set_bg(TMColor::Rgb {
+            r: 30,
+            g: 30,
+            b: 30,
+        });
 
         // Headers - Different colors for hierarchy
         skin.headers[0].set_fg(TMColor::Magenta);
@@ -62,14 +76,13 @@ fn get_skin() -> &'static MadSkin {
 
         // Strikeout
         skin.strikeout.set_fg(TMColor::DarkGrey);
-        skin.strikeout.add_attr(termimad::crossterm::style::Attribute::CrossedOut);
+        skin.strikeout
+            .add_attr(termimad::crossterm::style::Attribute::CrossedOut);
 
         // Bullet points and quotes
         skin.bullet = termimad::StyledChar::from_fg_char(TMColor::Cyan, '•');
-        skin.quote_mark = termimad::StyledChar::new(
-            termimad::CompoundStyle::with_fg(TMColor::DarkGrey),
-            '│',
-        );
+        skin.quote_mark =
+            termimad::StyledChar::new(termimad::CompoundStyle::with_fg(TMColor::DarkGrey), '│');
 
         skin
     })
@@ -77,9 +90,7 @@ fn get_skin() -> &'static MadSkin {
 
 /// Get terminal width with a fallback
 fn terminal_width() -> usize {
-    terminal::size()
-        .map(|(w, _)| w as usize)
-        .unwrap_or(80)
+    terminal::size().map(|(w, _)| w as usize).unwrap_or(80)
 }
 
 /// State machine for tracking code block parsing
@@ -151,7 +162,7 @@ impl MarkdownStreamer {
                 if let Some(fence_info) = Self::parse_code_fence_start(trimmed) {
                     // Flush any accumulated text first
                     self.flush_text_buffer()?;
-                    
+
                     self.state = ParseState::InCodeBlock {
                         language: fence_info.0,
                         content: String::new(),
@@ -160,19 +171,25 @@ impl MarkdownStreamer {
                 } else {
                     // Accumulate text for batch rendering
                     self.text_buffer.push_str(line);
-                    
+
                     // If buffer is getting large or we have complete paragraphs, flush
                     if self.text_buffer.len() > 500 || self.text_buffer.ends_with("\n\n") {
                         self.flush_text_buffer()?;
                     }
                 }
             }
-            ParseState::InCodeBlock { fence, language, content } => {
+            ParseState::InCodeBlock {
+                fence,
+                language,
+                content,
+            } => {
                 // Check for matching closing fence
                 let fence_len = fence.len();
-                let is_closing = trimmed.len() >= fence_len 
-                    && trimmed[..fence_len] == *fence 
-                    && trimmed.chars().all(|c| c == '`' || c == '~' || c.is_whitespace());
+                let is_closing = trimmed.len() >= fence_len
+                    && trimmed[..fence_len] == *fence
+                    && trimmed
+                        .chars()
+                        .all(|c| c == '`' || c == '~' || c.is_whitespace());
 
                 if is_closing {
                     let lang = language.clone();
@@ -182,11 +199,14 @@ impl MarkdownStreamer {
                 } else {
                     // Clone state to avoid borrow issues
                     let mut new_content = String::new();
-                    if let ParseState::InCodeBlock { content: existing, .. } = &self.state {
+                    if let ParseState::InCodeBlock {
+                        content: existing, ..
+                    } = &self.state
+                    {
                         new_content = existing.clone();
                     }
                     new_content.push_str(line);
-                    
+
                     if let ParseState::InCodeBlock { content, .. } = &mut self.state {
                         *content = new_content;
                     }
@@ -209,7 +229,7 @@ impl MarkdownStreamer {
         // Use termimad for proper rendering with terminal width
         let skin = get_skin();
         let width = terminal_width();
-        
+
         // For streaming, use term_text which handles wrapping
         let formatted = skin.text(&self.text_buffer, Some(width.saturating_sub(4)));
         write!(handle, "{}", formatted)?;
@@ -250,7 +270,11 @@ impl MarkdownStreamer {
         let mut handle = stdout.lock();
 
         // Determine effective language
-        let lang = if language.is_empty() { "text" } else { language };
+        let lang = if language.is_empty() {
+            "text"
+        } else {
+            language
+        };
         let width = terminal_width();
         let box_width = width.saturating_sub(4).min(78);
 
@@ -281,10 +305,7 @@ impl MarkdownStreamer {
             } else {
                 line.to_string()
             };
-            writeln!(handle, "{} {}", 
-                style("│").dim(), 
-                display_line,
-            )?;
+            writeln!(handle, "{} {}", style("│").dim(), display_line,)?;
         }
 
         // Print code block footer
@@ -312,12 +333,15 @@ impl MarkdownStreamer {
         }
 
         // Handle unclosed code blocks
-        if let ParseState::InCodeBlock { language, content, .. } = &self.state {
+        if let ParseState::InCodeBlock {
+            language, content, ..
+        } = &self.state
+        {
             let lang = language.clone();
             let code = content.clone();
             self.render_code_block(&lang, &code)?;
         }
-        
+
         self.state = ParseState::Normal;
         Ok(())
     }

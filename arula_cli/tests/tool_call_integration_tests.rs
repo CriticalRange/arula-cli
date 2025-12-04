@@ -1,11 +1,11 @@
 //! Integration tests for tool execution functionality
 
-use arula_cli::tool_call::{execute_bash_tool, ToolCallResult, BashToolParams};
+use arula_cli::api::agent_client::AgentClient;
+use arula_cli::tool_call::{execute_bash_tool, BashToolParams, ToolCallResult};
+use arula_cli::tools::tools::create_default_tool_registry_with_mcp;
+use arula_cli::utils::config::Config;
 use serde_json;
 use serde_yaml;
-use arula_cli::api::agent_client::AgentClient;
-use arula_cli::utils::config::Config;
-use arula_cli::tools::tools::create_default_tool_registry_with_mcp;
 
 #[tokio::test]
 async fn test_bash_tool_basic_execution() -> Result<(), Box<dyn std::error::Error>> {
@@ -208,12 +208,17 @@ async fn test_mcp_tools_available_to_zai() -> Result<(), Box<dyn std::error::Err
     let all_tools = registry.get_tools();
 
     // Check for MCP tools in registry
-    let mcp_tools: Vec<&str> = all_tools.iter()
+    let mcp_tools: Vec<&str> = all_tools
+        .iter()
         .filter(|tool| tool.starts_with("mcp_"))
         .map(|s| &**s)
         .collect();
 
-    println!("🔧 Found {} MCP tools in registry: {:?}", mcp_tools.len(), mcp_tools);
+    println!(
+        "🔧 Found {} MCP tools in registry: {:?}",
+        mcp_tools.len(),
+        mcp_tools
+    );
 
     // Test agent client filtering for Z.AI
     let agent_client = AgentClient::from_config(
@@ -224,17 +229,25 @@ async fn test_mcp_tools_available_to_zai() -> Result<(), Box<dyn std::error::Err
     );
 
     let available_tools = agent_client.get_available_tools_sync();
-    let filtered_mcp_tools: Vec<&str> = available_tools.iter()
+    let filtered_mcp_tools: Vec<&str> = available_tools
+        .iter()
         .filter(|tool| tool.starts_with("mcp_"))
         .map(|s| *s)
         .collect();
 
-    println!("🎯 Z.AI agent has access to {} MCP tools: {:?}", filtered_mcp_tools.len(), filtered_mcp_tools);
+    println!(
+        "🎯 Z.AI agent has access to {} MCP tools: {:?}",
+        filtered_mcp_tools.len(),
+        filtered_mcp_tools
+    );
 
     // This test should pass now that we removed the MCP filtering
     // If MCP servers are configured, we should have MCP tools available
     if !config.get_mcp_servers().is_empty() {
-        assert!(!filtered_mcp_tools.is_empty(), "Z.AI should have access to MCP tools when MCP servers are configured");
+        assert!(
+            !filtered_mcp_tools.is_empty(),
+            "Z.AI should have access to MCP tools when MCP servers are configured"
+        );
         println!("✅ SUCCESS: MCP tools are available to Z.AI!");
     } else {
         println!("ℹ️  No MCP servers configured, skipping MCP tool availability test");

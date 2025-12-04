@@ -36,7 +36,9 @@ use crate::api::agent::{AgentOptionsBuilder, ContentBlock};
 use crate::api::agent_client::AgentClient;
 use crate::utils::chat::{ChatMessage, MessageType};
 use crate::utils::config::Config;
-use crate::utils::debug::{debug_print, log_ai_interaction, log_ai_response_chunk, log_ai_response_complete};
+use crate::utils::debug::{
+    debug_print, log_ai_interaction, log_ai_response_chunk, log_ai_response_complete,
+};
 use crate::utils::git_state::GitStateTracker;
 use crate::utils::tool_call::{execute_bash_tool, ToolCall, ToolCallResult};
 use anyhow::Result;
@@ -202,7 +204,10 @@ impl App {
     pub async fn initialize_git_state(&mut self) -> Result<()> {
         // Load any saved git state from previous crash
         if let Some(branch) = self.git_state_tracker.load_branch_from_disk().await? {
-            eprintln!("🔧 GitState: Loaded saved branch from previous session: {:?}", branch);
+            eprintln!(
+                "🔧 GitState: Loaded saved branch from previous session: {:?}",
+                branch
+            );
         }
         Ok(())
     }
@@ -326,7 +331,10 @@ You have access to tools for file operations, shell commands, and more. Use them
             for server_id in mcp_servers.keys() {
                 match server_id.as_str() {
                     "context7" => {
-                        info.push_str(&format!("- **{}**: Context7 library documentation server\n", server_id));
+                        info.push_str(&format!(
+                            "- **{}**: Context7 library documentation server\n",
+                            server_id
+                        ));
                         info.push_str("  - Use for: Getting Rust library documentation, examples, and API information\n");
                         info.push_str("  - Available tools:\n");
                         info.push_str("    * resolve-library-id: Resolves a library name to Context7-compatible library ID\n");
@@ -510,15 +518,27 @@ You have access to tools for file operations, shell commands, and more. Use them
 
         // Clone the persistent tracking sender for this request
         // All requests share the same receiver, so tracking commands are never lost
-        let track_tx = self.tracking_tx.clone().expect("Tracking channel not initialized");
+        let track_tx = self
+            .tracking_tx
+            .clone()
+            .expect("Tracking channel not initialized");
 
         // Debug: Print current message count
-        debug_print(&format!("DEBUG: Total messages in self.messages: {}", self.messages.len()));
+        debug_print(&format!(
+            "DEBUG: Total messages in self.messages: {}",
+            self.messages.len()
+        ));
         for (i, msg) in self.messages.iter().enumerate() {
-            debug_print(&format!("DEBUG: [{}] {:?} -> {}", i, msg.message_type,
+            debug_print(&format!(
+                "DEBUG: [{}] {:?} -> {}",
+                i,
+                msg.message_type,
                 if msg.content.len() > 50 {
                     // Use char boundaries to safely truncate
-                    let safe_end = msg.content.char_indices().nth(50)
+                    let safe_end = msg
+                        .content
+                        .char_indices()
+                        .nth(50)
                         .map(|(idx, _)| idx)
                         .unwrap_or(msg.content.len());
                     format!("{}...", &msg.content[..safe_end])
@@ -551,14 +571,24 @@ You have access to tools for file operations, shell commands, and more. Use them
             })
             .collect();
 
-        debug_print(&format!("DEBUG: API messages after filtering: {}", api_messages.len()));
+        debug_print(&format!(
+            "DEBUG: API messages after filtering: {}",
+            api_messages.len()
+        ));
 
         // Log the AI interaction for debugging
         log_ai_interaction(message, &api_messages, None);
 
         // Check if streaming is enabled in config
         let streaming_enabled = self.config.get_streaming_enabled();
-        debug_print(&format!("DEBUG: Streaming mode: {}", if streaming_enabled { "enabled" } else { "disabled" }));
+        debug_print(&format!(
+            "DEBUG: Streaming mode: {}",
+            if streaming_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        ));
 
         // Send message using modern agent in background
         let msg = message.to_string();
@@ -586,7 +616,7 @@ You have access to tools for file operations, shell commands, and more. Use them
                     } else {
                         agent_client.query_non_streaming(&msg, Some(api_messages)).await
                     };
-                    
+
                     match query_result {
                         Ok(mut stream) => {
                             let _ = tx.send(AiResponse::AgentStreamStart);
@@ -605,7 +635,7 @@ You have access to tools for file operations, shell commands, and more. Use them
                                                     let _ = tx.send(AiResponse::AgentThinkingEnd);
                                                     thinking_started = false;
                                                 }
-                                                
+
                                                 // Accumulate text for tracking
                                                 accumulated_text.push_str(&text);
 
@@ -633,7 +663,7 @@ You have access to tools for file operations, shell commands, and more. Use them
                                                     let _ = tx.send(AiResponse::AgentThinkingEnd);
                                                     thinking_started = false;
                                                 }
-                                                
+
                                                 // Track tool call
                                                 tool_calls_list.push((id.clone(), name.clone(), arguments.clone()));
 
@@ -759,7 +789,6 @@ You have access to tools for file operations, shell commands, and more. Use them
         self.restore_git_branch().await;
     }
 
-
     /// Process pending tracking commands
     pub fn process_tracking_commands(&mut self) {
         // Collect all pending commands first to avoid borrow checker issues
@@ -769,7 +798,10 @@ You have access to tools for file operations, shell commands, and more. Use them
                 cmds.push(cmd);
             }
             if !cmds.is_empty() && self.debug {
-                debug_print(&format!("DEBUG: Processing {} tracking commands", cmds.len()));
+                debug_print(&format!(
+                    "DEBUG: Processing {} tracking commands",
+                    cmds.len()
+                ));
             }
             cmds
         } else {
@@ -781,21 +813,44 @@ You have access to tools for file operations, shell commands, and more. Use them
             match cmd {
                 TrackingCommand::AssistantMessage(content) => {
                     if self.debug {
-                        debug_print(&format!("DEBUG: Tracking assistant message ({} chars)", content.len()));
+                        debug_print(&format!(
+                            "DEBUG: Tracking assistant message ({} chars)",
+                            content.len()
+                        ));
                     }
                     self.track_assistant_message(&content);
                 }
-                TrackingCommand::ToolCall { id, name, arguments } => {
+                TrackingCommand::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                } => {
                     if self.debug {
                         debug_print(&format!("DEBUG: Tracking tool call: {}", name));
                     }
                     self.track_tool_call(id, name, arguments);
                 }
-                TrackingCommand::ToolResult { tool_call_id, tool_name, result, success, execution_time_ms } => {
+                TrackingCommand::ToolResult {
+                    tool_call_id,
+                    tool_name,
+                    result,
+                    success,
+                    execution_time_ms,
+                } => {
                     if self.debug {
-                        debug_print(&format!("DEBUG: Tracking tool result: {} ({})", tool_name, if success { "success" } else { "failed" }));
+                        debug_print(&format!(
+                            "DEBUG: Tracking tool result: {} ({})",
+                            tool_name,
+                            if success { "success" } else { "failed" }
+                        ));
                     }
-                    self.track_tool_result(tool_call_id, tool_name, result, success, execution_time_ms);
+                    self.track_tool_result(
+                        tool_call_id,
+                        tool_name,
+                        result,
+                        success,
+                        execution_time_ms,
+                    );
                 }
             }
         }
@@ -863,8 +918,10 @@ You have access to tools for file operations, shell commands, and more. Use them
                         }
                         AiResponse::AgentStreamEnd => {
                             if let Some(full_message) = self.current_streaming_message.take() {
-                                self.messages
-                                    .push(ChatMessage::new(MessageType::Arula, full_message.clone()));
+                                self.messages.push(ChatMessage::new(
+                                    MessageType::Arula,
+                                    full_message.clone(),
+                                ));
 
                                 // Track assistant message in conversation
                                 self.track_assistant_message(&full_message);
@@ -1061,9 +1118,15 @@ You have access to tools for file operations, shell commands, and more. Use them
                                 for model_info in data {
                                     if let Some(id) = model_info["id"].as_str() {
                                         // Filter for text-based models
-                                        if let Some(architecture) = model_info["architecture"].as_object() {
-                                            if let Some(modality) = architecture["modality"].as_str() {
-                                                if modality.contains("text") || modality.contains("text->text") {
+                                        if let Some(architecture) =
+                                            model_info["architecture"].as_object()
+                                        {
+                                            if let Some(modality) =
+                                                architecture["modality"].as_str()
+                                            {
+                                                if modality.contains("text")
+                                                    || modality.contains("text->text")
+                                                {
                                                     models.push(id.to_string());
                                                 }
                                             }
@@ -1519,7 +1582,9 @@ You have access to tools for file operations, shell commands, and more. Use them
         if self.current_conversation.is_none() {
             use crate::utils::conversation::Conversation;
 
-            let provider_config = self.config.get_active_provider_config()
+            let provider_config = self
+                .config
+                .get_active_provider_config()
                 .expect("Active provider not found");
             let model = provider_config.model.clone();
             let provider = self.config.active_provider.clone();
@@ -1554,7 +1619,7 @@ You have access to tools for file operations, shell commands, and more. Use them
         if cleaned.len() <= max_len {
             cleaned.to_string()
         } else {
-            format!("{}...", &cleaned[..max_len-3])
+            format!("{}...", &cleaned[..max_len - 3])
         }
     }
 
@@ -1570,8 +1635,8 @@ You have access to tools for file operations, shell commands, and more. Use them
 
     /// Load a conversation from disk
     pub fn load_conversation(&mut self, conversation_id: &str) -> Result<()> {
-        use crate::utils::conversation::Conversation;
         use crate::utils::chat::MessageType;
+        use crate::utils::conversation::Conversation;
 
         let current_dir = std::env::current_dir()?;
         let conversation = Conversation::load(&current_dir, conversation_id)?;
@@ -1583,14 +1648,16 @@ You have access to tools for file operations, shell commands, and more. Use them
                 "user" => {
                     if let Some(content) = &msg.content {
                         if let Some(text) = content.as_str() {
-                            self.messages.push(ChatMessage::new(MessageType::User, text.to_string()));
+                            self.messages
+                                .push(ChatMessage::new(MessageType::User, text.to_string()));
                         }
                     }
                 }
                 "assistant" => {
                     if let Some(content) = &msg.content {
                         if let Some(text) = content.as_str() {
-                            self.messages.push(ChatMessage::new(MessageType::Arula, text.to_string()));
+                            self.messages
+                                .push(ChatMessage::new(MessageType::Arula, text.to_string()));
                         }
                     }
 
@@ -1605,7 +1672,7 @@ You have access to tools for file operations, shell commands, and more. Use them
                             });
                             self.messages.push(ChatMessage::new(
                                 MessageType::ToolCall,
-                                tool_call_json.to_string()
+                                tool_call_json.to_string(),
                             ));
                         }
                     }
@@ -1615,14 +1682,16 @@ You have access to tools for file operations, shell commands, and more. Use them
                     if let Some(content) = &msg.content {
                         // Convert the content (which is JSON) to a string for display
                         let content_str = if content.is_object() || content.is_array() {
-                            serde_json::to_string_pretty(content).unwrap_or_else(|_| content.to_string())
+                            serde_json::to_string_pretty(content)
+                                .unwrap_or_else(|_| content.to_string())
                         } else if let Some(text) = content.as_str() {
                             text.to_string()
                         } else {
                             content.to_string()
                         };
 
-                        self.messages.push(ChatMessage::new(MessageType::ToolResult, content_str));
+                        self.messages
+                            .push(ChatMessage::new(MessageType::ToolResult, content_str));
                     }
                 }
                 _ => {}
@@ -1644,8 +1713,10 @@ You have access to tools for file operations, shell commands, and more. Use them
                 if let Some(ref mut conv) = self.current_conversation {
                     // Only update if shared has more messages than current
                     if shared_conv.messages.len() > conv.messages.len() {
-                        debug_print(&format!("DEBUG: Syncing {} new messages from shared to current",
-                            shared_conv.messages.len() - conv.messages.len()));
+                        debug_print(&format!(
+                            "DEBUG: Syncing {} new messages from shared to current",
+                            shared_conv.messages.len() - conv.messages.len()
+                        ));
                         // Copy ALL messages from shared to current to stay in sync
                         *conv = shared_conv.clone();
                     }
@@ -1722,7 +1793,14 @@ You have access to tools for file operations, shell commands, and more. Use them
     }
 
     /// Track tool result in conversation
-    pub fn track_tool_result(&mut self, tool_call_id: String, tool_name: String, result: serde_json::Value, success: bool, execution_time_ms: u64) {
+    pub fn track_tool_result(
+        &mut self,
+        tool_call_id: String,
+        tool_name: String,
+        result: serde_json::Value,
+        success: bool,
+        execution_time_ms: u64,
+    ) {
         self.ensure_conversation();
         if let Some(ref mut conv) = self.current_conversation {
             conv.add_tool_result(tool_call_id, tool_name, result, success, execution_time_ms);
@@ -1737,7 +1815,9 @@ You have access to tools for file operations, shell commands, and more. Use them
     pub fn new_conversation(&mut self) {
         use crate::utils::conversation::Conversation;
 
-        let provider_config = self.config.get_active_provider_config()
+        let provider_config = self
+            .config
+            .get_active_provider_config()
             .expect("Active provider not found");
         let model = provider_config.model.clone();
         let provider = self.config.active_provider.clone();
@@ -1751,7 +1831,9 @@ You have access to tools for file operations, shell commands, and more. Use them
         let mut info = String::new();
 
         info.push_str("\n## Built-in Tools\n");
-        info.push_str("You have access to the following built-in tools that you can call directly:\n\n");
+        info.push_str(
+            "You have access to the following built-in tools that you can call directly:\n\n",
+        );
 
         info.push_str("### 1. execute_bash - Execute shell commands\n");
         info.push_str("**Usage:** Call this function directly to run shell commands\n");
@@ -1776,7 +1858,9 @@ You have access to tools for file operations, shell commands, and more. Use them
         info.push_str("**Parameters:**\n");
         info.push_str("- `path` (string, required): The file path to write to\n");
         info.push_str("- `content` (string, required): The content to write\n");
-        info.push_str("**Example:** Call `write_file(path=\"hello.txt\", content=\"Hello World!\")`\n\n");
+        info.push_str(
+            "**Example:** Call `write_file(path=\"hello.txt\", content=\"Hello World!\")`\n\n",
+        );
 
         info.push_str("### 5. edit_file - Edit existing files\n");
         info.push_str("**Usage:** Call this function directly to edit files with find/replace\n");

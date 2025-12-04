@@ -1,19 +1,18 @@
 //! Configuration menu functionality for ARULA CLI
 
 use crate::app::App;
-use crate::ui::output::OutputHandler;
-use crate::ui::menus::common::{MenuResult, MenuAction, MenuUtils, MenuState};
-use crate::ui::menus::provider_menu::ProviderMenu;
-use crate::ui::menus::model_selector::ModelSelector;
 use crate::ui::menus::api_key_selector::ApiKeySelector;
+use crate::ui::menus::common::{MenuAction, MenuResult, MenuState, MenuUtils};
 use crate::ui::menus::dialogs::Dialogs;
+use crate::ui::menus::model_selector::ModelSelector;
+use crate::ui::menus::provider_menu::ProviderMenu;
+use crate::ui::output::OutputHandler;
 use anyhow::Result;
 use console::style;
 use crossterm::{
     event::{Event, KeyCode, KeyEventKind, KeyModifiers},
-    terminal,
-    style::{SetForegroundColor, ResetColor, Print},
-    ExecutableCommand, QueueableCommand,
+    style::{Print, ResetColor, SetForegroundColor},
+    terminal, ExecutableCommand, QueueableCommand,
 };
 use std::io::{stdout, Write};
 use std::time::Duration;
@@ -153,7 +152,11 @@ impl ConfigMenu {
             // Update items based on current provider (OllamaTools only for Ollama)
             self.items = ConfigMenuItem::for_provider(&app.config.active_provider);
             // Ensure we don't start on non-editable API URL (index 2)
-            if self.state.selected_index == 2 && !app.config.is_field_editable(crate::utils::config::ProviderField::ApiUrl) {
+            if self.state.selected_index == 2
+                && !app
+                    .config
+                    .is_field_editable(crate::utils::config::ProviderField::ApiUrl)
+            {
                 self.state.selected_index = if self.state.selected_index + 1 < self.items.len() {
                     self.state.selected_index + 1
                 } else {
@@ -182,10 +185,18 @@ impl ConfigMenu {
                                 // Custom navigation logic to skip non-editable API URL (index 2)
                                 let max_index = self.items.len().saturating_sub(1);
                                 let mut new_index = self.state.selected_index as isize - 1;
-                                new_index = if new_index < 0 { max_index as isize } else { new_index };
+                                new_index = if new_index < 0 {
+                                    max_index as isize
+                                } else {
+                                    new_index
+                                };
 
                                 // If trying to land on API URL (index 2) and it's not editable, skip it
-                                if new_index == 2 && !app.config.is_field_editable(crate::utils::config::ProviderField::ApiUrl) {
+                                if new_index == 2
+                                    && !app.config.is_field_editable(
+                                        crate::utils::config::ProviderField::ApiUrl,
+                                    )
+                                {
                                     new_index -= 1;
                                     if new_index < 0 {
                                         new_index = max_index as isize;
@@ -198,10 +209,18 @@ impl ConfigMenu {
                                 // Custom navigation logic to skip non-editable API URL (index 2)
                                 let max_index = self.items.len().saturating_sub(1);
                                 let mut new_index = self.state.selected_index as isize + 1;
-                                new_index = if new_index > max_index as isize { 0 } else { new_index };
+                                new_index = if new_index > max_index as isize {
+                                    0
+                                } else {
+                                    new_index
+                                };
 
                                 // If trying to land on API URL (index 2) and it's not editable, skip it
-                                if new_index == 2 && !app.config.is_field_editable(crate::utils::config::ProviderField::ApiUrl) {
+                                if new_index == 2
+                                    && !app.config.is_field_editable(
+                                        crate::utils::config::ProviderField::ApiUrl,
+                                    )
+                                {
                                     new_index += 1;
                                     if new_index > max_index as isize {
                                         new_index = 0;
@@ -271,10 +290,12 @@ impl ConfigMenu {
         let max_item_width = menu_width.saturating_sub(6) as usize;
 
         // Update display values with original styling and overflow protection
-        let thinking_enabled = config.get_active_provider_config()
+        let thinking_enabled = config
+            .get_active_provider_config()
             .and_then(|c| c.thinking_enabled)
             .unwrap_or(false);
-        let web_search_enabled = config.get_active_provider_config()
+        let web_search_enabled = config
+            .get_active_provider_config()
             .and_then(|c| c.web_search_enabled)
             .unwrap_or(false);
         let web_search_provider = if web_search_enabled && config.active_provider.contains("z.ai") {
@@ -285,13 +306,29 @@ impl ConfigMenu {
 
         let tools_enabled = config.get_tools_enabled();
         let is_ollama = config.active_provider.to_lowercase() == "ollama";
-        
+
         let mut display_options = vec![
-            format!("Provider: {}", MenuUtils::truncate_text(&config.active_provider, max_item_width.saturating_sub(11))),
-            format!("Model: {}", MenuUtils::truncate_text(&config.get_model(), max_item_width.saturating_sub(9))),
-            format!("API URL: {}", MenuUtils::truncate_text(&config.get_active_provider_config()
-                .and_then(|c| c.api_url.clone())
-                .unwrap_or_default(), max_item_width.saturating_sub(11))),
+            format!(
+                "Provider: {}",
+                MenuUtils::truncate_text(
+                    &config.active_provider,
+                    max_item_width.saturating_sub(11)
+                )
+            ),
+            format!(
+                "Model: {}",
+                MenuUtils::truncate_text(&config.get_model(), max_item_width.saturating_sub(9))
+            ),
+            format!(
+                "API URL: {}",
+                MenuUtils::truncate_text(
+                    &config
+                        .get_active_provider_config()
+                        .and_then(|c| c.api_url.clone())
+                        .unwrap_or_default(),
+                    max_item_width.saturating_sub(11)
+                )
+            ),
             format!(
                 "API Key: {}",
                 if config.get_api_key().is_empty() {
@@ -300,13 +337,31 @@ impl ConfigMenu {
                     "••••••••"
                 }
             ),
-            format!("Thinking: {}", if thinking_enabled { "Enabled" } else { "Disabled" }),
-            format!("Web Search: {} ({})", if web_search_enabled { "Enabled" } else { "Disabled" }, web_search_provider),
+            format!(
+                "Thinking: {}",
+                if thinking_enabled {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                }
+            ),
+            format!(
+                "Web Search: {} ({})",
+                if web_search_enabled {
+                    "Enabled"
+                } else {
+                    "Disabled"
+                },
+                web_search_provider
+            ),
         ];
-        
+
         // Add Ollama Tools option only for Ollama provider
         if is_ollama {
-            display_options.push(format!("Ollama Tools: {}", if tools_enabled { "Enabled" } else { "Disabled" }));
+            display_options.push(format!(
+                "Ollama Tools: {}",
+                if tools_enabled { "Enabled" } else { "Disabled" }
+            ));
         }
 
         let menu_height = 14; // Increased height to accommodate new menu items
@@ -329,10 +384,13 @@ impl ConfigMenu {
         } else {
             start_x + 1
         };
-        stdout().queue(crossterm::cursor::MoveTo(title_x, title_y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::MISC_ANSI)))?
-              .queue(Print(style(title).bold()))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(crossterm::cursor::MoveTo(title_x, title_y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::MISC_ANSI,
+            )))?
+            .queue(Print(style(title).bold()))?
+            .queue(ResetColor)?;
 
         // Draw config items with modern styling
         let items_start_y = start_y + 3;
@@ -341,7 +399,8 @@ impl ConfigMenu {
 
             // Check if this item is editable (API URL is index 2)
             let is_editable = if i == 2 {
-                app.config.is_field_editable(crate::utils::config::ProviderField::ApiUrl)
+                app.config
+                    .is_field_editable(crate::utils::config::ProviderField::ApiUrl)
             } else {
                 true
             };
@@ -361,10 +420,11 @@ impl ConfigMenu {
                 } else {
                     crossterm::style::Color::DarkGrey
                 };
-                stdout().queue(crossterm::cursor::MoveTo(start_x + 4, y))?
-                      .queue(SetForegroundColor(color))?
-                      .queue(Print(option))?
-                      .queue(ResetColor)?;
+                stdout()
+                    .queue(crossterm::cursor::MoveTo(start_x + 4, y))?
+                    .queue(SetForegroundColor(color))?
+                    .queue(Print(option))?
+                    .queue(ResetColor)?;
             }
         }
 
@@ -372,10 +432,13 @@ impl ConfigMenu {
         let help_y = start_y + menu_height - 1;
         let help_text = "↑↓ Edit • Enter Select • ESC Exit";
         let help_x = start_x + 2; // Left aligned with padding
-        stdout().queue(crossterm::cursor::MoveTo(help_x, help_y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
-              .queue(Print(help_text))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(crossterm::cursor::MoveTo(help_x, help_y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::AI_HIGHLIGHT_ANSI,
+            )))?
+            .queue(Print(help_text))?
+            .queue(ResetColor)?;
 
         stdout().flush()?;
         Ok(())
@@ -397,23 +460,36 @@ impl ConfigMenu {
         }
 
         // Draw borders using our AI highlight color (steel blue)
-        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?;
+        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+            crate::utils::colors::AI_HIGHLIGHT_ANSI,
+        )))?;
 
         // Draw vertical borders
         for i in 0..height {
-            stdout().queue(crossterm::cursor::MoveTo(x, y + i))?.queue(Print(vertical))?;
-            stdout().queue(crossterm::cursor::MoveTo(x + width.saturating_sub(1), y + i))?.queue(Print(vertical))?;
+            stdout()
+                .queue(crossterm::cursor::MoveTo(x, y + i))?
+                .queue(Print(vertical))?;
+            stdout()
+                .queue(crossterm::cursor::MoveTo(
+                    x + width.saturating_sub(1),
+                    y + i,
+                ))?
+                .queue(Print(vertical))?;
         }
 
         // Top border
-        stdout().queue(crossterm::cursor::MoveTo(x, y))?.queue(Print(top_left))?;
+        stdout()
+            .queue(crossterm::cursor::MoveTo(x, y))?
+            .queue(Print(top_left))?;
         for _i in 1..width.saturating_sub(1) {
             stdout().queue(Print(horizontal))?;
         }
         stdout().queue(Print(top_right))?;
 
         // Bottom border
-        stdout().queue(crossterm::cursor::MoveTo(x, y + height.saturating_sub(1)))?.queue(Print(bottom_left))?;
+        stdout()
+            .queue(crossterm::cursor::MoveTo(x, y + height.saturating_sub(1)))?
+            .queue(Print(bottom_left))?;
         for _i in 1..width.saturating_sub(1) {
             stdout().queue(Print(horizontal))?;
         }
@@ -436,7 +512,9 @@ impl ConfigMenu {
             // Truncate if too long - use character boundaries, not byte boundaries
             let safe_len = width.saturating_sub(7) as usize;
             // Use char_indices to get safe character boundaries
-            let char_end = text.char_indices().nth(safe_len)
+            let char_end = text
+                .char_indices()
+                .nth(safe_len)
                 .map(|(idx, _)| idx)
                 .unwrap_or(text.len());
             format!("▶ {}...", &text[..char_end])
@@ -444,31 +522,44 @@ impl ConfigMenu {
             display_text
         };
 
-        stdout().queue(crossterm::cursor::MoveTo(x + 2, y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::PRIMARY_ANSI)))?
-              .queue(Print(safe_text))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(crossterm::cursor::MoveTo(x + 2, y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::PRIMARY_ANSI,
+            )))?
+            .queue(Print(safe_text))?
+            .queue(ResetColor)?;
 
         Ok(())
     }
 
     /// Get current value and description for menu items
-    fn get_item_value_and_description(&self, item: &ConfigMenuItem, app: &App) -> (Option<String>, String) {
+    fn get_item_value_and_description(
+        &self,
+        item: &ConfigMenuItem,
+        app: &App,
+    ) -> (Option<String>, String) {
         match item {
-            ConfigMenuItem::AIProvider => {
-                (Some(app.config.active_provider.clone()), item.description().to_string())
-            }
+            ConfigMenuItem::AIProvider => (
+                Some(app.config.active_provider.clone()),
+                item.description().to_string(),
+            ),
             ConfigMenuItem::AIModel => {
                 (Some(app.config.get_model()), item.description().to_string())
             }
             ConfigMenuItem::APIUrl => {
-                let url = app.config.get_active_provider_config()
-            .and_then(|c| c.api_url.clone())
-            .unwrap_or_default();
+                let url = app
+                    .config
+                    .get_active_provider_config()
+                    .and_then(|c| c.api_url.clone())
+                    .unwrap_or_default();
                 if url.is_empty() {
                     (None, item.description().to_string())
                 } else {
-                    (Some(MenuUtils::truncate_text(&url, 30)), item.description().to_string())
+                    (
+                        Some(MenuUtils::truncate_text(&url, 30)),
+                        item.description().to_string(),
+                    )
                 }
             }
             ConfigMenuItem::APIKey => {
@@ -480,13 +571,20 @@ impl ConfigMenu {
                 }
             }
             ConfigMenuItem::ThinkingMode => {
-                let enabled = app.config.get_active_provider_config()
+                let enabled = app
+                    .config
+                    .get_active_provider_config()
                     .and_then(|c| c.thinking_enabled)
                     .unwrap_or(false);
-                (Some(if enabled { "Enabled" } else { "Disabled" }.to_string()), item.description().to_string())
+                (
+                    Some(if enabled { "Enabled" } else { "Disabled" }.to_string()),
+                    item.description().to_string(),
+                )
             }
             ConfigMenuItem::WebSearch => {
-                let enabled = app.config.get_active_provider_config()
+                let enabled = app
+                    .config
+                    .get_active_provider_config()
                     .and_then(|c| c.web_search_enabled)
                     .unwrap_or(false);
                 let provider = if enabled && app.config.active_provider.contains("z.ai") {
@@ -494,11 +592,21 @@ impl ConfigMenu {
                 } else {
                     "DuckDuckGo"
                 };
-                (Some(format!("{} ({})", if enabled { "Enabled" } else { "Disabled" }, provider)), item.description().to_string())
+                (
+                    Some(format!(
+                        "{} ({})",
+                        if enabled { "Enabled" } else { "Disabled" },
+                        provider
+                    )),
+                    item.description().to_string(),
+                )
             }
             ConfigMenuItem::OllamaTools => {
                 let enabled = app.config.get_tools_enabled();
-                (Some(if enabled { "Enabled" } else { "Disabled" }.to_string()), item.description().to_string())
+                (
+                    Some(if enabled { "Enabled" } else { "Disabled" }.to_string()),
+                    item.description().to_string(),
+                )
             }
         }
     }
@@ -526,7 +634,11 @@ impl ConfigMenu {
     }
 
     /// Handle selection from configuration menu
-    fn handle_selection(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<MenuAction> {
+    fn handle_selection(
+        &mut self,
+        app: &mut App,
+        output: &mut OutputHandler,
+    ) -> Result<MenuAction> {
         if let Some(selected_item) = self.items.get(self.state.selected_index) {
             match selected_item {
                 ConfigMenuItem::AIProvider => {
@@ -574,7 +686,9 @@ impl ConfigMenu {
     }
 
     fn configure_api_url(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
-        let current_url = app.config.get_active_provider_config()
+        let current_url = app
+            .config
+            .get_active_provider_config()
             .and_then(|c| c.api_url.clone())
             .unwrap_or_default();
         let prompt = if current_url.is_empty() {
@@ -582,7 +696,10 @@ impl ConfigMenu {
         } else {
             format!("Enter API URL (current: {}):", current_url)
         };
-        if let Some(new_url) = self.dialogs.input_dialog(&prompt, Some(&current_url), output)? {
+        if let Some(new_url) = self
+            .dialogs
+            .input_dialog(&prompt, Some(&current_url), output)?
+        {
             if !new_url.trim().is_empty() {
                 if let Some(config) = app.config.get_active_provider_config_mut() {
                     config.api_url = Some(new_url.to_string());
@@ -601,7 +718,9 @@ impl ConfigMenu {
     }
 
     fn toggle_thinking_mode(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
-        let current_enabled = app.config.get_active_provider_config()
+        let current_enabled = app
+            .config
+            .get_active_provider_config()
             .and_then(|c| c.thinking_enabled)
             .unwrap_or(false);
         let new_enabled = !current_enabled;
@@ -613,15 +732,23 @@ impl ConfigMenu {
         }
         let provider_name = &app.config.active_provider;
         if new_enabled {
-            output.print_system(&format!("💭 Thinking mode enabled for {} - AI will show reasoning", provider_name))?;
+            output.print_system(&format!(
+                "💭 Thinking mode enabled for {} - AI will show reasoning",
+                provider_name
+            ))?;
         } else {
-            output.print_system(&format!("💭 Thinking mode disabled for {} - AI will give direct answers", provider_name))?;
+            output.print_system(&format!(
+                "💭 Thinking mode disabled for {} - AI will give direct answers",
+                provider_name
+            ))?;
         }
         Ok(())
     }
 
     fn toggle_web_search(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<()> {
-        let current_enabled = app.config.get_active_provider_config()
+        let current_enabled = app
+            .config
+            .get_active_provider_config()
             .and_then(|c| c.web_search_enabled)
             .unwrap_or(false);
         let new_enabled = !current_enabled;
@@ -656,8 +783,12 @@ impl ConfigMenu {
         // Reinitialize agent client with new setting
         let _ = app.initialize_agent_client();
         if new_enabled {
-            output.print_system("🔧 Ollama tools enabled - function calling will be sent to Ollama models")?;
-            output.print_system("⚠️  Note: Not all Ollama models support tools. If you get errors, disable this.")?;
+            output.print_system(
+                "🔧 Ollama tools enabled - function calling will be sent to Ollama models",
+            )?;
+            output.print_system(
+                "⚠️  Note: Not all Ollama models support tools. If you get errors, disable this.",
+            )?;
         } else {
             output.print_system("🔧 Ollama tools disabled - function calling will not be used")?;
         }

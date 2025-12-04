@@ -1,15 +1,14 @@
 //! Exit confirmation menu for ARULA CLI
 
-use crate::ui::output::OutputHandler;
 use crate::ui::menus::common::MenuUtils;
-use crate::utils::colors::{ColorTheme, AI_HIGHLIGHT_ANSI, PRIMARY_ANSI, MISC_ANSI};
+use crate::ui::output::OutputHandler;
+use crate::utils::colors::{ColorTheme, AI_HIGHLIGHT_ANSI, MISC_ANSI, PRIMARY_ANSI};
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-    terminal,
     cursor::MoveTo,
-    style::{SetForegroundColor, ResetColor, Print},
-    ExecutableCommand, QueueableCommand,
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    style::{Print, ResetColor, SetForegroundColor},
+    terminal, ExecutableCommand, QueueableCommand,
 };
 use std::io::{stdout, Write};
 
@@ -121,8 +120,9 @@ impl ExitMenu {
         // Draw title
         let title = " Exit Confirmation ";
         let title_x = start_x + (menu_width.saturating_sub(title.len() as u16)) / 2;
-        stdout().execute(MoveTo(title_x, start_y + 1))?
-              .queue(Print(ColorTheme::primary().bold().apply_to(title)))?;
+        stdout()
+            .execute(MoveTo(title_x, start_y + 1))?
+            .queue(Print(ColorTheme::primary().bold().apply_to(title)))?;
 
         // Draw options
         for (i, option) in self.options.iter().enumerate() {
@@ -132,20 +132,26 @@ impl ExitMenu {
                 self.draw_selected_item(start_x + 1, y, menu_width - 2, option)?;
             } else {
                 // Unselected item
-                stdout().execute(MoveTo(start_x + 3, y))?
-                      .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(MISC_ANSI)))?
-                      .queue(Print(option))?
-                      .queue(ResetColor)?;
+                stdout()
+                    .execute(MoveTo(start_x + 3, y))?
+                    .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                        MISC_ANSI,
+                    )))?
+                    .queue(Print(option))?
+                    .queue(ResetColor)?;
             }
         }
 
         // Help text (left aligned)
         let help_text = "↑↓ Navigate • Enter Select • ESC Cancel";
         let help_x = start_x + 2; // Left aligned with padding
-        stdout().execute(MoveTo(help_x, start_y + 6))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(AI_HIGHLIGHT_ANSI)))?
-              .queue(Print(help_text))?
-              .queue(ResetColor)?;
+        stdout()
+            .execute(MoveTo(help_x, start_y + 6))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                AI_HIGHLIGHT_ANSI,
+            )))?
+            .queue(Print(help_text))?
+            .queue(ResetColor)?;
 
         stdout().flush()?;
         Ok(())
@@ -164,12 +170,16 @@ impl ExitMenu {
             return Ok(());
         }
 
-        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(AI_HIGHLIGHT_ANSI)))?;
+        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+            AI_HIGHLIGHT_ANSI,
+        )))?;
 
         // Draw vertical borders
         for i in 0..height {
             stdout().queue(MoveTo(x, y + i))?.queue(Print(vertical))?;
-            stdout().queue(MoveTo(x + width.saturating_sub(1), y + i))?.queue(Print(vertical))?;
+            stdout()
+                .queue(MoveTo(x + width.saturating_sub(1), y + i))?
+                .queue(Print(vertical))?;
         }
 
         // Top border
@@ -180,7 +190,9 @@ impl ExitMenu {
         stdout().queue(Print(top_right))?;
 
         // Bottom border
-        stdout().queue(MoveTo(x, y + height.saturating_sub(1)))?.queue(Print(bottom_left))?;
+        stdout()
+            .queue(MoveTo(x, y + height.saturating_sub(1)))?
+            .queue(Print(bottom_left))?;
         for _ in 1..width.saturating_sub(1) {
             stdout().queue(Print(horizontal))?;
         }
@@ -201,7 +213,9 @@ impl ExitMenu {
         let safe_text = if display_text.len() > width.saturating_sub(4) as usize {
             // Truncate if too long
             let safe_len = width.saturating_sub(7) as usize;
-            let char_end = text.char_indices().nth(safe_len)
+            let char_end = text
+                .char_indices()
+                .nth(safe_len)
                 .map(|(idx, _)| idx)
                 .unwrap_or(text.len());
             format!("▶ {}...", &text[..char_end])
@@ -209,10 +223,13 @@ impl ExitMenu {
             display_text
         };
 
-        stdout().execute(MoveTo(x + 2, y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(PRIMARY_ANSI)))?
-              .queue(Print(safe_text))?
-              .queue(ResetColor)?;
+        stdout()
+            .execute(MoveTo(x + 2, y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                PRIMARY_ANSI,
+            )))?
+            .queue(Print(safe_text))?
+            .queue(ResetColor)?;
 
         Ok(())
     }

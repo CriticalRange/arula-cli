@@ -78,9 +78,8 @@ fn bench_large_json_processing(c: &mut Criterion) {
     for i in 0..1000 {
         files.push(format!("/usr/lib/lib{}.so", i));
     }
-    large_json["results"] = serde_json::Value::Array(
-        files.into_iter().map(serde_json::Value::String).collect()
-    );
+    large_json["results"] =
+        serde_json::Value::Array(files.into_iter().map(serde_json::Value::String).collect());
 
     let large_json_str = serde_json::to_string(&large_json).unwrap();
 
@@ -93,7 +92,8 @@ fn bench_large_json_processing(c: &mut Criterion) {
 
     c.bench_function("large_json_deserialize", |b| {
         b.iter(|| {
-            let parsed: serde_json::Value = serde_json::from_str(&black_box(&large_json_str)).unwrap();
+            let parsed: serde_json::Value =
+                serde_json::from_str(&black_box(&large_json_str)).unwrap();
             black_box(parsed);
         });
     });
@@ -161,11 +161,9 @@ fn bench_concurrent_operations(c: &mut Criterion) {
             use std::sync::Arc;
             use std::thread;
 
-            let handles: Vec<_> = (0..4).map(|i| {
-                thread::spawn(move || {
-                    mock_tool_execution(black_box(i + 5), black_box(1))
-                })
-            }).collect();
+            let handles: Vec<_> = (0..4)
+                .map(|i| thread::spawn(move || mock_tool_execution(black_box(i + 5), black_box(1))))
+                .collect();
 
             for handle in handles {
                 let _result = handle.join();

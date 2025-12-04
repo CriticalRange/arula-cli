@@ -203,11 +203,14 @@ mod tests {
         writeln!(temp, "line 3").unwrap();
 
         let tool = FileReadTool::new();
-        let result = tool.execute(FileReadParams {
-            path: temp.path().to_string_lossy().to_string(),
-            start_line: None,
-            end_line: None,
-        }).await.unwrap();
+        let result = tool
+            .execute(FileReadParams {
+                path: temp.path().to_string_lossy().to_string(),
+                start_line: None,
+                end_line: None,
+            })
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert!(result.content.contains("line 1"));
@@ -224,11 +227,14 @@ mod tests {
         writeln!(temp, "line 4").unwrap();
 
         let tool = FileReadTool::new();
-        let result = tool.execute(FileReadParams {
-            path: temp.path().to_string_lossy().to_string(),
-            start_line: Some(2),
-            end_line: Some(3),
-        }).await.unwrap();
+        let result = tool
+            .execute(FileReadParams {
+                path: temp.path().to_string_lossy().to_string(),
+                start_line: Some(2),
+                end_line: Some(3),
+            })
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert!(!result.content.contains("line 1"));
@@ -240,11 +246,13 @@ mod tests {
     #[tokio::test]
     async fn test_file_not_found() {
         let tool = FileReadTool::new();
-        let result = tool.execute(FileReadParams {
-            path: "/nonexistent/path/file.txt".to_string(),
-            start_line: None,
-            end_line: None,
-        }).await;
+        let result = tool
+            .execute(FileReadParams {
+                path: "/nonexistent/path/file.txt".to_string(),
+                start_line: None,
+                end_line: None,
+            })
+            .await;
 
         assert!(result.is_err());
     }
@@ -252,14 +260,15 @@ mod tests {
     #[tokio::test]
     async fn test_empty_path() {
         let tool = FileReadTool::new();
-        let result = tool.execute(FileReadParams {
-            path: "".to_string(),
-            start_line: None,
-            end_line: None,
-        }).await;
+        let result = tool
+            .execute(FileReadParams {
+                path: "".to_string(),
+                start_line: None,
+                end_line: None,
+            })
+            .await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("empty"));
     }
 }
-

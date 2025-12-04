@@ -131,10 +131,17 @@ fn main() {
     spinner.start("Scanning project files").ok();
 
     let files = vec![
-        "package.json", "tsconfig.json", "webpack.config.js",
-        "src/index.ts", "src/app.ts", "src/utils.ts",
-        "tests/unit.test.ts", "tests/integration.test.ts",
-        "README.md", "LICENSE", ".gitignore",
+        "package.json",
+        "tsconfig.json",
+        "webpack.config.js",
+        "src/index.ts",
+        "src/app.ts",
+        "src/utils.ts",
+        "tests/unit.test.ts",
+        "tests/integration.test.ts",
+        "README.md",
+        "LICENSE",
+        ".gitignore",
     ];
 
     for file in files {

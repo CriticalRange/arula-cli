@@ -1,10 +1,10 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serde_json;
+use serde_yaml;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
-use serde_json;
-use serde_yaml; // Only for migration
+use std::path::Path; // Only for migration
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -42,13 +42,13 @@ pub struct ProviderConfig {
     pub enable_usage_tracking: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub web_search_enabled: Option<bool>,
-    
+
     /// Enable streaming mode for API responses (default: true)
     /// When enabled, responses are displayed as they arrive
     /// When disabled, waits for complete response before displaying
     #[serde(skip_serializing_if = "Option::is_none")]
     pub streaming: Option<bool>,
-    
+
     /// Enable tools/function calling for Ollama (default: false)
     /// Some Ollama models support tool calling, but it may cause issues with others
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -144,8 +144,8 @@ impl AiConfig {
         match self.provider.to_lowercase().as_str() {
             "custom" | "ollama" => true, // All fields editable for custom and ollama
             _ => match field {
-                ProviderField::Model => true,  // Model always editable
-                ProviderField::ApiKey => true, // API key always editable
+                ProviderField::Model => true,   // Model always editable
+                ProviderField::ApiKey => true,  // API key always editable
                 ProviderField::ApiUrl => false, // URL not editable for predefined providers
             },
         }
@@ -184,7 +184,7 @@ impl Config {
     pub fn get_config_path() -> String {
         // Use cross-platform home directory detection
         let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))  // Windows
+            .or_else(|_| std::env::var("USERPROFILE")) // Windows
             .unwrap_or_else(|_| ".".to_string());
         format!("{}/.arula/config.json", home)
     }
@@ -194,7 +194,7 @@ impl Config {
         let config_file = Path::new(&config_path);
         // Use cross-platform home directory detection
         let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))  // Windows
+            .or_else(|_| std::env::var("USERPROFILE")) // Windows
             .unwrap_or_else(|_| ".".to_string());
         let old_yaml_path = format!("{}/.arula/config.yaml", home);
 
@@ -254,7 +254,8 @@ impl Config {
                 tools_enabled: None,
             };
 
-            self.providers.insert(legacy.provider.clone(), provider_config);
+            self.providers
+                .insert(legacy.provider.clone(), provider_config);
             self.active_provider = legacy.provider;
         }
     }
@@ -415,37 +416,43 @@ impl Config {
         let endpoint = std::env::var("ZAI_BASE_URL")
             .unwrap_or_else(|_| "https://api.z.ai/api/paas/v4/".to_string());
 
-        let model = std::env::var("ZAI_MODEL")
-            .unwrap_or_else(|_| "GLM-4.6".to_string());
+        let model = std::env::var("ZAI_MODEL").unwrap_or_else(|_| "GLM-4.6".to_string());
 
         let mut config = Self::default();
         config.active_provider = "z.ai coding plan".to_string();
-        config.providers.insert("z.ai coding plan".to_string(), ProviderConfig {
-            model,
-            api_url: Some(endpoint),
-            api_key,
-            thinking_enabled: std::env::var("ZAI_THINKING_ENABLED")
-                .ok()
-                .and_then(|v| v.parse().ok()),
-            max_retries: std::env::var("ZAI_MAX_RETRIES")
-                .ok()
-                .and_then(|v| v.parse().ok()),
-            timeout_seconds: std::env::var("ZAI_TIMEOUT_SECONDS")
-                .ok()
-                .and_then(|v| v.parse().ok()),
-            enable_usage_tracking: Some(std::env::var("ZAI_ENABLE_USAGE_TRACKING")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(true)),
-            web_search_enabled: Some(std::env::var("ZAI_ENABLE_WEB_SEARCH")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(false)),
-            streaming: std::env::var("ARULA_STREAMING")
-                .ok()
-                .and_then(|v| v.parse().ok()),
-            tools_enabled: None,
-        });
+        config.providers.insert(
+            "z.ai coding plan".to_string(),
+            ProviderConfig {
+                model,
+                api_url: Some(endpoint),
+                api_key,
+                thinking_enabled: std::env::var("ZAI_THINKING_ENABLED")
+                    .ok()
+                    .and_then(|v| v.parse().ok()),
+                max_retries: std::env::var("ZAI_MAX_RETRIES")
+                    .ok()
+                    .and_then(|v| v.parse().ok()),
+                timeout_seconds: std::env::var("ZAI_TIMEOUT_SECONDS")
+                    .ok()
+                    .and_then(|v| v.parse().ok()),
+                enable_usage_tracking: Some(
+                    std::env::var("ZAI_ENABLE_USAGE_TRACKING")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(true),
+                ),
+                web_search_enabled: Some(
+                    std::env::var("ZAI_ENABLE_WEB_SEARCH")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(false),
+                ),
+                streaming: std::env::var("ARULA_STREAMING")
+                    .ok()
+                    .and_then(|v| v.parse().ok()),
+                tools_enabled: None,
+            },
+        );
 
         Ok(config)
     }
@@ -529,8 +536,8 @@ impl Config {
         match self.active_provider.to_lowercase().as_str() {
             "custom" | "ollama" => true, // All fields editable for custom and ollama
             _ => match field {
-                ProviderField::Model => true,  // Model always editable
-                ProviderField::ApiKey => true, // API key always editable
+                ProviderField::Model => true,   // Model always editable
+                ProviderField::ApiKey => true,  // API key always editable
                 ProviderField::ApiUrl => false, // URL not editable for predefined providers
             },
         }
@@ -544,7 +551,13 @@ impl Config {
     }
 
     /// Add or update a custom provider
-    pub fn add_custom_provider(&mut self, name: &str, model: &str, api_url: &str, api_key: &str) -> Result<()> {
+    pub fn add_custom_provider(
+        &mut self,
+        name: &str,
+        model: &str,
+        api_url: &str,
+        api_key: &str,
+    ) -> Result<()> {
         self.providers.insert(
             name.to_string(),
             ProviderConfig {
@@ -653,7 +666,7 @@ impl Config {
 mod tests {
     use super::*;
     use std::fs;
-    use tempfile::{TempDir, NamedTempFile};
+    use tempfile::{NamedTempFile, TempDir};
 
     #[test]
     fn test_config_default() {
@@ -677,7 +690,12 @@ mod tests {
 
     #[test]
     fn test_config_new_for_test() {
-        let config = Config::new_for_test("anthropic", "claude-3", "https://api.anthropic.com", "test-key");
+        let config = Config::new_for_test(
+            "anthropic",
+            "claude-3",
+            "https://api.anthropic.com",
+            "test-key",
+        );
 
         assert_eq!(config.active_provider, "anthropic");
         assert_eq!(config.get_model(), "claude-3");
@@ -695,7 +713,7 @@ mod tests {
             "test-provider",
             "test-model",
             "https://test.api.com",
-            "test-api-key"
+            "test-api-key",
         );
 
         // Save the config
@@ -708,7 +726,10 @@ mod tests {
         let loaded_config = Config::load_from_file(&config_path)?;
 
         // Verify the loaded config matches the original
-        assert_eq!(loaded_config.active_provider, original_config.active_provider);
+        assert_eq!(
+            loaded_config.active_provider,
+            original_config.active_provider
+        );
         assert_eq!(loaded_config.get_model(), original_config.get_model());
         assert_eq!(loaded_config.get_api_url(), original_config.get_api_url());
         assert_eq!(loaded_config.get_api_key(), original_config.get_api_key());
@@ -719,7 +740,11 @@ mod tests {
     #[test]
     fn test_save_creates_parent_directories() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let nested_path = temp_dir.path().join("nested").join("dir").join("config.yaml");
+        let nested_path = temp_dir
+            .path()
+            .join("nested")
+            .join("dir")
+            .join("config.yaml");
 
         // Ensure the nested directory doesn't exist
         assert!(!nested_path.parent().unwrap().exists());
@@ -782,7 +807,8 @@ mod tests {
         let config_path = arula_dir.join("config.yaml");
 
         // Create a custom config file
-        let test_config = Config::new_for_test("custom", "custom-model", "custom-url", "custom-key");
+        let test_config =
+            Config::new_for_test("custom", "custom-model", "custom-url", "custom-key");
         test_config.save_to_file(&config_path)?;
 
         // Temporarily override HOME to point to our test directory
@@ -826,7 +852,7 @@ mod tests {
             "provider-test",
             "model-test",
             "https://api-test.com",
-            "key-test-123"
+            "key-test-123",
         );
 
         // Serialize to JSON
@@ -849,7 +875,7 @@ mod tests {
             "json-provider",
             "json-model",
             "https://json.api.com",
-            "json-key"
+            "json-key",
         );
 
         // Serialize to JSON
@@ -1067,7 +1093,8 @@ mod tests {
 
         // Test with very long strings
         let long_string = "a".repeat(1000);
-        let long_config = Config::new_for_test(&long_string, &long_string, &long_string, &long_string);
+        let long_config =
+            Config::new_for_test(&long_string, &long_string, &long_string, &long_string);
         assert_eq!(long_config.active_provider.len(), 1000);
         assert_eq!(long_config.get_model().len(), 1000);
 

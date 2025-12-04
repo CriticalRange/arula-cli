@@ -56,7 +56,8 @@ pub fn format_tool_call_box(tool_name: &str, arguments: &str) -> String {
     // Build description based on tool type
     let description = match tool_name {
         "execute_bash" => {
-            let cmd = args.as_ref()
+            let cmd = args
+                .as_ref()
                 .ok()
                 .and_then(|v| v.get("command"))
                 .and_then(|c| c.as_str())
@@ -69,7 +70,8 @@ pub fn format_tool_call_box(tool_name: &str, arguments: &str) -> String {
             format!("Running: {}", display_cmd)
         }
         "read_file" => {
-            let path = args.as_ref()
+            let path = args
+                .as_ref()
                 .ok()
                 .and_then(|v| v.get("path"))
                 .and_then(|p| p.as_str())
@@ -77,7 +79,8 @@ pub fn format_tool_call_box(tool_name: &str, arguments: &str) -> String {
             format!("Reading: {}", path)
         }
         "write_file" => {
-            let path = args.as_ref()
+            let path = args
+                .as_ref()
                 .ok()
                 .and_then(|v| v.get("path"))
                 .and_then(|p| p.as_str())
@@ -85,7 +88,8 @@ pub fn format_tool_call_box(tool_name: &str, arguments: &str) -> String {
             format!("Writing: {}", path)
         }
         "edit_file" => {
-            let path = args.as_ref()
+            let path = args
+                .as_ref()
                 .ok()
                 .and_then(|v| v.get("path"))
                 .and_then(|p| p.as_str())
@@ -93,7 +97,8 @@ pub fn format_tool_call_box(tool_name: &str, arguments: &str) -> String {
             format!("Editing: {}", path)
         }
         "list_directory" => {
-            let path = args.as_ref()
+            let path = args
+                .as_ref()
                 .ok()
                 .and_then(|v| v.get("path"))
                 .and_then(|p| p.as_str())
@@ -101,7 +106,8 @@ pub fn format_tool_call_box(tool_name: &str, arguments: &str) -> String {
             format!("Listing: {}", path)
         }
         "search_files" => {
-            let query = args.as_ref()
+            let query = args
+                .as_ref()
                 .ok()
                 .and_then(|v| v.get("pattern").or(v.get("query")))
                 .and_then(|q| q.as_str())
@@ -109,7 +115,8 @@ pub fn format_tool_call_box(tool_name: &str, arguments: &str) -> String {
             format!("Searching: {}", query)
         }
         "web_search" => {
-            let query = args.as_ref()
+            let query = args
+                .as_ref()
                 .ok()
                 .and_then(|v| v.get("query"))
                 .and_then(|q| q.as_str())
@@ -131,7 +138,11 @@ pub fn format_tool_call_box(tool_name: &str, arguments: &str) -> String {
 ///
 /// Creates a summary of the tool execution result.
 pub fn format_tool_result_box(tool_name: &str, result: &Value, success: bool) -> String {
-    let status_icon = if success { icons::SUCCESS } else { icons::ERROR };
+    let status_icon = if success {
+        icons::SUCCESS
+    } else {
+        icons::ERROR
+    };
     let status_style = if success {
         style(status_icon).green()
     } else {
@@ -140,11 +151,7 @@ pub fn format_tool_result_box(tool_name: &str, result: &Value, success: bool) ->
 
     let summary = summarize_result(tool_name, result);
 
-    format!(
-        "{} {}",
-        status_style,
-        style(&summary).dim()
-    )
+    format!("{} {}", status_style, style(&summary).dim())
 }
 
 /// Summarize a tool result in human-readable format
@@ -182,15 +189,20 @@ pub fn summarize_result(tool_name: &str, result: &Value) -> String {
             format!("Read {} lines", lines)
         }
         "write_file" => {
-            let bytes = inner.get("bytes_written").and_then(|b| b.as_u64()).unwrap_or(0);
+            let bytes = inner
+                .get("bytes_written")
+                .and_then(|b| b.as_u64())
+                .unwrap_or(0);
             format!("Wrote {} bytes", bytes)
         }
         "list_directory" => {
             if let Some(entries) = inner.get("entries").and_then(|e| e.as_array()) {
-                let files = entries.iter()
+                let files = entries
+                    .iter()
                     .filter(|e| e.get("file_type").and_then(|t| t.as_str()) == Some("file"))
                     .count();
-                let dirs = entries.iter()
+                let dirs = entries
+                    .iter()
                     .filter(|e| e.get("file_type").and_then(|t| t.as_str()) == Some("directory"))
                     .count();
                 format!("Found {} files, {} directories", files, dirs)
@@ -199,16 +211,29 @@ pub fn summarize_result(tool_name: &str, result: &Value) -> String {
             }
         }
         "search_files" => {
-            let matches = inner.get("total_matches").and_then(|m| m.as_u64()).unwrap_or(0);
-            let files = inner.get("files_searched").and_then(|f| f.as_u64()).unwrap_or(0);
+            let matches = inner
+                .get("total_matches")
+                .and_then(|m| m.as_u64())
+                .unwrap_or(0);
+            let files = inner
+                .get("files_searched")
+                .and_then(|f| f.as_u64())
+                .unwrap_or(0);
             format!("Found {} matches in {} files", matches, files)
         }
         "web_search" => {
-            let count = inner.get("result_count").and_then(|c| c.as_u64()).unwrap_or(0);
+            let count = inner
+                .get("result_count")
+                .and_then(|c| c.as_u64())
+                .unwrap_or(0);
             format!("Found {} results", count)
         }
         _ => {
-            if inner.get("success").and_then(|s| s.as_bool()).unwrap_or(false) {
+            if inner
+                .get("success")
+                .and_then(|s| s.as_bool())
+                .unwrap_or(false)
+            {
                 "Success".to_string()
             } else {
                 truncate_json(inner, 80)
@@ -244,14 +269,17 @@ pub fn format_detailed_result(tool_name: &str, result: &Value, success: bool) ->
 
     output.push_str(&format!(
         "{}\n",
-        style(format!("┌─ {} Result ─────────────────────────┐", tool_name)).dim()
+        style(format!(
+            "┌─ {} Result ─────────────────────────┐",
+            tool_name
+        ))
+        .dim()
     ));
     output.push_str(&format!("{} {}\n", style("│").dim(), status));
 
     // Format result content
     let inner = result.get("Ok").unwrap_or(result);
-    let formatted = serde_json::to_string_pretty(inner)
-        .unwrap_or_else(|_| inner.to_string());
+    let formatted = serde_json::to_string_pretty(inner).unwrap_or_else(|_| inner.to_string());
 
     for line in formatted.lines().take(20) {
         output.push_str(&format!("{} {}\n", style("│").dim(), line));
@@ -330,4 +358,3 @@ mod tests {
         assert_eq!(truncate_string("this is a long string", 10), "this is...");
     }
 }
-

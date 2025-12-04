@@ -92,10 +92,7 @@ pub enum StreamEvent {
         name: String,
     },
     /// Tool call arguments chunk
-    ToolCallDelta {
-        index: usize,
-        arguments: String,
-    },
+    ToolCallDelta { index: usize, arguments: String },
     /// Tool call completed (all deltas accumulated)
     ToolCallComplete(ToolCall),
     /// Stream finished with reason
@@ -138,10 +135,7 @@ impl ToolCallAccumulator {
 /// # Returns
 ///
 /// The final accumulated response with all content and tool calls
-pub async fn process_stream<F>(
-    response: Response,
-    mut callback: F,
-) -> Result<ApiResponse>
+pub async fn process_stream<F>(response: Response, mut callback: F) -> Result<ApiResponse>
 where
     F: FnMut(StreamEvent),
 {
@@ -166,7 +160,7 @@ where
         // - Ollama/NDJSON format: plain JSON objects
         let data = if line.starts_with("data: ") {
             let data = &line[6..]; // Skip "data: " prefix
-            // Stream end marker (SSE)
+                                   // Stream end marker (SSE)
             if data == "[DONE]" {
                 break;
             }
@@ -190,24 +184,30 @@ where
                             callback(StreamEvent::TextDelta(content.to_string()));
                         }
                     }
-                    
+
                     // Extract tool calls from final Ollama response
-                    if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array()) {
+                    if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array())
+                    {
                         for (index, tc) in tool_calls.iter().enumerate() {
                             if let Some(function) = tc.get("function") {
-                                let name = function.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                                let name = function
+                                    .get("name")
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
                                 let arguments = if let Some(args) = function.get("arguments") {
                                     if args.is_string() {
                                         args.as_str().unwrap_or("{}").to_string()
                                     } else {
-                                        serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string())
+                                        serde_json::to_string(args)
+                                            .unwrap_or_else(|_| "{}".to_string())
                                     }
                                 } else {
                                     "{}".to_string()
                                 };
-                                
+
                                 let id = format!("ollama_call_{}", index);
-                                
+
                                 // Only add if not already tracked
                                 if !tool_accumulators.contains_key(&index) {
                                     callback(StreamEvent::ToolCallStart {
@@ -219,11 +219,14 @@ where
                                         index,
                                         arguments: arguments.clone(),
                                     });
-                                    tool_accumulators.insert(index, ToolCallAccumulator {
-                                        id,
-                                        name,
-                                        arguments,
-                                    });
+                                    tool_accumulators.insert(
+                                        index,
+                                        ToolCallAccumulator {
+                                            id,
+                                            name,
+                                            arguments,
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -253,27 +256,34 @@ where
                                 callback(StreamEvent::TextDelta(content.to_string()));
                             }
                         }
-                        
+
                         // Extract tool calls from Ollama response
                         // Ollama format: { "message": { "tool_calls": [{ "function": { "name": "...", "arguments": {...} } }] } }
-                        if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array()) {
+                        if let Some(tool_calls) =
+                            message.get("tool_calls").and_then(|tc| tc.as_array())
+                        {
                             for (index, tc) in tool_calls.iter().enumerate() {
                                 if let Some(function) = tc.get("function") {
-                                    let name = function.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                                    let name = function
+                                        .get("name")
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
                                     // Ollama returns arguments as object, convert to string
                                     let arguments = if let Some(args) = function.get("arguments") {
                                         if args.is_string() {
                                             args.as_str().unwrap_or("{}").to_string()
                                         } else {
-                                            serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string())
+                                            serde_json::to_string(args)
+                                                .unwrap_or_else(|_| "{}".to_string())
                                         }
                                     } else {
                                         "{}".to_string()
                                     };
-                                    
+
                                     // Generate a unique ID for the tool call
                                     let id = format!("ollama_call_{}", index);
-                                    
+
                                     callback(StreamEvent::ToolCallStart {
                                         index,
                                         id: id.clone(),
@@ -283,13 +293,16 @@ where
                                         index,
                                         arguments: arguments.clone(),
                                     });
-                                    
+
                                     // Store in accumulator
-                                    tool_accumulators.insert(index, ToolCallAccumulator {
-                                        id,
-                                        name,
-                                        arguments,
-                                    });
+                                    tool_accumulators.insert(
+                                        index,
+                                        ToolCallAccumulator {
+                                            id,
+                                            name,
+                                            arguments,
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -341,14 +354,14 @@ where
                     callback(StreamEvent::ThinkingDelta(reasoning));
                 }
             }
-            
+
             // Handle thinking content (Ollama deepseek-r1, qwq, etc.)
             if let Some(thinking) = delta.thinking {
                 if !thinking.is_empty() {
                     callback(StreamEvent::ThinkingDelta(thinking));
                 }
             }
-            
+
             // Handle text content
             if let Some(content) = delta.content {
                 if !content.is_empty() {
@@ -431,7 +444,7 @@ where
 }
 
 /// Build a streaming request body for OpenAI-compatible APIs
-/// 
+///
 /// # Arguments
 /// * `model` - The model name
 /// * `messages` - The messages array
@@ -450,7 +463,7 @@ pub fn build_streaming_request(
 }
 
 /// Build a streaming request body with configurable options
-/// 
+///
 /// Z.AI has specific requirements:
 /// - Does not support stream_options (pass include_stream_options: false)
 /// - Does not support tool_choice with streaming (pass include_tool_choice: false)
@@ -462,7 +475,15 @@ pub fn build_streaming_request_with_options(
     max_tokens: u32,
     include_stream_options: bool,
 ) -> Value {
-    build_streaming_request_full(model, messages, tools, temperature, max_tokens, include_stream_options, true)
+    build_streaming_request_full(
+        model,
+        messages,
+        tools,
+        temperature,
+        max_tokens,
+        include_stream_options,
+        true,
+    )
 }
 
 /// Build a streaming request body with full control over all options
@@ -565,7 +586,10 @@ pub fn parse_response(response_json: &Value) -> Result<ApiResponse> {
     // Parse usage
     let usage = response_json["usage"].as_object().map(|u| Usage {
         prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-        completion_tokens: u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        completion_tokens: u
+            .get("completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
         total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
     });
 
@@ -573,9 +597,7 @@ pub fn parse_response(response_json: &Value) -> Result<ApiResponse> {
     let created = response_json["created"].as_u64();
 
     // Check for reasoning content (Claude/Z.AI thinking mode)
-    let reasoning_content = message["reasoning_content"]
-        .as_str()
-        .map(String::from);
+    let reasoning_content = message["reasoning_content"].as_str().map(String::from);
 
     Ok(ApiResponse {
         response: content,
@@ -613,7 +635,9 @@ mod tests {
         let messages = vec![serde_json::json!({"role": "user", "content": "Hi"})];
         let request = build_streaming_request("gpt-4", &messages, None, 0.7, 2048);
         assert_eq!(request["stream"], true);
-        assert!(request["stream_options"]["include_usage"].as_bool().unwrap());
+        assert!(request["stream_options"]["include_usage"]
+            .as_bool()
+            .unwrap());
     }
 
     #[test]
@@ -641,4 +665,3 @@ mod tests {
         assert_eq!(tc.function.arguments, r#"{"location":"Paris"}"#);
     }
 }
-

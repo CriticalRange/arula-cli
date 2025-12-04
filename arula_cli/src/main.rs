@@ -23,14 +23,14 @@ struct Cli {
     debug: bool,
 }
 
-use arula_core::app::AiResponse;
-use arula_core::utils::changelog;
-use arula_core::App;
-use arula_core::api::agent::ToolResult;
 use arula_cli::ui::menus::main_menu::MainMenu;
 use arula_cli::ui::output::OutputHandler;
 use arula_cli::ui::response_display::ResponseDisplay;
 use arula_cli::ui::ThinkingWidget;
+use arula_core::api::agent::ToolResult;
+use arula_core::app::AiResponse;
+use arula_core::utils::changelog;
+use arula_core::App;
 
 fn graceful_exit() -> ! {
     std::process::exit(0);
@@ -54,7 +54,8 @@ fn print_changelog() -> Result<()> {
 
     // Fetch changelog (tries remote first, falls back to local)
     let changelog = Changelog::fetch_from_remote().unwrap_or_else(|_| {
-        Changelog::fetch_local().unwrap_or_else(|_| Changelog::parse(&Changelog::default_changelog()))
+        Changelog::fetch_local()
+            .unwrap_or_else(|_| Changelog::parse(&Changelog::default_changelog()))
     });
 
     // Detect actual build type from git
@@ -76,16 +77,10 @@ fn print_changelog() -> Result<()> {
     let changes = changelog.get_recent_changes(5);
 
     if changes.is_empty() {
-        println!(
-            "{}",
-            console::style("  • No recent changes").dim()
-        );
+        println!("{}", console::style("  • No recent changes").dim());
     } else {
         for change in changes {
-            println!(
-                "{}",
-                console::style(format!("  {}", change)).dim()
-            );
+            println!("{}", console::style(format!("  {}", change)).dim());
         }
     }
 
@@ -166,17 +161,17 @@ async fn main() -> Result<()> {
             }
             Ok(_) => {
                 let input = input.trim().to_string();
-                
+
                 if input.is_empty() {
                     continue;
                 }
-                
+
                 // Handle special commands
                 if input == "exit" || input == "quit" {
                     output.print_system("Goodbye! 👋")?;
                     graceful_exit();
                 }
-                
+
                 if input == "m" || input == "menu" {
                     match main_menu.show(&mut app, &mut output) {
                         Ok(_) => {}
@@ -187,7 +182,7 @@ async fn main() -> Result<()> {
 
                 // Process AI request
                 process_ai_request(&input, &mut app, &mut output, &mut response_display).await?;
-                
+
                 // Newline after AI response
                 println!();
             }
@@ -211,7 +206,8 @@ async fn process_ai_request(
             let mut stream_started = false;
             let mut thinking_widget = ThinkingWidget::new();
             // Track tool calls by ID to get the tool name for results
-            let mut pending_tools: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            let mut pending_tools: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
 
             // Poll for AI responses
             loop {
@@ -219,7 +215,7 @@ async fn process_ai_request(
                 if thinking_widget.is_active() {
                     let _ = thinking_widget.pulse();
                 }
-                
+
                 if let Some(response) = app.check_ai_response_nonblocking() {
                     match response {
                         AiResponse::AgentStreamStart => {
@@ -249,7 +245,11 @@ async fn process_ai_request(
                             // Use stream_chunk for proper markdown rendering
                             let _ = output.stream_chunk(&chunk);
                         }
-                        AiResponse::AgentToolCall { id, name, arguments } => {
+                        AiResponse::AgentToolCall {
+                            id,
+                            name,
+                            arguments,
+                        } => {
                             // Finish thinking if active
                             if thinking_widget.is_active() {
                                 let _ = thinking_widget.finish();
@@ -260,17 +260,28 @@ async fn process_ai_request(
                             }
                             // Store tool name for when we get the result
                             pending_tools.insert(id.clone(), name.clone());
-                            let _ = response_display.display_tool_call_start(&id, &name, &arguments);
+                            let _ =
+                                response_display.display_tool_call_start(&id, &name, &arguments);
                         }
-                        AiResponse::AgentToolResult { tool_call_id, success, result } => {
+                        AiResponse::AgentToolResult {
+                            tool_call_id,
+                            success,
+                            result,
+                        } => {
                             // Get the actual tool name from our tracking map
-                            let tool_name = pending_tools.remove(&tool_call_id).unwrap_or_else(|| "Tool".to_string());
+                            let tool_name = pending_tools
+                                .remove(&tool_call_id)
+                                .unwrap_or_else(|| "Tool".to_string());
                             let tool_result = ToolResult {
                                 success,
                                 data: result.clone(),
                                 error: None,
                             };
-                            let _ = response_display.display_tool_result(&tool_call_id, &tool_name, &tool_result);
+                            let _ = response_display.display_tool_result(
+                                &tool_call_id,
+                                &tool_name,
+                                &tool_result,
+                            );
                         }
                         AiResponse::AgentReasoningContent(content) => {
                             // Legacy reasoning content - show in thinking widget

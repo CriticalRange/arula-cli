@@ -11,11 +11,11 @@
 //! - `http_client` - Optimized HTTP client with connection pooling
 //! - `streaming` - True SSE streaming with tool call accumulation
 
-pub mod api;
 pub mod agent;
 pub mod agent_client;
-pub mod models;
+pub mod api;
 pub mod http_client;
+pub mod models;
 pub mod streaming;
 
 // Note: Types are available via their modules:

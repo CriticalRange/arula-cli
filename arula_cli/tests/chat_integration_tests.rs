@@ -1,10 +1,8 @@
 //! Integration tests for the chat module
 
-use arula_cli::chat::{
-    ChatMessage, EnhancedChatMessage, MessageType, ChatRole
-};
-use serde_json;
+use arula_cli::chat::{ChatMessage, ChatRole, EnhancedChatMessage, MessageType};
 use chrono::{Local, Utc};
+use serde_json;
 
 #[test]
 fn test_chat_message_lifecycle() {
@@ -41,16 +39,14 @@ fn test_enhanced_chat_message_workflow() {
         role: ChatRole::Assistant,
         content: "I'll list the files for you".to_string(),
         timestamp: Utc::now(),
-        tool_calls: Some(vec![
-            serde_json::json!({
-                "id": "call_1",
-                "type": "function",
-                "function": {
-                    "name": "bash_tool",
-                    "arguments": "{\"command\": \"ls -la\"}"
-                }
-            })
-        ]),
+        tool_calls: Some(vec![serde_json::json!({
+            "id": "call_1",
+            "type": "function",
+            "function": {
+                "name": "bash_tool",
+                "arguments": "{\"command\": \"ls -la\"}"
+            }
+        })]),
         tool_results: None,
     };
 
@@ -60,13 +56,11 @@ fn test_enhanced_chat_message_workflow() {
         content: "Tool execution completed".to_string(),
         timestamp: Utc::now(),
         tool_calls: None,
-        tool_results: Some(vec![
-            serde_json::json!({
-                "tool_call_id": "call_1",
-                "success": true,
-                "result": "total 8\ndrwxr-xr-x  2 user user 4096 Jan 1 12:00 .\ndrwxr-xr-x 10 user user 4096 Jan 1 11:00 .."
-            })
-        ]),
+        tool_results: Some(vec![serde_json::json!({
+            "tool_call_id": "call_1",
+            "success": true,
+            "result": "total 8\ndrwxr-xr-x  2 user user 4096 Jan 1 12:00 .\ndrwxr-xr-x 10 user user 4096 Jan 1 11:00 .."
+        })]),
     };
 
     // Verify the workflow
@@ -83,23 +77,21 @@ fn test_chat_conversation_flow() {
 
     // Add system message
     conversation.push(ChatMessage::new_system_message(
-        "You are a helpful AI assistant."
+        "You are a helpful AI assistant.",
     ));
 
     // Add user message
-    conversation.push(ChatMessage::new_user_message(
-        "What can you help me with?"
-    ));
+    conversation.push(ChatMessage::new_user_message("What can you help me with?"));
 
     // Add assistant response
     conversation.push(ChatMessage::new_arula_message(
-        "I can help you with coding, file operations, and running commands."
+        "I can help you with coding, file operations, and running commands.",
     ));
 
     // Add tool call
     conversation.push(ChatMessage::new_tool_call(
         "Execute command".to_string(),
-        r#"{"name": "bash_tool", "arguments": "pwd"}"#.to_string()
+        r#"{"name": "bash_tool", "arguments": "pwd"}"#.to_string(),
     ));
 
     // Verify conversation structure
@@ -111,7 +103,10 @@ fn test_chat_conversation_flow() {
 
     // Verify content
     assert_eq!(conversation[1].content, "What can you help me with?");
-    assert_eq!(conversation[2].content, "I can help you with coding, file operations, and running commands.");
+    assert_eq!(
+        conversation[2].content,
+        "I can help you with coding, file operations, and running commands."
+    );
 }
 
 #[test]
@@ -216,18 +211,20 @@ fn test_message_edge_cases() {
     assert_eq!(deserialized.content.len(), 10000);
 
     // Test with special characters and Unicode
-    let unicode_message = ChatMessage::new_arula_message(
-        "Special chars: !@#$%^&*()🚀🎉中文字符"
-    );
+    let unicode_message = ChatMessage::new_arula_message("Special chars: !@#$%^&*()🚀🎉中文字符");
 
     let serialized = serde_json::to_string(&unicode_message).unwrap();
     let deserialized: ChatMessage = serde_json::from_str(&serialized).unwrap();
-    assert_eq!(deserialized.content, "Special chars: !@#$%^&*()🚀🎉中文字符");
+    assert_eq!(
+        deserialized.content,
+        "Special chars: !@#$%^&*()🚀🎉中文字符"
+    );
 
     // Test with JSON content in tool calls
     let json_tool_call = ChatMessage::new_tool_call(
         "Complex tool call".to_string(),
-        r#"{"nested": {"array": [1, 2, 3], "object": {"key": "value"}}, "unicode": "🚀"}"#.to_string()
+        r#"{"nested": {"array": [1, 2, 3], "object": {"key": "value"}}, "unicode": "🚀"}"#
+            .to_string(),
     );
 
     let serialized = serde_json::to_string(&json_tool_call).unwrap();
@@ -355,10 +352,8 @@ fn test_message_comparison_and_equality() {
 
 #[test]
 fn test_message_debug_formats() {
-    let message = ChatMessage::new_tool_call(
-        "Debug test".to_string(),
-        r#"{"test": true}"#.to_string()
-    );
+    let message =
+        ChatMessage::new_tool_call("Debug test".to_string(), r#"{"test": true}"#.to_string());
 
     let debug_str = format!("{:?}", message);
     assert!(debug_str.contains("ChatMessage"));

@@ -119,7 +119,9 @@ impl ToolProgressManager {
 
     /// Check if all tools are completed
     pub fn all_completed(&self) -> bool {
-        self.tools.values().all(|t| matches!(t.status, ToolStatus::Completed { .. }))
+        self.tools
+            .values()
+            .all(|t| matches!(t.status, ToolStatus::Completed { .. }))
     }
 
     /// Finalize and commit results to scrollback

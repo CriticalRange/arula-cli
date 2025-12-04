@@ -1,6 +1,8 @@
 //! Conversation history management menu
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
+use console::style;
 use crossterm::{
     cursor::MoveTo,
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -11,13 +13,11 @@ use crossterm::{
 use std::io::{stdout, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use console::style;
-use chrono::{DateTime, Utc};
 
+use super::common::MenuResult;
 use crate::app::App;
 use crate::ui::output::OutputHandler;
 use crate::utils::conversation::{Conversation, ConversationSummary};
-use super::common::MenuResult;
 
 pub struct ConversationMenu {
     selected_index: usize,
@@ -121,7 +121,7 @@ impl ConversationMenu {
         conversations_shared: Arc<Mutex<Vec<ConversationSummary>>>,
         is_loading_shared: Arc<Mutex<bool>>,
     ) -> Result<MenuResult> {
-        let visible_rows = 10;  // Visible conversation items
+        let visible_rows = 10; // Visible conversation items
         let mut needs_clear = false;
 
         // Comprehensive event clearing to prevent issues
@@ -164,9 +164,10 @@ impl ConversationMenu {
             }
 
             // Only clear screen for major state changes (not for spinner animation)
-            let should_clear = needs_clear || state_changed ||
-                              (self.is_loading != last_loading_state) ||
-                              (self.conversations.len() != last_conversation_count);
+            let should_clear = needs_clear
+                || state_changed
+                || (self.is_loading != last_loading_state)
+                || (self.conversations.len() != last_conversation_count);
 
             if should_clear {
                 stdout().execute(terminal::Clear(ClearType::All))?;
@@ -197,7 +198,9 @@ impl ConversationMenu {
                                 }
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
-                                if !self.conversations.is_empty() && self.selected_index < self.conversations.len() - 1 {
+                                if !self.conversations.is_empty()
+                                    && self.selected_index < self.conversations.len() - 1
+                                {
                                     self.selected_index += 1;
                                     if self.selected_index >= self.scroll_offset + visible_rows {
                                         self.scroll_offset = self.selected_index - visible_rows + 1;
@@ -207,14 +210,17 @@ impl ConversationMenu {
                             }
                             KeyCode::PageUp => {
                                 if !self.conversations.is_empty() {
-                                    self.selected_index = self.selected_index.saturating_sub(visible_rows);
-                                    self.scroll_offset = self.scroll_offset.saturating_sub(visible_rows);
+                                    self.selected_index =
+                                        self.selected_index.saturating_sub(visible_rows);
+                                    self.scroll_offset =
+                                        self.scroll_offset.saturating_sub(visible_rows);
                                     needs_clear = true;
                                 }
                             }
                             KeyCode::PageDown => {
                                 if !self.conversations.is_empty() {
-                                    self.selected_index = (self.selected_index + visible_rows).min(self.conversations.len() - 1);
+                                    self.selected_index = (self.selected_index + visible_rows)
+                                        .min(self.conversations.len() - 1);
                                     if self.selected_index >= self.scroll_offset + visible_rows {
                                         self.scroll_offset = self.selected_index - visible_rows + 1;
                                     }
@@ -231,7 +237,8 @@ impl ConversationMenu {
                             KeyCode::End => {
                                 if !self.conversations.is_empty() {
                                     self.selected_index = self.conversations.len() - 1;
-                                    self.scroll_offset = if self.conversations.len() > visible_rows {
+                                    self.scroll_offset = if self.conversations.len() > visible_rows
+                                    {
                                         self.conversations.len() - visible_rows
                                     } else {
                                         0
@@ -241,31 +248,43 @@ impl ConversationMenu {
                             }
                             KeyCode::Enter => {
                                 if !self.conversations.is_empty() {
-                                    if let Some(summary) = self.conversations.get(self.selected_index) {
-                                        return Ok(MenuResult::LoadConversation(summary.conversation_id.clone()));
+                                    if let Some(summary) =
+                                        self.conversations.get(self.selected_index)
+                                    {
+                                        return Ok(MenuResult::LoadConversation(
+                                            summary.conversation_id.clone(),
+                                        ));
                                     }
                                 } else {
                                     // No conversations, treat Enter as back
                                     return Ok(MenuResult::BackToMain);
                                 }
                             }
-                            KeyCode::Char('d') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Char('d')
+                                if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
                                 if !self.conversations.is_empty() {
-                                    if let Some(summary) = self.conversations.get(self.selected_index) {
+                                    if let Some(summary) =
+                                        self.conversations.get(self.selected_index)
+                                    {
                                         let conversation_id = summary.conversation_id.clone();
                                         self.delete_conversation(&conversation_id)?;
                                         needs_clear = true;
                                     }
                                 }
                             }
-                            KeyCode::Char('n') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Char('n')
+                                if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
                                 // Create new conversation
                                 return Ok(MenuResult::NewConversation);
                             }
                             KeyCode::Esc | KeyCode::Char('q') => {
                                 return Ok(MenuResult::BackToMain);
                             }
-                            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Char('c')
+                                if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
                                 return Ok(MenuResult::BackToMain);
                             }
                             _ => {}
@@ -286,15 +305,23 @@ impl ConversationMenu {
 
         let menu_width = 80.min(cols.saturating_sub(4));
         let menu_height = if self.conversations.is_empty() || self.is_loading {
-            8  // Smaller for empty/loading state
+            8 // Smaller for empty/loading state
         } else {
-            visible_rows + 8  // Header + items + footer
+            visible_rows + 8 // Header + items + footer
         };
         let menu_height_u16 = menu_height as u16;
 
         // Center the menu
-        let start_x = if cols > menu_width { (cols - menu_width) / 2 } else { 0 };
-        let start_y = if rows > menu_height_u16 { (rows - menu_height_u16) / 2 } else { 0 };
+        let start_x = if cols > menu_width {
+            (cols - menu_width) / 2
+        } else {
+            0
+        };
+        let start_y = if rows > menu_height_u16 {
+            (rows - menu_height_u16) / 2
+        } else {
+            0
+        };
 
         // Only draw box and title on full render
         if !partial_update {
@@ -311,7 +338,9 @@ impl ConversationMenu {
             };
             stdout()
                 .queue(MoveTo(title_x, title_y))?
-                .queue(SetForegroundColor(Color::AnsiValue(crate::utils::colors::MISC_ANSI)))?
+                .queue(SetForegroundColor(Color::AnsiValue(
+                    crate::utils::colors::MISC_ANSI,
+                )))?
                 .queue(Print(style(title).bold()))?
                 .queue(ResetColor)?;
         }
@@ -337,7 +366,9 @@ impl ConversationMenu {
 
             stdout()
                 .queue(MoveTo(loading_x, loading_y))?
-                .queue(SetForegroundColor(Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
+                .queue(SetForegroundColor(Color::AnsiValue(
+                    crate::utils::colors::AI_HIGHLIGHT_ANSI,
+                )))?
                 .queue(Print(&loading_msg))?
                 .queue(ResetColor)?;
         } else if self.conversations.is_empty() {
@@ -364,20 +395,29 @@ impl ConversationMenu {
             };
             stdout()
                 .queue(MoveTo(hint_x, hint_y))?
-                .queue(SetForegroundColor(Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
+                .queue(SetForegroundColor(Color::AnsiValue(
+                    crate::utils::colors::AI_HIGHLIGHT_ANSI,
+                )))?
                 .queue(Print(hint_msg))?
                 .queue(ResetColor)?;
         } else {
             // Draw status line
             let status_y = start_y + 3;
-            let status = format!("Total: {} conversation{}",
+            let status = format!(
+                "Total: {} conversation{}",
                 self.conversations.len(),
-                if self.conversations.len() == 1 { "" } else { "s" }
+                if self.conversations.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                }
             );
             let status_x = start_x + 2;
             stdout()
                 .queue(MoveTo(status_x, status_y))?
-                .queue(SetForegroundColor(Color::AnsiValue(crate::utils::colors::MISC_ANSI)))?
+                .queue(SetForegroundColor(Color::AnsiValue(
+                    crate::utils::colors::MISC_ANSI,
+                )))?
                 .queue(Print(&status))?
                 .queue(ResetColor)?;
 
@@ -385,7 +425,10 @@ impl ConversationMenu {
             let items_start_y = start_y + 5;
             let end_index = (self.scroll_offset + visible_rows).min(self.conversations.len());
 
-            for (i, conv) in self.conversations[self.scroll_offset..end_index].iter().enumerate() {
+            for (i, conv) in self.conversations[self.scroll_offset..end_index]
+                .iter()
+                .enumerate()
+            {
                 let actual_index = self.scroll_offset + i;
                 let y = items_start_y + i as u16;
                 let is_selected = actual_index == self.selected_index;
@@ -412,7 +455,9 @@ impl ConversationMenu {
                     // Unselected item
                     stdout()
                         .queue(MoveTo(start_x + 4, y))?
-                        .queue(SetForegroundColor(Color::AnsiValue(crate::utils::colors::MISC_ANSI)))?
+                        .queue(SetForegroundColor(Color::AnsiValue(
+                            crate::utils::colors::MISC_ANSI,
+                        )))?
                         .queue(Print(&display))?
                         .queue(ResetColor)?;
                 }
@@ -421,7 +466,8 @@ impl ConversationMenu {
             // Show scroll indicator if needed
             if self.conversations.len() > visible_rows {
                 let scroll_y = items_start_y + visible_rows as u16;
-                let scroll_text = format!("Showing {}-{} of {}",
+                let scroll_text = format!(
+                    "Showing {}-{} of {}",
                     self.scroll_offset + 1,
                     end_index,
                     self.conversations.len()
@@ -452,7 +498,9 @@ impl ConversationMenu {
         };
         stdout()
             .queue(MoveTo(help_x, help_y))?
-            .queue(SetForegroundColor(Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
+            .queue(SetForegroundColor(Color::AnsiValue(
+                crate::utils::colors::AI_HIGHLIGHT_ANSI,
+            )))?
             .queue(Print(help_text))?
             .queue(ResetColor)?;
 
@@ -489,9 +537,7 @@ impl ConversationMenu {
         for _ in 0..(width - 2) {
             stdout().queue(Print("─"))?;
         }
-        stdout()
-            .queue(Print("╯"))?
-            .queue(ResetColor)?;
+        stdout().queue(Print("╯"))?.queue(ResetColor)?;
 
         Ok(())
     }
@@ -499,7 +545,9 @@ impl ConversationMenu {
     fn draw_selected_item(&self, x: u16, y: u16, _width: u16, text: &str) -> Result<()> {
         stdout()
             .queue(MoveTo(x, y))?
-            .queue(SetForegroundColor(Color::AnsiValue(crate::utils::colors::PRIMARY_ANSI)))?
+            .queue(SetForegroundColor(Color::AnsiValue(
+                crate::utils::colors::PRIMARY_ANSI,
+            )))?
             .queue(Print("▶ "))?
             .queue(Print(text))?
             .queue(ResetColor)?;

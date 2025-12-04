@@ -23,7 +23,11 @@ fn create_test_config() -> Config {
     let mut providers = HashMap::new();
     providers.insert(
         "anthropic".to_string(),
-        create_test_provider("claude-3-sonnet", "https://api.anthropic.com", "test-key-123"),
+        create_test_provider(
+            "claude-3-sonnet",
+            "https://api.anthropic.com",
+            "test-key-123",
+        ),
     );
 
     Config {
@@ -55,7 +59,10 @@ fn test_config_full_lifecycle() -> Result<(), Box<dyn std::error::Error>> {
     let loaded_config = Config::load_from_file(&config_path)?;
 
     // Verify loaded config matches original
-    assert_eq!(loaded_config.active_provider, original_config.active_provider);
+    assert_eq!(
+        loaded_config.active_provider,
+        original_config.active_provider
+    );
     let loaded_provider = loaded_config.providers.get("anthropic").unwrap();
     let original_provider = original_config.providers.get("anthropic").unwrap();
     assert_eq!(loaded_provider.model, original_provider.model);
@@ -100,7 +107,11 @@ fn test_config_multiple_providers() -> Result<(), Box<dyn std::error::Error>> {
     );
     providers.insert(
         "anthropic".to_string(),
-        create_test_provider("claude-3-opus", "https://api.anthropic.com", "sk-anthropic-key"),
+        create_test_provider(
+            "claude-3-opus",
+            "https://api.anthropic.com",
+            "sk-anthropic-key",
+        ),
     );
     providers.insert(
         "ollama".to_string(),

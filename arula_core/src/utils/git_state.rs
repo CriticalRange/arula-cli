@@ -3,9 +3,9 @@
 //! This module provides functionality to track and restore git state,
 //! particularly useful for AI agent interactions that may change branches.
 
-use std::path::Path;
-use std::fs;
 use anyhow::Result;
+use std::fs;
+use std::path::Path;
 use tokio::process::Command as TokioCommand;
 
 /// Tracks git state for restoration
@@ -98,12 +98,18 @@ impl GitStateTracker {
             if state_file.exists() {
                 if let Ok(content) = fs::read_to_string(&state_file) {
                     if let Ok(state) = serde_json::from_str::<serde_json::Value>(&content) {
-                        if let Some(branch) = state.get("original_branch").and_then(|v| v.as_str()) {
-                            if let Some(working_dir) = state.get("working_directory").and_then(|v| v.as_str()) {
+                        if let Some(branch) = state.get("original_branch").and_then(|v| v.as_str())
+                        {
+                            if let Some(working_dir) =
+                                state.get("working_directory").and_then(|v| v.as_str())
+                            {
                                 // Only use if working directory matches or if we can't verify
                                 if working_dir == self.working_directory {
                                     self.original_branch = Some(branch.to_string());
-                                    eprintln!("🔧 GitState: Loaded saved branch from disk: {:?}", branch);
+                                    eprintln!(
+                                        "🔧 GitState: Loaded saved branch from disk: {:?}",
+                                        branch
+                                    );
                                     return Ok(Some(branch.to_string()));
                                 }
                             }
@@ -134,18 +140,30 @@ impl GitStateTracker {
 
                 match output {
                     Ok(result) if result.status.success() => {
-                        eprintln!("✅ GitState: Successfully restored branch to '{}'", original_branch);
+                        eprintln!(
+                            "✅ GitState: Successfully restored branch to '{}'",
+                            original_branch
+                        );
                     }
                     Ok(result) => {
                         let stderr = String::from_utf8_lossy(&result.stderr);
-                        eprintln!("❌ GitState: Failed to restore branch '{}': {}", original_branch, stderr);
+                        eprintln!(
+                            "❌ GitState: Failed to restore branch '{}': {}",
+                            original_branch, stderr
+                        );
                     }
                     Err(e) => {
-                        eprintln!("❌ GitState: Error restoring branch '{}': {}", original_branch, e);
+                        eprintln!(
+                            "❌ GitState: Error restoring branch '{}': {}",
+                            original_branch, e
+                        );
                     }
                 }
             } else {
-                eprintln!("✅ GitState: Already on correct branch '{}'", original_branch);
+                eprintln!(
+                    "✅ GitState: Already on correct branch '{}'",
+                    original_branch
+                );
             }
         }
 

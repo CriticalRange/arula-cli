@@ -114,10 +114,13 @@ mod tests {
         let file_path = temp_dir.path().join("new_file.txt");
 
         let tool = WriteFileTool::new();
-        let result = tool.execute(WriteFileParams {
-            path: file_path.to_string_lossy().to_string(),
-            content: "Hello, World!".to_string(),
-        }).await.unwrap();
+        let result = tool
+            .execute(WriteFileParams {
+                path: file_path.to_string_lossy().to_string(),
+                content: "Hello, World!".to_string(),
+            })
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert_eq!(result.bytes_written, 13);
@@ -134,10 +137,13 @@ mod tests {
         fs::write(&file_path, "old content").unwrap();
 
         let tool = WriteFileTool::new();
-        let result = tool.execute(WriteFileParams {
-            path: file_path.to_string_lossy().to_string(),
-            content: "new content".to_string(),
-        }).await.unwrap();
+        let result = tool
+            .execute(WriteFileParams {
+                path: file_path.to_string_lossy().to_string(),
+                content: "new content".to_string(),
+            })
+            .await
+            .unwrap();
 
         assert!(result.success);
         let content = fs::read_to_string(&file_path).unwrap();
@@ -150,10 +156,13 @@ mod tests {
         let file_path = temp_dir.path().join("a/b/c/deep.txt");
 
         let tool = WriteFileTool::new();
-        let result = tool.execute(WriteFileParams {
-            path: file_path.to_string_lossy().to_string(),
-            content: "deep content".to_string(),
-        }).await.unwrap();
+        let result = tool
+            .execute(WriteFileParams {
+                path: file_path.to_string_lossy().to_string(),
+                content: "deep content".to_string(),
+            })
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert!(file_path.exists());
@@ -162,12 +171,13 @@ mod tests {
     #[tokio::test]
     async fn test_empty_path_error() {
         let tool = WriteFileTool::new();
-        let result = tool.execute(WriteFileParams {
-            path: "".to_string(),
-            content: "content".to_string(),
-        }).await;
+        let result = tool
+            .execute(WriteFileParams {
+                path: "".to_string(),
+                content: "content".to_string(),
+            })
+            .await;
 
         assert!(result.is_err());
     }
 }
-

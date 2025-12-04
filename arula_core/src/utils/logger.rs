@@ -1,8 +1,8 @@
+use chrono::{DateTime, Utc};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogLevel {
@@ -105,7 +105,9 @@ static GLOBAL_LOGGER: OnceLock<Logger> = OnceLock::new();
 
 pub fn init_global_logger() -> Result<(), Box<dyn std::error::Error>> {
     let logger = Logger::new()?;
-    GLOBAL_LOGGER.set(logger).map_err(|_| "Logger already initialized")?;
+    GLOBAL_LOGGER
+        .set(logger)
+        .map_err(|_| "Logger already initialized")?;
     Ok(())
 }
 

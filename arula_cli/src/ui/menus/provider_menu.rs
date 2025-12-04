@@ -5,11 +5,10 @@ use crate::ui::output::OutputHandler;
 use anyhow::Result;
 use console::style;
 use crossterm::{
-    event::{Event, KeyCode, KeyEventKind, KeyModifiers},
-    terminal,
     cursor::MoveTo,
-    style::{SetForegroundColor, ResetColor, Print},
-    ExecutableCommand, QueueableCommand,
+    event::{Event, KeyCode, KeyEventKind, KeyModifiers},
+    style::{Print, ResetColor, SetForegroundColor},
+    terminal, ExecutableCommand, QueueableCommand,
 };
 use std::io::{stdout, Write};
 use std::time::Duration;
@@ -36,7 +35,8 @@ impl ProviderMenu {
     /// Display and handle the provider selection menu (1:1 from overlay_menu.rs)
     pub fn show(&mut self, app: &mut App, _output: &mut OutputHandler) -> Result<()> {
         let current_config = app.get_config();
-        let current_idx = self.providers
+        let current_idx = self
+            .providers
             .iter()
             .position(|p| p == &current_config.active_provider)
             .unwrap_or(0);
@@ -143,11 +143,25 @@ impl ProviderMenu {
             menu_height
         };
 
-        let start_x = if cols > menu_width { cols.saturating_sub(menu_width) / 2 } else { 0 };
-        let start_y = if rows > menu_height as u16 { rows.saturating_sub(menu_height as u16) / 2 } else { 0 };
+        let start_x = if cols > menu_width {
+            cols.saturating_sub(menu_width) / 2
+        } else {
+            0
+        };
+        let start_y = if rows > menu_height as u16 {
+            rows.saturating_sub(menu_height as u16) / 2
+        } else {
+            0
+        };
 
         // Draw modern box using original function
-        self.draw_modern_box(start_x, start_y, menu_width, menu_height as u16, "AI PROVIDER")?;
+        self.draw_modern_box(
+            start_x,
+            start_y,
+            menu_width,
+            menu_height as u16,
+            "AI PROVIDER",
+        )?;
 
         // Draw title/header (like original)
         let title_y = start_y + 1;
@@ -157,10 +171,13 @@ impl ProviderMenu {
         } else {
             start_x + 1
         };
-        stdout().queue(MoveTo(title_x, title_y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::MISC_ANSI)))?
-              .queue(Print(style(title).bold()))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(MoveTo(title_x, title_y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::MISC_ANSI,
+            )))?
+            .queue(Print(style(title).bold()))?
+            .queue(ResetColor)?;
 
         // Draw provider options (like original)
         let items_start_y = start_y + 3;
@@ -178,10 +195,13 @@ impl ProviderMenu {
                 self.draw_selected_item(start_x + 2, y, menu_width - 4, provider)?;
             } else {
                 // Unselected item with normal color
-                stdout().queue(MoveTo(start_x + 4, y))?
-                      .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::MISC_ANSI)))?
-                      .queue(Print(provider))?
-                      .queue(ResetColor)?;
+                stdout()
+                    .queue(MoveTo(start_x + 4, y))?
+                    .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                        crate::utils::colors::MISC_ANSI,
+                    )))?
+                    .queue(Print(provider))?
+                    .queue(ResetColor)?;
             }
         }
 
@@ -189,10 +209,13 @@ impl ProviderMenu {
         let help_y = start_y + menu_height as u16 - 1;
         let help_text = "↑↓ Navigate • Enter Select • ESC Cancel";
         let help_x = start_x + 2; // Left aligned with padding
-        stdout().queue(MoveTo(help_x, help_y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
-              .queue(Print(help_text))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(MoveTo(help_x, help_y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::AI_HIGHLIGHT_ANSI,
+            )))?
+            .queue(Print(help_text))?
+            .queue(ResetColor)?;
 
         stdout().flush()?;
         Ok(())
@@ -214,12 +237,16 @@ impl ProviderMenu {
         }
 
         // Draw borders using our AI highlight color (steel blue)
-        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?;
+        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+            crate::utils::colors::AI_HIGHLIGHT_ANSI,
+        )))?;
 
         // Draw vertical borders
         for i in 0..height {
             stdout().queue(MoveTo(x, y + i))?.queue(Print(vertical))?;
-            stdout().queue(MoveTo(x + width.saturating_sub(1), y + i))?.queue(Print(vertical))?;
+            stdout()
+                .queue(MoveTo(x + width.saturating_sub(1), y + i))?
+                .queue(Print(vertical))?;
         }
 
         // Top border
@@ -230,7 +257,9 @@ impl ProviderMenu {
         stdout().queue(Print(top_right))?;
 
         // Bottom border
-        stdout().queue(MoveTo(x, y + height.saturating_sub(1)))?.queue(Print(bottom_left))?;
+        stdout()
+            .queue(MoveTo(x, y + height.saturating_sub(1)))?
+            .queue(Print(bottom_left))?;
         for _i in 1..width.saturating_sub(1) {
             stdout().queue(Print(horizontal))?;
         }
@@ -253,7 +282,9 @@ impl ProviderMenu {
             // Truncate if too long - use character boundaries, not byte boundaries
             let safe_len = width.saturating_sub(7) as usize;
             // Use char_indices to get safe character boundaries
-            let char_end = text.char_indices().nth(safe_len)
+            let char_end = text
+                .char_indices()
+                .nth(safe_len)
                 .map(|(idx, _)| idx)
                 .unwrap_or(text.len());
             format!("▶ {}...", &text[..char_end])
@@ -261,10 +292,13 @@ impl ProviderMenu {
             display_text
         };
 
-        stdout().queue(MoveTo(x + 2, y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::PRIMARY_ANSI)))?
-              .queue(Print(safe_text))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(MoveTo(x + 2, y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::PRIMARY_ANSI,
+            )))?
+            .queue(Print(safe_text))?
+            .queue(ResetColor)?;
 
         Ok(())
     }

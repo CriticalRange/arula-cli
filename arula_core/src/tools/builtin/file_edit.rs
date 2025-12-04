@@ -92,7 +92,10 @@ impl Tool for FileEditTool {
             .description("path", "The path to the file to edit")
             .required("path")
             .param("type", "string")
-            .description("type", "Operation type: replace, insert, delete, append, prepend")
+            .description(
+                "type",
+                "Operation type: replace, insert, delete, append, prepend",
+            )
             .param("old_text", "string")
             .description("old_text", "Text to find and replace")
             .param("new_text", "string")
@@ -177,4 +180,3 @@ impl Tool for FileEditTool {
         })
     }
 }
-

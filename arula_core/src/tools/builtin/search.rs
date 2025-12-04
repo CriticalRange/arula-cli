@@ -83,8 +83,7 @@ impl SearchTool {
         let mut matches = Vec::new();
 
         if use_regex {
-            let re = regex::Regex::new(pattern)
-                .map_err(|e| format!("Invalid regex: {}", e))?;
+            let re = regex::Regex::new(pattern).map_err(|e| format!("Invalid regex: {}", e))?;
 
             for (line_num, line) in content.lines().enumerate() {
                 if let Some(m) = re.find(line) {
@@ -200,13 +199,19 @@ impl Tool for SearchTool {
             .description("pattern", "The pattern to search for")
             .required("pattern")
             .param("path", "string")
-            .description("path", "Directory or file to search in (default: current directory)")
+            .description(
+                "path",
+                "Directory or file to search in (default: current directory)",
+            )
             .param("regex", "boolean")
             .description("regex", "Use regex matching (default: false)")
             .param("max_results", "integer")
             .description("max_results", "Maximum matches to return (default: 100)")
             .param("extensions", "array")
-            .description("extensions", "File extensions to include, e.g. [\"rs\", \"py\"]")
+            .description(
+                "extensions",
+                "File extensions to include, e.g. [\"rs\", \"py\"]",
+            )
             .build()
     }
 
@@ -259,16 +264,23 @@ mod tests {
     #[tokio::test]
     async fn test_search_literal() {
         let temp_dir = TempDir::new().unwrap();
-        fs::write(temp_dir.path().join("test.txt"), "hello world\nfoo bar\nhello again").unwrap();
+        fs::write(
+            temp_dir.path().join("test.txt"),
+            "hello world\nfoo bar\nhello again",
+        )
+        .unwrap();
 
         let tool = SearchTool::new();
-        let result = tool.execute(SearchParams {
-            pattern: "hello".to_string(),
-            path: Some(temp_dir.path().to_string_lossy().to_string()),
-            regex: Some(false),
-            max_results: None,
-            extensions: None,
-        }).await.unwrap();
+        let result = tool
+            .execute(SearchParams {
+                pattern: "hello".to_string(),
+                path: Some(temp_dir.path().to_string_lossy().to_string()),
+                regex: Some(false),
+                max_results: None,
+                extensions: None,
+            })
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert_eq!(result.total_matches, 2);
@@ -277,19 +289,25 @@ mod tests {
     #[tokio::test]
     async fn test_search_regex() {
         let temp_dir = TempDir::new().unwrap();
-        fs::write(temp_dir.path().join("test.txt"), "hello123\nworld456\nhello789").unwrap();
+        fs::write(
+            temp_dir.path().join("test.txt"),
+            "hello123\nworld456\nhello789",
+        )
+        .unwrap();
 
         let tool = SearchTool::new();
-        let result = tool.execute(SearchParams {
-            pattern: r"hello\d+".to_string(),
-            path: Some(temp_dir.path().to_string_lossy().to_string()),
-            regex: Some(true),
-            max_results: None,
-            extensions: None,
-        }).await.unwrap();
+        let result = tool
+            .execute(SearchParams {
+                pattern: r"hello\d+".to_string(),
+                path: Some(temp_dir.path().to_string_lossy().to_string()),
+                regex: Some(true),
+                max_results: None,
+                extensions: None,
+            })
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert_eq!(result.total_matches, 2);
     }
 }
-

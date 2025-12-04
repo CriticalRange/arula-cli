@@ -4,8 +4,8 @@
 //! tool wrappers that are registered directly in the tool registry.
 
 use crate::api::agent::{Tool, ToolSchema, ToolSchemaBuilder};
-use crate::utils::config::{Config, McpServerConfig};
 use crate::tools::mcp::McpClient;
+use crate::utils::config::{Config, McpServerConfig};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -13,8 +13,6 @@ use tokio::sync::RwLock;
 
 // Import MCP_MANAGER
 use crate::tools::mcp::MCP_MANAGER;
-
-
 
 /// Represents a discovered MCP server
 #[derive(Debug, Clone)]
@@ -41,23 +39,34 @@ impl ServerMcpTool {
     pub fn new(server_info: DiscoveredMcpServer) -> Self {
         // Create a clear tool name that identifies the server
         let tool_name = format!("mcp_{}", server_info.server_id);
-        Self { server_info, tool_name }
+        Self {
+            server_info,
+            tool_name,
+        }
     }
 
     async fn call_mcp_tool(&self, tool_name: &str, parameters: Value) -> Result<Value, String> {
-        let client = MCP_MANAGER.get_client(&self.server_info.server_id).await
+        let client = MCP_MANAGER
+            .get_client(&self.server_info.server_id)
+            .await
             .ok_or_else(|| format!("MCP server '{}' not available", self.server_info.server_id))?;
 
-        let tool_params = if parameters.is_null() || parameters.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        let tool_params = if parameters.is_null()
+            || parameters.as_object().map(|o| o.is_empty()).unwrap_or(true)
+        {
             json!({})
         } else {
             parameters
         };
 
-        match client.call_tool(tool_name,
-            serde_json::from_value::<HashMap<String, Value>>(tool_params)
-                .unwrap_or_else(|_| HashMap::new())
-        ).await {
+        match client
+            .call_tool(
+                tool_name,
+                serde_json::from_value::<HashMap<String, Value>>(tool_params)
+                    .unwrap_or_else(|_| HashMap::new()),
+            )
+            .await
+        {
             Ok(result) => Ok(result),
             Err(e) => Err(format!("MCP tool call failed: {}", e)),
         }
@@ -79,7 +88,10 @@ impl Tool for ServerMcpTool {
 
     fn schema(&self) -> ToolSchema {
         // Create a dynamic description based on the actual server info
-        let tool_names: Vec<String> = self.server_info.tools.iter()
+        let tool_names: Vec<String> = self
+            .server_info
+            .tools
+            .iter()
             .map(|tool| tool.name.clone())
             .collect();
         let tool_list = tool_names.join(", ");
@@ -92,12 +104,17 @@ impl Tool for ServerMcpTool {
         let mut builder = ToolSchemaBuilder::new(&self.tool_name, &description);
 
         // Add parameters for tool name and arguments
-        builder = builder.param("tool_name", "string")
+        builder = builder
+            .param("tool_name", "string")
             .description("tool_name", "The specific MCP tool name to call (required)")
             .required("tool_name");
 
-        builder = builder.param("parameters", "object")
-            .description("parameters", "Parameters object for the MCP tool call (format varies by tool)")
+        builder = builder
+            .param("parameters", "object")
+            .description(
+                "parameters",
+                "Parameters object for the MCP tool call (format varies by tool)",
+            )
             .required("parameters");
 
         builder.build()
@@ -105,12 +122,12 @@ impl Tool for ServerMcpTool {
 
     async fn execute(&self, params: Self::Params) -> Result<Self::Result, String> {
         // Extract tool_name and parameters from the unified parameter structure
-        let tool_name = params.get("tool_name")
+        let tool_name = params
+            .get("tool_name")
             .and_then(|v| v.as_str())
             .ok_or("Missing 'tool_name' parameter")?;
 
-        let parameters = params.get("parameters").cloned()
-            .unwrap_or(json!({}));
+        let parameters = params.get("parameters").cloned().unwrap_or(json!({}));
 
         self.call_mcp_tool(tool_name, parameters).await
     }
@@ -168,16 +185,20 @@ impl DynamicMcpRegistry {
     async fn discover_server_tools(
         &self,
         server_id: &str,
-        server_config: &McpServerConfig
+        server_config: &McpServerConfig,
     ) -> Result<DiscoveredMcpServer, String> {
         let client = McpClient::new(server_config.clone());
 
         // Initialize the server
-        client.initialize().await
+        client
+            .initialize()
+            .await
             .map_err(|e| format!("Failed to initialize MCP server: {}", e))?;
 
         // List available tools
-        let tool_names = client.list_tools().await
+        let tool_names = client
+            .list_tools()
+            .await
             .map_err(|e| format!("Failed to list MCP tools: {}", e))?;
 
         let mut server_tools = Vec::new();
@@ -227,7 +248,9 @@ pub async fn get_discovered_mcp_servers() -> Vec<DiscoveredMcpServer> {
 }
 
 /// Register dynamic MCP tools in the provided tool registry
-pub async fn register_dynamic_mcp_tools(registry: &mut crate::api::agent::ToolRegistry) -> Result<usize, String> {
+pub async fn register_dynamic_mcp_tools(
+    registry: &mut crate::api::agent::ToolRegistry,
+) -> Result<usize, String> {
     let server_tools = DYNAMIC_MCP_REGISTRY.get_server_tools().await;
 
     let mut registered_count = 0;

@@ -171,7 +171,8 @@ mod tests {
     #[test]
     fn test_chat_message_new_tool_call() {
         let tool_json = r#"{"name": "bash_tool", "arguments": "ls -la"}"#;
-        let message = ChatMessage::new_tool_call("Executing command".to_string(), tool_json.to_string());
+        let message =
+            ChatMessage::new_tool_call("Executing command".to_string(), tool_json.to_string());
 
         assert_eq!(message.message_type, MessageType::ToolCall);
         assert_eq!(message.content, "Executing command");

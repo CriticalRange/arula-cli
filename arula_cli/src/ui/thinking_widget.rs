@@ -50,33 +50,33 @@ impl ThinkingWidget {
         self.frame = 0;
         self.header_printed = false;
         self.last_update = Instant::now();
-        
+
         // Print initial thinking header with animation
         self.print_header()?;
-        
+
         Ok(())
     }
 
     /// Print the pulsing "Thinking" header
     fn print_header(&mut self) -> io::Result<()> {
         let mut stdout = io::stdout();
-        
+
         // Add spacing before thinking block
         println!();
-        
+
         // Print the thinking indicator with pulse effect
         let frames = ["◐", "◓", "◑", "◒"];
         let frame_char = frames[self.frame % frames.len()];
-        
+
         print!(
             "{} {}",
             style(frame_char).color256(PRIMARY_ANSI),
             style("Thinking").color256(PRIMARY_ANSI).bold()
         );
-        
+
         stdout.flush()?;
         self.header_printed = true;
-        
+
         Ok(())
     }
 
@@ -92,21 +92,21 @@ impl ThinkingWidget {
         }
 
         let mut stdout = io::stdout();
-        
+
         // Move cursor back to beginning of "Thinking" line
         execute!(stdout, cursor::MoveToColumn(0))?;
-        
+
         // Clear the line
         print!("\x1b[K");
-        
+
         // Update frame
         self.frame += 1;
         let frames = ["◐", "◓", "◑", "◒"];
         let frame_char = frames[self.frame % frames.len()];
-        
+
         // Pulse effect: alternate between bright and dim
         let is_bright = (self.frame / 2).is_multiple_of(2);
-        
+
         if is_bright {
             print!(
                 "{} {}",
@@ -120,10 +120,10 @@ impl ThinkingWidget {
                 style("Thinking").color256(PRIMARY_ANSI)
             );
         }
-        
+
         stdout.flush()?;
         self.last_update = Instant::now();
-        
+
         Ok(())
     }
 
@@ -132,9 +132,9 @@ impl ThinkingWidget {
         if !self.is_active {
             return Ok(());
         }
-        
+
         self.content.push_str(chunk);
-        
+
         Ok(())
     }
 
@@ -145,20 +145,20 @@ impl ThinkingWidget {
         }
 
         let mut stdout = io::stdout();
-        
+
         // Move to new line after the pulsing header
         println!();
-        
+
         // Display the thinking content in a styled box
         if !self.content.is_empty() {
             self.render_thinking_box(&self.content.clone())?;
         }
-        
+
         stdout.flush()?;
-        
+
         self.is_active = false;
         self.header_printed = false;
-        
+
         Ok(())
     }
 
@@ -171,7 +171,7 @@ impl ThinkingWidget {
             .min(100);
 
         let border_color = 242; // Gray
-        let text_color = 245;   // Light gray
+        let text_color = 245; // Light gray
 
         // Top border
         println!(
@@ -204,7 +204,7 @@ impl ThinkingWidget {
     fn wrap_text(&self, text: &str, max_width: usize) -> String {
         let mut result = String::new();
         let mut current_line = String::new();
-        
+
         for word in text.split_whitespace() {
             if current_line.is_empty() {
                 current_line = word.to_string();
@@ -219,14 +219,14 @@ impl ThinkingWidget {
                 current_line = word.to_string();
             }
         }
-        
+
         if !current_line.is_empty() {
             if !result.is_empty() {
                 result.push('\n');
             }
             result.push_str(&current_line);
         }
-        
+
         result
     }
 
@@ -242,16 +242,16 @@ impl ThinkingWidget {
         }
 
         let mut stdout = io::stdout();
-        
+
         // Clear the thinking line
         execute!(stdout, cursor::MoveToColumn(0))?;
         print!("\x1b[K");
         stdout.flush()?;
-        
+
         self.is_active = false;
         self.header_printed = false;
         self.content.clear();
-        
+
         Ok(())
     }
 }
@@ -284,7 +284,7 @@ mod tests {
         let widget = ThinkingWidget::new();
         let text = "This is a test of the word wrapping functionality";
         let wrapped = widget.wrap_text(text, 20);
-        
+
         // Each line should be at most 20 chars
         for line in wrapped.lines() {
             assert!(line.chars().count() <= 20);
@@ -295,11 +295,10 @@ mod tests {
     fn test_add_content() {
         let mut widget = ThinkingWidget::new();
         widget.is_active = true;
-        
+
         widget.add_content("Hello ").unwrap();
         widget.add_content("World").unwrap();
-        
+
         assert_eq!(widget.content, "Hello World");
     }
 }
-

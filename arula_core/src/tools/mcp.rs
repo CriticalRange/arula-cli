@@ -5,10 +5,10 @@
 
 use crate::api::agent::{Tool, ToolSchema, ToolSchemaBuilder};
 use crate::utils::config::{Config, McpServerConfig};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -65,11 +65,15 @@ impl McpClient {
         // Debug logging
         if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
             eprintln!("🔧 MCP Debug - Request URL: {}", self.config.url);
-            eprintln!("🔧 MCP Debug - Request Body: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default());
+            eprintln!(
+                "🔧 MCP Debug - Request Body: {}",
+                serde_json::to_string_pretty(&request_body).unwrap_or_default()
+            );
             eprintln!("🔧 MCP Debug - Headers: {:?}", self.config.headers);
         }
 
-        let mut request = self.client
+        let mut request = self
+            .client
             .post(&self.config.url)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json, text/event-stream")
@@ -82,27 +86,49 @@ impl McpClient {
 
         // Log the outgoing request
         let body_str = serde_json::to_string_pretty(&request_body).unwrap_or_default();
-        crate::utils::logger::info(&format!("=== HTTP REQUEST ===\nPOST {}\nHEADERS:\n", &self.config.url));
+        crate::utils::logger::info(&format!(
+            "=== HTTP REQUEST ===\nPOST {}\nHEADERS:\n",
+            &self.config.url
+        ));
         crate::utils::logger::info("  Content-Type: application/json\n");
         crate::utils::logger::info("  Accept: application/json, text/event-stream\n");
         for (key, value) in &self.config.headers {
             crate::utils::logger::info(&format!("  {}: {}\n", key, value));
         }
-        crate::utils::logger::info(&format!("BODY ({} bytes):\n{}\n===================\n", body_str.len(), body_str));
+        crate::utils::logger::info(&format!(
+            "BODY ({} bytes):\n{}\n===================\n",
+            body_str.len(),
+            body_str
+        ));
 
-        let response = request.send().await
+        let response = request
+            .send()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to send MCP request: {}", e))?;
 
         // Log the incoming response
-        crate::utils::logger::info(&format!("=== HTTP RESPONSE ===\n{} {}\nHEADERS:\n", response.status(), response.url()));
+        crate::utils::logger::info(&format!(
+            "=== HTTP RESPONSE ===\n{} {}\nHEADERS:\n",
+            response.status(),
+            response.url()
+        ));
         for (name, value) in response.headers() {
-            crate::utils::logger::info(&format!("  {}: {}\n", name, value.to_str().unwrap_or("<binary>")));
+            crate::utils::logger::info(&format!(
+                "  {}: {}\n",
+                name,
+                value.to_str().unwrap_or("<binary>")
+            ));
         }
-        crate::utils::logger::info("BODY: <not logged to avoid consumption>\n===================\n");
+        crate::utils::logger::info(
+            "BODY: <not logged to avoid consumption>\n===================\n",
+        );
 
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Failed to read error response".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to read error response".to_string());
             return Err(anyhow::anyhow!(
                 "MCP server returned status: {}. Response: {}",
                 status,
@@ -110,7 +136,9 @@ impl McpClient {
             ));
         }
 
-        let response_json: serde_json::Value = response.json().await
+        let response_json: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to parse MCP response: {}", e))?;
 
         // Check for JSON-RPC error
@@ -303,7 +331,7 @@ impl Tool for McpTool {
     fn schema(&self) -> ToolSchema {
         ToolSchemaBuilder::new(
             "mcp_call",
-            "Call a tool from a configured MCP server (Model Context Protocol)"
+            "Call a tool from a configured MCP server (Model Context Protocol)",
         )
         .param("server", "string")
         .description("server", "The MCP server ID to use")
@@ -317,12 +345,18 @@ impl Tool for McpTool {
     }
 
     async fn execute(&self, params: Self::Params) -> Result<Self::Result, String> {
-        let client = self.get_client(&params.server).await
-            .ok_or_else(|| format!("MCP server '{}' not found or not initialized", params.server))?;
+        let client = self.get_client(&params.server).await.ok_or_else(|| {
+            format!(
+                "MCP server '{}' not found or not initialized",
+                params.server
+            )
+        })?;
 
         // Convert parameters to HashMap
         let tool_args = if let Some(parameters) = params.parameters {
-            if let Ok(map) = serde_json::from_value::<HashMap<String, serde_json::Value>>(parameters) {
+            if let Ok(map) =
+                serde_json::from_value::<HashMap<String, serde_json::Value>>(parameters)
+            {
                 map
             } else {
                 return Err("Failed to parse tool parameters".to_string());
@@ -381,7 +415,7 @@ impl Tool for McpDiscoveryTool {
     fn schema(&self) -> ToolSchema {
         ToolSchemaBuilder::new(
             "mcp_list_tools",
-            "List all available tools from configured MCP servers"
+            "List all available tools from configured MCP servers",
         )
         .build()
     }
@@ -396,9 +430,8 @@ impl Tool for McpDiscoveryTool {
                 for (server_id, tools) in &server_tools {
                     formatted_servers.push(server_id.clone());
 
-                    let tool_info: Vec<String> = tools.iter().map(|tool| {
-                        format!("- {}", tool)
-                    }).collect();
+                    let tool_info: Vec<String> =
+                        tools.iter().map(|tool| format!("- {}", tool)).collect();
 
                     tool_details.insert(server_id.clone(), tool_info);
                 }

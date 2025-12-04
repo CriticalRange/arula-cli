@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -36,10 +36,19 @@ pub enum ZAIApiError {
 impl ZAIApiError {
     pub fn from_status_code(status: u16, message: &str) -> Self {
         match status {
-            401 => Self::AuthenticationError { message: message.to_string() },
-            429 => Self::RateLimitError { message: message.to_string() },
-            500..=599 => Self::InternalError { message: message.to_string() },
-            _ => Self::StatusError { message: message.to_string(), status_code: status },
+            401 => Self::AuthenticationError {
+                message: message.to_string(),
+            },
+            429 => Self::RateLimitError {
+                message: message.to_string(),
+            },
+            500..=599 => Self::InternalError {
+                message: message.to_string(),
+            },
+            _ => Self::StatusError {
+                message: message.to_string(),
+                status_code: status,
+            },
         }
     }
 }
@@ -54,18 +63,31 @@ fn debug_print(msg: &str) {
 }
 
 /// Log raw HTTP request details
-fn log_http_request(method: &str, url: &str, headers: &reqwest::header::HeaderMap, body: Option<&str>) {
+fn log_http_request(
+    method: &str,
+    url: &str,
+    headers: &reqwest::header::HeaderMap,
+    body: Option<&str>,
+) {
     let mut log_msg = format!("=== HTTP REQUEST ===\n{} {}\n", method, url);
 
     // Log headers
     log_msg.push_str("HEADERS:\n");
     for (name, value) in headers {
-        log_msg.push_str(&format!("  {}: {}\n", name, value.to_str().unwrap_or("<binary>")));
+        log_msg.push_str(&format!(
+            "  {}: {}\n",
+            name,
+            value.to_str().unwrap_or("<binary>")
+        ));
     }
 
     // Log body if present
     if let Some(body_content) = body {
-        log_msg.push_str(&format!("BODY ({} bytes):\n{}\n", body_content.len(), body_content));
+        log_msg.push_str(&format!(
+            "BODY ({} bytes):\n{}\n",
+            body_content.len(),
+            body_content
+        ));
     } else {
         log_msg.push_str("BODY: <empty>\n");
     }
@@ -84,7 +106,11 @@ fn log_http_response(response: &reqwest::Response) {
     // Log response headers
     log_msg.push_str("HEADERS:\n");
     for (name, value) in response.headers() {
-        log_msg.push_str(&format!("  {}: {}\n", name, value.to_str().unwrap_or("<binary>")));
+        log_msg.push_str(&format!(
+            "  {}: {}\n",
+            name,
+            value.to_str().unwrap_or("<binary>")
+        ));
     }
 
     // Note: Response body not logged here to avoid consuming it
@@ -150,8 +176,10 @@ pub struct ZAIUsage {
 
 impl ZAIUsage {
     pub fn log_usage(&self, model: &str) {
-        eprintln!("🔧 Z.AI Usage [{}]: {} prompt + {} completion = {} total tokens",
-                 model, self.prompt_tokens, self.completion_tokens, self.total_tokens);
+        eprintln!(
+            "🔧 Z.AI Usage [{}]: {} prompt + {} completion = {} total tokens",
+            model, self.prompt_tokens, self.completion_tokens, self.total_tokens
+        );
         if let Some(cost) = self.cost_estimate {
             eprintln!("💰 Estimated cost: ${:.6}", cost);
         }
@@ -196,7 +224,7 @@ impl ApiClient {
             "openrouter" => AIProvider::OpenRouter,
             _ => AIProvider::Custom,
         };
-        
+
         // Fallback: Also check endpoint URL to detect Z.AI even if provider name doesn't match
         // This ensures proper handling for Z.AI-specific features like stream_options exclusion
         if matches!(provider_type, AIProvider::Custom) && endpoint.contains("api.z.ai") {
@@ -515,18 +543,18 @@ impl ApiClient {
     async fn send_openai_request(&self, messages: Vec<ChatMessage>) -> Result<ApiResponse> {
         // NOTE: Tools are intentionally NOT included here to allow normal conversation
         // Tools are only added when explicitly needed via send_message_with_tools
-        
+
         // Check if thinking/reasoning is enabled
         let config = crate::utils::config::Config::load_or_default()?;
         let thinking_enabled = config.get_thinking_enabled().unwrap_or(false);
-        
+
         let mut request_body = serde_json::json!({
             "model": self.model,
             "messages": messages,
             "temperature": 0.7,
             "max_tokens": 2048
         });
-        
+
         // Add reasoning effort when thinking is enabled
         // OpenAI's reasoning_effort parameter works with GPT-5.1 and reasoning models
         // Note: Not supported for o3/o4-mini (they always reason), but adding it won't hurt
@@ -539,10 +567,7 @@ impl ApiClient {
             AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
             _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
         };
-        let mut request_builder = self
-            .client
-            .post(&request_url)
-            .json(&request_body);
+        let mut request_builder = self.client.post(&request_url).json(&request_body);
 
         // Add authorization header if API key is provided
         if !self.api_key.is_empty() {
@@ -553,7 +578,10 @@ impl ApiClient {
         // Log the outgoing request
         let mut request_headers = reqwest::header::HeaderMap::new();
         if !self.api_key.is_empty() {
-            request_headers.insert("Authorization", format!("Bearer {}", self.api_key).parse().unwrap());
+            request_headers.insert(
+                "Authorization",
+                format!("Bearer {}", self.api_key).parse().unwrap(),
+            );
         }
         request_headers.insert("Content-Type", "application/json".parse().unwrap());
         let body_str = serde_json::to_string_pretty(&request_body).unwrap_or_default();
@@ -575,24 +603,26 @@ impl ApiClient {
                         .to_string();
 
                     // Handle tool calls
-                    let tool_calls = choice["message"]["tool_calls"].as_array().map(|calls| calls
-                                .iter()
-                                .map(|tool_call| ToolCall {
-                                    id: tool_call["id"].as_str().unwrap_or_default().to_string(),
-                                    r#type: "function".to_string(),
-                                    function: ToolCallFunction {
-                                        name: tool_call["function"]["name"]
-                                            .as_str()
-                                            .unwrap_or_default()
-                                            .to_string(),
-                                        arguments: tool_call["function"]["arguments"]
-                                            .as_str()
-                                            .unwrap_or_default()
-                                            .to_string(),
-                                    },
-                                })
-                                .collect::<Vec<_>>());
-                    
+                    let tool_calls = choice["message"]["tool_calls"].as_array().map(|calls| {
+                        calls
+                            .iter()
+                            .map(|tool_call| ToolCall {
+                                id: tool_call["id"].as_str().unwrap_or_default().to_string(),
+                                r#type: "function".to_string(),
+                                function: ToolCallFunction {
+                                    name: tool_call["function"]["name"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string(),
+                                    arguments: tool_call["function"]["arguments"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string(),
+                                },
+                            })
+                            .collect::<Vec<_>>()
+                    });
+
                     // Extract reasoning content if present (for reasoning models)
                     let reasoning_content = choice["message"]["reasoning_content"]
                         .as_str()
@@ -611,7 +641,12 @@ impl ApiClient {
                         usage: None, // TODO: Parse usage from response if needed
                         tool_calls,
                         model: Some(self.model.clone()),
-                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        created: Some(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
                         reasoning_content,
                     })
                 } else {
@@ -622,7 +657,12 @@ impl ApiClient {
                         usage: None,
                         tool_calls: None,
                         model: Some(self.model.clone()),
-                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        created: Some(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
                         reasoning_content: None,
                     })
                 }
@@ -634,7 +674,12 @@ impl ApiClient {
                     usage: None,
                     tool_calls: None,
                     model: Some(self.model.clone()),
-                    created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                    created: Some(
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    ),
                     reasoning_content: None,
                 })
             }
@@ -651,7 +696,7 @@ impl ApiClient {
         // Check if thinking is enabled
         let config = crate::utils::config::Config::load_or_default()?;
         let thinking_enabled = config.get_thinking_enabled().unwrap_or(false);
-        
+
         let claude_messages: Vec<Value> = messages
             .into_iter()
             .map(|msg| {
@@ -668,7 +713,7 @@ impl ApiClient {
             "max_tokens": 2048,
             "temperature": 0.7
         });
-        
+
         // Add extended thinking for Claude when enabled
         // Claude uses "thinking" block with budget_tokens
         if thinking_enabled {
@@ -714,7 +759,7 @@ impl ApiClient {
             if let Some(content) = claude_response["content"].as_array() {
                 let mut response_text = String::new();
                 let mut thinking_text: Option<String> = None;
-                
+
                 // Parse content blocks - Claude can return thinking and text blocks
                 for block in content {
                     match block["type"].as_str() {
@@ -732,7 +777,7 @@ impl ApiClient {
                         _ => {}
                     }
                 }
-                
+
                 if !response_text.is_empty() || thinking_text.is_some() {
                     return Ok(ApiResponse {
                         response: response_text,
@@ -741,7 +786,12 @@ impl ApiClient {
                         usage: None, // Claude has different usage format
                         tool_calls: None,
                         model: Some(self.model.clone()),
-                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        created: Some(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
                         reasoning_content: thinking_text,
                     });
                 }
@@ -754,7 +804,12 @@ impl ApiClient {
                 usage: None,
                 tool_calls: None,
                 model: Some(self.model.clone()),
-                created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                created: Some(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                ),
                 reasoning_content: None,
             })
         } else {
@@ -770,7 +825,7 @@ impl ApiClient {
         // Check if thinking is enabled
         let config = crate::utils::config::Config::load_or_default()?;
         let thinking_enabled = config.get_thinking_enabled().unwrap_or(false);
-        
+
         // Convert messages to Ollama format (compatible with OpenAI format)
         let ollama_messages: Vec<Value> = messages
             .iter()
@@ -791,7 +846,7 @@ impl ApiClient {
                 "num_predict": 2048
             }
         });
-        
+
         // Add think option for Ollama when enabled
         // Works with models like deepseek-r1, qwq, etc.
         if thinking_enabled {
@@ -800,10 +855,7 @@ impl ApiClient {
 
         // Use the newer /api/chat endpoint which is OpenAI-compatible
         let request_url = format!("{}/api/chat", self.endpoint);
-        let request_builder = self
-            .client
-            .post(&request_url)
-            .json(&request);
+        let request_builder = self.client.post(&request_url).json(&request);
 
         // Log the outgoing request
         let request_headers = reqwest::header::HeaderMap::new();
@@ -822,7 +874,11 @@ impl ApiClient {
             let thinking_content = ollama_response["message"]["reasoning_content"]
                 .as_str()
                 .map(|s| s.to_string())
-                .or_else(|| ollama_response["message"]["thinking"].as_str().map(|s| s.to_string()));
+                .or_else(|| {
+                    ollama_response["message"]["thinking"]
+                        .as_str()
+                        .map(|s| s.to_string())
+                });
 
             if let Some(message) = ollama_response["message"].as_object() {
                 if let Some(response_text) = message["content"].as_str() {
@@ -833,7 +889,12 @@ impl ApiClient {
                         usage: None,
                         tool_calls: None,
                         model: Some(self.model.clone()),
-                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        created: Some(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
                         reasoning_content: thinking_content,
                     })
                 } else {
@@ -844,7 +905,12 @@ impl ApiClient {
                         usage: None,
                         tool_calls: None,
                         model: Some(self.model.clone()),
-                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        created: Some(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
                         reasoning_content: thinking_content,
                     })
                 }
@@ -856,7 +922,12 @@ impl ApiClient {
                     usage: None,
                     tool_calls: None,
                     model: Some(self.model.clone()),
-                    created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                    created: Some(
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    ),
                     reasoning_content: thinking_content,
                 })
             }
@@ -904,14 +975,18 @@ impl ApiClient {
         // Set up model-specific parameters based on official GLM specs
         let max_tokens = match self.model.as_str() {
             "GLM-4.6" => 65536, // Official default for GLM-4.6
-            "GLM-4.5" | "GLM-4.5-AIR" | "GLM-4.5-X" | "GLM-4.5-AIRX" | "GLM-4.5-FLASH" | "GLM-4.5V" => 65536, // Official default for GLM-4.5 series
+            "GLM-4.5" | "GLM-4.5-AIR" | "GLM-4.5-X" | "GLM-4.5-AIRX" | "GLM-4.5-FLASH"
+            | "GLM-4.5V" => 65536, // Official default for GLM-4.5 series
             "GLM-4-32B-0414-128K" => 16384, // Official default for older model
-            _ => 2048, // Fallback for other models
+            _ => 2048,          // Fallback for other models
         };
-        
+
         // Log the model being used for debugging
-        debug_print(&format!("Using model: {} with max_tokens: {}", self.model, max_tokens));
-        
+        debug_print(&format!(
+            "Using model: {} with max_tokens: {}",
+            self.model, max_tokens
+        ));
+
         // Set up the base request with model-appropriate defaults
         let mut request = json!({
             "model": &self.model,
@@ -925,14 +1000,16 @@ impl ApiClient {
         // Note: Temperature and top_p should be mutually exclusive per GLM docs
         // We're using temperature=0.7 for balanced output
         request["do_sample"] = json!(true); // Enable sampling for diversity
-        
+
         // Add thinking parameter for GLM-4.5 and above models
-        if thinking_enabled && (self.model.starts_with("GLM-4.5") || self.model.starts_with("GLM-4.6")) {
+        if thinking_enabled
+            && (self.model.starts_with("GLM-4.5") || self.model.starts_with("GLM-4.6"))
+        {
             request["thinking"] = json!({
                 "type": "enabled"
             });
         }
-        
+
         // Log the final request payload
         let request_str = serde_json::to_string_pretty(&request).unwrap_or_default();
         debug_print(&format!("Final request payload: {}", request_str));
@@ -944,13 +1021,13 @@ impl ApiClient {
                 AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
                 _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
             };
-            
+
             // Store a reference to the endpoint for logging
             let endpoint_str = endpoint.as_str();
-            
+
             let mut request_builder = self
                 .client
-                .post(&endpoint)  // Borrow endpoint here
+                .post(&endpoint) // Borrow endpoint here
                 .timeout(timeout)
                 .json(&request);
 
@@ -961,17 +1038,23 @@ impl ApiClient {
 
             // Log the outgoing request for this attempt
             let mut request_headers = reqwest::header::HeaderMap::new();
-            request_headers.insert("Authorization", format!("Bearer {}", self.api_key).parse().unwrap());
+            request_headers.insert(
+                "Authorization",
+                format!("Bearer {}", self.api_key).parse().unwrap(),
+            );
             request_headers.insert("Accept-Language", "en-US,en".parse().unwrap());
-            
+
             // Add Content-Type header explicitly
             request_headers.insert("Content-Type", "application/json".parse().unwrap());
-            
+
             let body_str = serde_json::to_string_pretty(&request).unwrap_or_default();
-            
+
             // Log the full request for debugging
-            debug_print(&format!("Sending request to {}: {}", endpoint_str, body_str));
-            
+            debug_print(&format!(
+                "Sending request to {}: {}",
+                endpoint_str, body_str
+            ));
+
             // Use provider-specific endpoint for logging
             let log_url = match self.provider {
                 AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
@@ -993,18 +1076,25 @@ impl ApiClient {
                         // Extract usage information
                         let zai_usage = if usage_tracking {
                             response_json["usage"].as_object().map(|usage| {
-                                let prompt_tokens = usage.get("prompt_tokens")
-                                    .and_then(|v| v.as_u64()).unwrap_or(0);
-                                let completion_tokens = usage.get("completion_tokens")
-                                    .and_then(|v| v.as_u64()).unwrap_or(0);
-                                let total_tokens = usage.get("total_tokens")
-                                    .and_then(|v| v.as_u64()).unwrap_or(0);
+                                let prompt_tokens = usage
+                                    .get("prompt_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                let completion_tokens = usage
+                                    .get("completion_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                let total_tokens = usage
+                                    .get("total_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
 
                                 ZAIUsage {
                                     prompt_tokens,
                                     completion_tokens,
                                     total_tokens,
-                                    cost_estimate: self.calculate_zai_cost(&self.model, total_tokens),
+                                    cost_estimate: self
+                                        .calculate_zai_cost(&self.model, total_tokens),
                                 }
                             })
                         } else {
@@ -1024,10 +1114,15 @@ impl ApiClient {
                                     .to_string();
 
                                 // Handle tool calls
-                                let tool_calls = choice["message"]["tool_calls"].as_array().map(|calls| calls
+                                let tool_calls =
+                                    choice["message"]["tool_calls"].as_array().map(|calls| {
+                                        calls
                                             .iter()
                                             .map(|tool_call| ToolCall {
-                                                id: tool_call["id"].as_str().unwrap_or_default().to_string(),
+                                                id: tool_call["id"]
+                                                    .as_str()
+                                                    .unwrap_or_default()
+                                                    .to_string(),
                                                 r#type: "function".to_string(),
                                                 function: ToolCallFunction {
                                                     name: tool_call["function"]["name"]
@@ -1040,7 +1135,8 @@ impl ApiClient {
                                                         .to_string(),
                                                 },
                                             })
-                                            .collect::<Vec<_>>());
+                                            .collect::<Vec<_>>()
+                                    });
 
                                 // Convert Z.AI usage to our Usage struct
                                 let usage = zai_usage.map(|z_usage| Usage {
@@ -1057,7 +1153,10 @@ impl ApiClient {
                                     tool_calls,
                                     model: Some(self.model.clone()),
                                     created: response_json["created"].as_u64(),
-                                    reasoning_content: response_json["choices"][0]["message"]["reasoning_content"].as_str().map(|s| s.to_string()),
+                                    reasoning_content: response_json["choices"][0]["message"]
+                                        ["reasoning_content"]
+                                        .as_str()
+                                        .map(|s| s.to_string()),
                                 });
                             }
                         }
@@ -1066,11 +1165,8 @@ impl ApiClient {
                     } else {
                         // Handle HTTP errors with Z.AI-specific mapping
                         let error_body = resp.text().await.unwrap_or_default();
-                        let api_error = ZAIApiError::from_status_code(
-                            status.as_u16(),
-                            &error_body
-                        );
-                        
+                        let api_error = ZAIApiError::from_status_code(status.as_u16(), &error_body);
+
                         // Log detailed error information
                         debug_print(&format!("Z.AI API error ({}): {}", status, error_body));
 
@@ -1081,24 +1177,44 @@ impl ApiClient {
 
                         // Log retry attempt
                         if attempt < max_retries {
-                            eprintln!("🔄 Z.AI request failed (attempt {}/{}), retrying...: {}",
-                                     attempt + 1, max_retries + 1, api_error);
-                            tokio::time::sleep(Duration::from_millis((1000 * (attempt + 1)) as u64)).await;
+                            eprintln!(
+                                "🔄 Z.AI request failed (attempt {}/{}), retrying...: {}",
+                                attempt + 1,
+                                max_retries + 1,
+                                api_error
+                            );
+                            tokio::time::sleep(Duration::from_millis(
+                                (1000 * (attempt + 1)) as u64,
+                            ))
+                            .await;
                             continue;
                         } else {
-                            return Err(anyhow!("Z.AI API request failed after {} retries: {}", max_retries, api_error));
+                            return Err(anyhow!(
+                                "Z.AI API request failed after {} retries: {}",
+                                max_retries,
+                                api_error
+                            ));
                         }
                     }
                 }
                 Err(e) => {
                     // Handle network errors
                     if attempt < max_retries {
-                        eprintln!("🔄 Z.AI network error (attempt {}/{}) retrying...: {}",
-                                 attempt + 1, max_retries + 1, e);
-                        tokio::time::sleep(Duration::from_millis((1000 * (attempt + 1)) as u64)).await;
+                        eprintln!(
+                            "🔄 Z.AI network error (attempt {}/{}) retrying...: {}",
+                            attempt + 1,
+                            max_retries + 1,
+                            e
+                        );
+                        tokio::time::sleep(Duration::from_millis((1000 * (attempt + 1)) as u64))
+                            .await;
                         continue;
                     } else {
-                        return Err(anyhow!("Z.AI network error after {} retries: {}", max_retries, e));
+                        return Err(anyhow!(
+                            "Z.AI network error after {} retries: {}",
+                            max_retries,
+                            e
+                        ));
                     }
                 }
             }
@@ -1111,8 +1227,8 @@ impl ApiClient {
     fn calculate_zai_cost(&self, model: &str, total_tokens: u64) -> Option<f64> {
         // Rough cost estimates (per 1M tokens)
         let cost_per_million = match model {
-            "GLM-4" | "GLM-4.6" => 0.0025, // $2.50 per 1M tokens
-            "GLM-4.5" => 0.0015, // $1.50 per 1M tokens
+            "GLM-4" | "GLM-4.6" => 0.0025,  // $2.50 per 1M tokens
+            "GLM-4.5" => 0.0015,            // $1.50 per 1M tokens
             "claude-instant-1.2" => 0.0008, // $0.80 per 1M tokens
             _ => return None,
         };
@@ -1136,10 +1252,7 @@ impl ApiClient {
             AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
             _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
         };
-        let mut request_builder = self
-            .client
-            .post(&request_url)
-            .json(&request_body);
+        let mut request_builder = self.client.post(&request_url).json(&request_body);
 
         // Add authorization header if API key is provided
         if !self.api_key.is_empty() {
@@ -1155,9 +1268,15 @@ impl ApiClient {
         // Log the outgoing request
         let mut request_headers = reqwest::header::HeaderMap::new();
         if !self.api_key.is_empty() {
-            request_headers.insert("Authorization", format!("Bearer {}", self.api_key).parse().unwrap());
+            request_headers.insert(
+                "Authorization",
+                format!("Bearer {}", self.api_key).parse().unwrap(),
+            );
         }
-        request_headers.insert("HTTP-Referer", "https://github.com/arula-cli/arula-cli".parse().unwrap());
+        request_headers.insert(
+            "HTTP-Referer",
+            "https://github.com/arula-cli/arula-cli".parse().unwrap(),
+        );
         request_headers.insert("X-Title", "ARULA CLI".parse().unwrap());
         let body_str = serde_json::to_string_pretty(&request_body).unwrap_or_default();
         log_http_request("POST", &request_url, &request_headers, Some(&body_str));
@@ -1178,23 +1297,25 @@ impl ApiClient {
                         .to_string();
 
                     // Handle tool calls
-                    let tool_calls = choice["message"]["tool_calls"].as_array().map(|calls| calls
-                                .iter()
-                                .map(|tool_call| ToolCall {
-                                    id: tool_call["id"].as_str().unwrap_or_default().to_string(),
-                                    r#type: "function".to_string(),
-                                    function: ToolCallFunction {
-                                        name: tool_call["function"]["name"]
-                                            .as_str()
-                                            .unwrap_or_default()
-                                            .to_string(),
-                                        arguments: tool_call["function"]["arguments"]
-                                            .as_str()
-                                            .unwrap_or_default()
-                                            .to_string(),
-                                    },
-                                })
-                                .collect::<Vec<_>>());
+                    let tool_calls = choice["message"]["tool_calls"].as_array().map(|calls| {
+                        calls
+                            .iter()
+                            .map(|tool_call| ToolCall {
+                                id: tool_call["id"].as_str().unwrap_or_default().to_string(),
+                                r#type: "function".to_string(),
+                                function: ToolCallFunction {
+                                    name: tool_call["function"]["name"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string(),
+                                    arguments: tool_call["function"]["arguments"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string(),
+                                },
+                            })
+                            .collect::<Vec<_>>()
+                    });
 
                     Ok(ApiResponse {
                         response: content,
@@ -1203,7 +1324,12 @@ impl ApiClient {
                         usage: None, // TODO: Parse usage from response if needed
                         tool_calls,
                         model: Some(self.model.clone()),
-                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        created: Some(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
                         reasoning_content: None,
                     })
                 } else {
@@ -1214,7 +1340,12 @@ impl ApiClient {
                         usage: None,
                         tool_calls: None,
                         model: Some(self.model.clone()),
-                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        created: Some(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
                         reasoning_content: None,
                     })
                 }
@@ -1226,7 +1357,12 @@ impl ApiClient {
                     usage: None,
                     tool_calls: None,
                     model: Some(self.model.clone()),
-                    created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                    created: Some(
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    ),
                     reasoning_content: None,
                 })
             }
@@ -1235,7 +1371,10 @@ impl ApiClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(anyhow::anyhow!("OpenRouter API request failed: {}", error_text))
+            Err(anyhow::anyhow!(
+                "OpenRouter API request failed: {}",
+                error_text
+            ))
         }
     }
 
@@ -1340,17 +1479,14 @@ impl ApiClient {
                 }
             }
         ]);
-        request["tool_choice"] = json!("auto");  // "required" is not supported by Z.AI
+        request["tool_choice"] = json!("auto"); // "required" is not supported by Z.AI
 
         // Use provider-specific endpoint
         let endpoint = match self.provider {
             AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
             _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
         };
-        let mut request_builder = self
-            .client
-            .post(endpoint)
-            .json(&request);
+        let mut request_builder = self.client.post(endpoint).json(&request);
 
         // Add authorization header if API key is provided
         if !self.api_key.is_empty() {
@@ -1372,30 +1508,32 @@ impl ApiClient {
                         .to_string();
 
                     // Handle tool calls
-                    let tool_calls = choice["message"]["tool_calls"].as_array().map(|calls| calls
-                                .iter()
-                                .map(|tool_call| ToolCall {
-                                    id: tool_call["id"].as_str().unwrap_or_default().to_string(),
-                                    r#type: "function".to_string(),
-                                    function: ToolCallFunction {
-                                        name: tool_call["function"]["name"]
-                                            .as_str()
-                                            .unwrap_or_default()
-                                            .to_string(),
-                                        arguments: tool_call["function"]["arguments"]
-                                            .as_str()
-                                            .unwrap_or_default()
-                                            .to_string(),
-                                    },
-                                })
-                                .collect::<Vec<_>>());
+                    let tool_calls = choice["message"]["tool_calls"].as_array().map(|calls| {
+                        calls
+                            .iter()
+                            .map(|tool_call| ToolCall {
+                                id: tool_call["id"].as_str().unwrap_or_default().to_string(),
+                                r#type: "function".to_string(),
+                                function: ToolCallFunction {
+                                    name: tool_call["function"]["name"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string(),
+                                    arguments: tool_call["function"]["arguments"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string(),
+                                },
+                            })
+                            .collect::<Vec<_>>()
+                    });
 
                     let usage = response_json.get("usage").map(|usage_info| Usage {
-                            prompt_tokens: usage_info["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                            completion_tokens: usage_info["completion_tokens"].as_u64().unwrap_or(0)
-                                as u32,
-                            total_tokens: usage_info["total_tokens"].as_u64().unwrap_or(0) as u32,
-                        });
+                        prompt_tokens: usage_info["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+                        completion_tokens: usage_info["completion_tokens"].as_u64().unwrap_or(0)
+                            as u32,
+                        total_tokens: usage_info["total_tokens"].as_u64().unwrap_or(0) as u32,
+                    });
 
                     return Ok(ApiResponse {
                         response: content,
@@ -1404,7 +1542,12 @@ impl ApiClient {
                         usage,
                         tool_calls,
                         model: Some(self.model.clone()),
-                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        created: Some(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
                         reasoning_content: None,
                     });
                 }
@@ -1443,7 +1586,12 @@ impl ApiClient {
             usage: None,
             tool_calls: None,
             model: Some("fallback".to_string()),
-            created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+            created: Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            ),
             reasoning_content: None,
         })
     }
@@ -1486,8 +1634,8 @@ impl ApiClient {
 
         // Check if this is Z.AI - both by provider type AND by endpoint URL
         // This ensures proper handling even if provider detection failed
-        let is_zai = matches!(self.provider, AIProvider::ZAiCoding) 
-            || self.endpoint.contains("api.z.ai");
+        let is_zai =
+            matches!(self.provider, AIProvider::ZAiCoding) || self.endpoint.contains("api.z.ai");
         let is_ollama = matches!(self.provider, AIProvider::Ollama);
 
         // Convert ChatMessage to JSON format
@@ -1502,15 +1650,16 @@ impl ApiClient {
                         return None;
                     }
                     // For assistant messages with only tool_calls (no content), skip
-                    if msg.role == "assistant" && msg.content.is_none() && msg.tool_calls.is_some() {
+                    if msg.role == "assistant" && msg.content.is_none() && msg.tool_calls.is_some()
+                    {
                         return None;
                     }
                 }
-                
+
                 let mut obj = serde_json::json!({
                     "role": msg.role,
                 });
-                
+
                 if let Some(content) = &msg.content {
                     obj["content"] = serde_json::json!(content);
                 } else if is_zai {
@@ -1520,29 +1669,34 @@ impl ApiClient {
                     // Assistant message with tool_calls can have null content (non-Z.AI)
                     obj["content"] = serde_json::json!(null);
                 }
-                
+
                 // Only include tool-related fields for non-Z.AI providers
                 if !is_zai {
                     if let Some(tool_calls) = &msg.tool_calls {
                         // For Ollama, convert arguments from string to object
                         if is_ollama {
-                            let converted_calls: Vec<serde_json::Value> = tool_calls.iter().map(|tc| {
-                                // Parse arguments string to JSON object
-                                let args_obj = serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
+                            let converted_calls: Vec<serde_json::Value> = tool_calls
+                                .iter()
+                                .map(|tc| {
+                                    // Parse arguments string to JSON object
+                                    let args_obj = serde_json::from_str::<serde_json::Value>(
+                                        &tc.function.arguments,
+                                    )
                                     .unwrap_or_else(|_| serde_json::json!({}));
-                                serde_json::json!({
-                                    "function": {
-                                        "name": tc.function.name,
-                                        "arguments": args_obj  // Object, not string
-                                    }
+                                    serde_json::json!({
+                                        "function": {
+                                            "name": tc.function.name,
+                                            "arguments": args_obj  // Object, not string
+                                        }
+                                    })
                                 })
-                            }).collect();
+                                .collect();
                             obj["tool_calls"] = serde_json::json!(converted_calls);
                         } else {
                             obj["tool_calls"] = serde_json::json!(tool_calls);
                         }
                     }
-                    
+
                     if is_ollama {
                         // Ollama uses tool_name instead of tool_call_id for tool responses
                         if let Some(tool_name) = &msg.tool_name {
@@ -1555,7 +1709,7 @@ impl ApiClient {
                         }
                     }
                 }
-                
+
                 Some(obj)
             })
             .collect();
@@ -1567,11 +1721,11 @@ impl ApiClient {
         // Ollama also doesn't support stream_options or tool_choice
         let include_stream_options = !is_zai && !is_ollama;
         let include_tool_choice = !is_zai && !is_ollama;
-        
+
         // For Z.AI, we need special handling for tools with streaming
         // Based on Z.AI docs: all streaming + tool examples only use primitive types (string, number, boolean)
         // Complex types (object, array) in tool parameters may cause error 1210
-        // 
+        //
         // For Z.AI, filter out tools with complex parameter types to avoid error 1210
         let tools_ref = if is_zai {
             // Filter to only tools with simple parameter types
@@ -1580,7 +1734,7 @@ impl ApiClient {
                     if let Some(params) = tool.get("function")
                         .and_then(|f| f.get("parameters"))
                         .and_then(|p| p.get("properties"))
-                        .and_then(|props| props.as_object()) 
+                        .and_then(|props| props.as_object())
                     {
                         // Check all parameters - reject if any has object/array type
                         for (param_name, param) in params {
@@ -1600,9 +1754,13 @@ impl ApiClient {
                     true
                 })
                 .collect();
-            
-            debug_print(&format!("DEBUG: Z.AI - {} of {} tools have simple params", simple_tools.len(), tools.len()));
-            
+
+            debug_print(&format!(
+                "DEBUG: Z.AI - {} of {} tools have simple params",
+                simple_tools.len(),
+                tools.len()
+            ));
+
             // For Z.AI, we don't include tools in streaming requests to avoid error 1210
             // Tool calls will be handled via non-streaming fallback
             if !simple_tools.is_empty() {
@@ -1614,13 +1772,14 @@ impl ApiClient {
         } else {
             None
         };
-        
+
         // Use model-specific parameters for streaming (matching non-streaming logic)
         let max_tokens = match self.model.as_str() {
             "GLM-4.6" => 65536, // Official default for GLM-4.6
-            "GLM-4.5" | "GLM-4.5-AIR" | "GLM-4.5-X" | "GLM-4.5-AIRX" | "GLM-4.5-FLASH" | "GLM-4.5V" => 65536, // Official default for GLM-4.5 series
+            "GLM-4.5" | "GLM-4.5-AIR" | "GLM-4.5-X" | "GLM-4.5-AIRX" | "GLM-4.5-FLASH"
+            | "GLM-4.5V" => 65536, // Official default for GLM-4.5 series
             "GLM-4-32B-0414-128K" => 16384, // Official default for older model
-            _ => 2048, // Fallback for other models
+            _ => 2048,          // Fallback for other models
         };
 
         let mut request_body = build_streaming_request_full(
@@ -1637,12 +1796,21 @@ impl ApiClient {
         if is_ollama {
             // Convert max_tokens to options.num_predict for Ollama
             if let Some(obj) = request_body.as_object_mut() {
-                let max_tokens = obj.remove("max_tokens").and_then(|v| v.as_u64()).unwrap_or(2048);
-                let temperature = obj.remove("temperature").and_then(|v| v.as_f64()).unwrap_or(0.7);
-                obj.insert("options".to_string(), serde_json::json!({
-                    "num_predict": max_tokens,
-                    "temperature": temperature
-                }));
+                let max_tokens = obj
+                    .remove("max_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(2048);
+                let temperature = obj
+                    .remove("temperature")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.7);
+                obj.insert(
+                    "options".to_string(),
+                    serde_json::json!({
+                        "num_predict": max_tokens,
+                        "temperature": temperature
+                    }),
+                );
             }
         }
 
@@ -1651,11 +1819,23 @@ impl ApiClient {
         // Z.AI docs explicitly support: model, messages, stream, temperature, top_p, max_tokens, stop, user_id
         // Note: Z.AI Coding API (api.z.ai/api/coding/...) may have different supported params
         if is_zai {
-            let model = request_body.get("model").cloned().unwrap_or(serde_json::json!(self.model.clone()));
-            let messages = request_body.get("messages").cloned().unwrap_or_else(|| serde_json::json!([]));
-            let temperature = request_body.get("temperature").cloned().unwrap_or(serde_json::json!(0.7));
-            let max_tokens = request_body.get("max_tokens").cloned().unwrap_or(serde_json::json!(2048));
-            
+            let model = request_body
+                .get("model")
+                .cloned()
+                .unwrap_or(serde_json::json!(self.model.clone()));
+            let messages = request_body
+                .get("messages")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([]));
+            let temperature = request_body
+                .get("temperature")
+                .cloned()
+                .unwrap_or(serde_json::json!(0.7));
+            let max_tokens = request_body
+                .get("max_tokens")
+                .cloned()
+                .unwrap_or(serde_json::json!(2048));
+
             // For Z.AI, we need to be very specific about which fields we include
             // to avoid error 1210 (Invalid API parameter)
             request_body = serde_json::json!({
@@ -1665,10 +1845,13 @@ impl ApiClient {
                 "temperature": temperature,
                 "max_tokens": max_tokens
             });
-            
+
             // Note: We're not including tools in streaming requests for Z.AI
             // to prevent error 1210
-            debug_print(&format!("DEBUG: Z.AI cleaned request body: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default()));
+            debug_print(&format!(
+                "DEBUG: Z.AI cleaned request body: {}",
+                serde_json::to_string_pretty(&request_body).unwrap_or_default()
+            ));
         }
 
         // Use provider-specific endpoint
@@ -1678,18 +1861,25 @@ impl ApiClient {
         };
 
         debug_print(&format!("DEBUG: Streaming request to {}", request_url));
-        debug_print(&format!("DEBUG: Provider type: {:?}, is_zai: {}, is_ollama: {}", self.provider, is_zai, is_ollama));
-        debug_print(&format!("DEBUG: include_stream_options: {}, include_tool_choice: {}", include_stream_options, include_tool_choice));
-        debug_print(&format!("DEBUG: Streaming request body: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default()));
-        
-        let mut request_builder = self
-            .client
-            .post(&request_url)
-            .json(&request_body);
+        debug_print(&format!(
+            "DEBUG: Provider type: {:?}, is_zai: {}, is_ollama: {}",
+            self.provider, is_zai, is_ollama
+        ));
+        debug_print(&format!(
+            "DEBUG: include_stream_options: {}, include_tool_choice: {}",
+            include_stream_options, include_tool_choice
+        ));
+        debug_print(&format!(
+            "DEBUG: Streaming request body: {}",
+            serde_json::to_string_pretty(&request_body).unwrap_or_default()
+        ));
+
+        let mut request_builder = self.client.post(&request_url).json(&request_body);
 
         // Add authorization
         if !self.api_key.is_empty() {
-            request_builder = request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
         // Add provider-specific headers
@@ -1700,25 +1890,35 @@ impl ApiClient {
                     .header("X-Title", "ARULA CLI");
             }
             AIProvider::ZAiCoding => {
-                request_builder = request_builder
-                    .header("Accept-Language", "en-US,en");
+                request_builder = request_builder.header("Accept-Language", "en-US,en");
             }
             _ => {}
         }
 
         // Send request
         let response = request_builder.send().await?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             // Truncate HTML error pages to show just the first meaningful part
-            let error_display = if error_text.contains("<!DOCTYPE") || error_text.contains("<html") {
-                format!("{} (HTML error page received - check if the endpoint URL is correct)", status)
+            let error_display = if error_text.contains("<!DOCTYPE") || error_text.contains("<html")
+            {
+                format!(
+                    "{} (HTML error page received - check if the endpoint URL is correct)",
+                    status
+                )
             } else {
                 error_text
             };
-            return Err(anyhow::anyhow!("API request to {} failed: {}", request_url, error_display));
+            return Err(anyhow::anyhow!(
+                "API request to {} failed: {}",
+                request_url,
+                error_display
+            ));
         }
 
         // Process the streaming response
@@ -1742,17 +1942,21 @@ impl ApiClient {
                     // Use custom tool-aware OpenAI-compatible implementation
                     match client.send_openai_request_with_tools(messages, tools).await {
                         Ok(response) => {
-                            debug_print(&format!("DEBUG: {:?} response with tools", client.provider));
+                            debug_print(&format!(
+                                "DEBUG: {:?} response with tools",
+                                client.provider
+                            ));
                             let _ = tx.send(StreamingResponse::Start);
                             let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
                             let _ = tx.send(StreamingResponse::End(response));
                         }
                         Err(e) => {
-                            debug_print(&format!("DEBUG: {:?} request error: {}", client.provider, e));
-                            let _ = tx.send(StreamingResponse::Error(format!(
-                                "Request error: {}",
-                                e
-                            )));
+                            debug_print(&format!(
+                                "DEBUG: {:?} request error: {}",
+                                client.provider, e
+                            ));
+                            let _ =
+                                tx.send(StreamingResponse::Error(format!("Request error: {}", e)));
                         }
                     }
                 }
@@ -1802,7 +2006,7 @@ impl ApiClient {
     }
 
     /// Send message with custom tools (synchronous version - waits for complete response)
-    /// 
+    ///
     /// Unlike `send_message_with_tools`, this method directly returns the API response
     /// instead of using a channel. Used for non-streaming mode.
     pub async fn send_message_with_tools_sync(
@@ -1820,12 +2024,8 @@ impl ApiClient {
             AIProvider::ZAiCoding | AIProvider::Custom => {
                 self.send_zai_request_with_tools(messages, tools).await
             }
-            AIProvider::Claude => {
-                self.send_claude_request(messages).await
-            }
-            AIProvider::Ollama => {
-                self.send_ollama_request(messages).await
-            }
+            AIProvider::Claude => self.send_claude_request(messages).await,
+            AIProvider::Ollama => self.send_ollama_request(messages).await,
         }
     }
 
@@ -1838,7 +2038,7 @@ impl ApiClient {
         // Check if thinking/reasoning is enabled
         let config = crate::utils::config::Config::load_or_default()?;
         let thinking_enabled = config.get_thinking_enabled().unwrap_or(false);
-        
+
         // Create request with custom tools
         let mut request_body = serde_json::json!({
             "model": self.model,
@@ -1848,7 +2048,7 @@ impl ApiClient {
             "tools": tools,
             "tool_choice": "auto"
         });
-        
+
         // Add reasoning effort when thinking is enabled
         // Works with GPT-5.1 and reasoning models; ignored by unsupported models
         if thinking_enabled {
@@ -1860,10 +2060,7 @@ impl ApiClient {
             AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
             _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
         };
-        let mut request_builder = self
-            .client
-            .post(&request_url)
-            .json(&request_body);
+        let mut request_builder = self.client.post(&request_url).json(&request_body);
 
         if !self.api_key.is_empty() {
             request_builder =
@@ -1880,10 +2077,16 @@ impl ApiClient {
         // Log the outgoing request
         let mut request_headers = reqwest::header::HeaderMap::new();
         if !self.api_key.is_empty() {
-            request_headers.insert("Authorization", format!("Bearer {}", self.api_key).parse().unwrap());
+            request_headers.insert(
+                "Authorization",
+                format!("Bearer {}", self.api_key).parse().unwrap(),
+            );
         }
         if self.provider == AIProvider::OpenRouter {
-            request_headers.insert("HTTP-Referer", "https://github.com/arula-cli/arula-cli".parse().unwrap());
+            request_headers.insert(
+                "HTTP-Referer",
+                "https://github.com/arula-cli/arula-cli".parse().unwrap(),
+            );
             request_headers.insert("X-Title", "ARULA CLI".parse().unwrap());
         }
         let body_str = serde_json::to_string_pretty(&request_body).unwrap_or_default();
@@ -1904,23 +2107,25 @@ impl ApiClient {
                         .unwrap_or("")
                         .to_string();
 
-                    let tool_calls = choice["message"]["tool_calls"].as_array().map(|calls| calls
-                                .iter()
-                                .map(|tool_call| ToolCall {
-                                    id: tool_call["id"].as_str().unwrap_or_default().to_string(),
-                                    r#type: "function".to_string(),
-                                    function: ToolCallFunction {
-                                        name: tool_call["function"]["name"]
-                                            .as_str()
-                                            .unwrap_or_default()
-                                            .to_string(),
-                                        arguments: tool_call["function"]["arguments"]
-                                            .as_str()
-                                            .unwrap_or_default()
-                                            .to_string(),
-                                    },
-                                })
-                                .collect::<Vec<_>>());
+                    let tool_calls = choice["message"]["tool_calls"].as_array().map(|calls| {
+                        calls
+                            .iter()
+                            .map(|tool_call| ToolCall {
+                                id: tool_call["id"].as_str().unwrap_or_default().to_string(),
+                                r#type: "function".to_string(),
+                                function: ToolCallFunction {
+                                    name: tool_call["function"]["name"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string(),
+                                    arguments: tool_call["function"]["arguments"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string(),
+                                },
+                            })
+                            .collect::<Vec<_>>()
+                    });
 
                     Ok(ApiResponse {
                         response: content,
@@ -1929,7 +2134,12 @@ impl ApiClient {
                         usage: None,
                         tool_calls,
                         model: Some(self.model.clone()),
-                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        created: Some(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
                         reasoning_content: None,
                     })
                 } else {
@@ -1940,7 +2150,12 @@ impl ApiClient {
                         usage: None,
                         tool_calls: None,
                         model: Some(self.model.clone()),
-                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        created: Some(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
                         reasoning_content: None,
                     })
                 }
@@ -1952,7 +2167,12 @@ impl ApiClient {
                     usage: None,
                     tool_calls: None,
                     model: Some(self.model.clone()),
-                    created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                    created: Some(
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    ),
                     reasoning_content: None,
                 })
             }
@@ -2026,7 +2246,7 @@ impl ApiClient {
                 if let Some(params) = tool.get("function")
                     .and_then(|f| f.get("parameters"))
                     .and_then(|p| p.get("properties"))
-                    .and_then(|props| props.as_object()) 
+                    .and_then(|props| props.as_object())
                 {
                     for (param_name, param) in params {
                         if let Some(param_type) = param.get("type").and_then(|t| t.as_str()) {
@@ -2046,9 +2266,13 @@ impl ApiClient {
             })
             .cloned()
             .collect();
-        
-        debug_print(&format!("DEBUG: Z.AI non-streaming - {} of {} tools have simple params", filtered_tools.len(), tools.len()));
-        
+
+        debug_print(&format!(
+            "DEBUG: Z.AI non-streaming - {} of {} tools have simple params",
+            filtered_tools.len(),
+            tools.len()
+        ));
+
         // Track if we've already added a system message
         let mut has_system_message = false;
 
@@ -2126,7 +2350,11 @@ impl ApiClient {
 
         // Debug: Log the Z.AI request when debug mode is enabled
         if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
-            println!("🔧 DEBUG: Z.AI Tools Request: {}", serde_json::to_string_pretty(&request).unwrap_or_else(|_| "Failed to serialize request".to_string()));
+            println!(
+                "🔧 DEBUG: Z.AI Tools Request: {}",
+                serde_json::to_string_pretty(&request)
+                    .unwrap_or_else(|_| "Failed to serialize request".to_string())
+            );
             println!("🔧 DEBUG: Thinking enabled: {}", thinking_enabled);
         }
 
@@ -2145,9 +2373,7 @@ impl ApiClient {
             AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
             _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
         };
-        let mut request_builder = zai_client
-            .post(endpoint)
-            .json(&request);
+        let mut request_builder = zai_client.post(endpoint).json(&request);
 
         // Log the outgoing request
         let request_headers = reqwest::header::HeaderMap::new();
@@ -2189,7 +2415,11 @@ impl ApiClient {
 
             // Debug: Log the full Z.AI response when debug mode is enabled
             if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
-                println!("🔧 DEBUG: Z.AI Tools Response: {}", serde_json::to_string_pretty(&response_json).unwrap_or_else(|_| "Failed to serialize response".to_string()));
+                println!(
+                    "🔧 DEBUG: Z.AI Tools Response: {}",
+                    serde_json::to_string_pretty(&response_json)
+                        .unwrap_or_else(|_| "Failed to serialize response".to_string())
+                );
             }
 
             if let Some(choices) = response_json["choices"].as_array() {
@@ -2207,36 +2437,41 @@ impl ApiClient {
                     // Debug: Log reasoning content if present
                     if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
                         if let Some(ref reasoning) = reasoning_content {
-                            println!("🧠 DEBUG: Z.AI Tools Reasoning Content Found: {}", reasoning);
+                            println!(
+                                "🧠 DEBUG: Z.AI Tools Reasoning Content Found: {}",
+                                reasoning
+                            );
                         } else {
                             println!("🔧 DEBUG: Z.AI Tools No Reasoning Content in response");
                         }
                     }
 
-                    let tool_calls = choice["message"]["tool_calls"].as_array().map(|calls| calls
-                                .iter()
-                                .map(|tool_call| ToolCall {
-                                    id: tool_call["id"].as_str().unwrap_or_default().to_string(),
-                                    r#type: "function".to_string(),
-                                    function: ToolCallFunction {
-                                        name: tool_call["function"]["name"]
-                                            .as_str()
-                                            .unwrap_or_default()
-                                            .to_string(),
-                                        arguments: tool_call["function"]["arguments"]
-                                            .as_str()
-                                            .unwrap_or_default()
-                                            .to_string(),
-                                    },
-                                })
-                                .collect::<Vec<_>>());
+                    let tool_calls = choice["message"]["tool_calls"].as_array().map(|calls| {
+                        calls
+                            .iter()
+                            .map(|tool_call| ToolCall {
+                                id: tool_call["id"].as_str().unwrap_or_default().to_string(),
+                                r#type: "function".to_string(),
+                                function: ToolCallFunction {
+                                    name: tool_call["function"]["name"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string(),
+                                    arguments: tool_call["function"]["arguments"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string(),
+                                },
+                            })
+                            .collect::<Vec<_>>()
+                    });
 
                     let usage = response_json.get("usage").map(|usage_info| Usage {
-                            prompt_tokens: usage_info["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                            completion_tokens: usage_info["completion_tokens"].as_u64().unwrap_or(0)
-                                as u32,
-                            total_tokens: usage_info["total_tokens"].as_u64().unwrap_or(0) as u32,
-                        });
+                        prompt_tokens: usage_info["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+                        completion_tokens: usage_info["completion_tokens"].as_u64().unwrap_or(0)
+                            as u32,
+                        total_tokens: usage_info["total_tokens"].as_u64().unwrap_or(0) as u32,
+                    });
 
                     Ok(ApiResponse {
                         response: content,
@@ -2245,7 +2480,12 @@ impl ApiClient {
                         usage,
                         tool_calls,
                         model: Some(self.model.clone()),
-                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        created: Some(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
                         reasoning_content,
                     })
                 } else {
@@ -2256,7 +2496,12 @@ impl ApiClient {
                         usage: None,
                         tool_calls: None,
                         model: Some(self.model.clone()),
-                        created: Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()),
+                        created: Some(
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
                         reasoning_content: None,
                     })
                 }
@@ -2400,7 +2645,10 @@ mod tests {
         assert_eq!(deserialized.id, "call_1");
         assert_eq!(deserialized.r#type, "function");
         assert_eq!(deserialized.function.name, "bash_tool");
-        assert_eq!(deserialized.function.arguments, "{\"command\": \"echo hello\"}");
+        assert_eq!(
+            deserialized.function.arguments,
+            "{\"command\": \"echo hello\"}"
+        );
     }
 
     #[test]

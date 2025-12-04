@@ -1,14 +1,10 @@
 //! Common dialog utilities for ARULA menu system
 
-use crate::ui::output::OutputHandler;
 use crate::ui::menus::common::MenuUtils;
+use crate::ui::output::OutputHandler;
 use anyhow::Result;
 use console::style;
-use crossterm::{
-    event::KeyCode,
-    style::Color,
-    ExecutableCommand,
-};
+use crossterm::{event::KeyCode, style::Color, ExecutableCommand};
 use std::io::{stdout, Write};
 
 /// Dialog utilities for common user input patterns
@@ -20,11 +16,7 @@ impl Dialogs {
     }
 
     /// Show a confirmation dialog with Yes/No options
-    pub fn confirm_dialog(
-        &self,
-        message: &str,
-        output: &mut OutputHandler,
-    ) -> Result<bool> {
+    pub fn confirm_dialog(&self, message: &str, output: &mut OutputHandler) -> Result<bool> {
         // Setup terminal
         MenuUtils::setup_terminal()?;
 
@@ -214,7 +206,10 @@ impl Dialogs {
             if i >= 3 {
                 break; // Max 3 lines for message
             }
-            stdout().execute(crossterm::cursor::MoveTo(start_col + 2, start_row + 2 + i as u16))?;
+            stdout().execute(crossterm::cursor::MoveTo(
+                start_col + 2,
+                start_row + 2 + i as u16,
+            ))?;
             println!("{}", msg_line);
         }
 
@@ -224,7 +219,10 @@ impl Dialogs {
         let yes_text = if selected_yes { "[Yes]" } else { " Yes " };
 
         // No option
-        stdout().execute(crossterm::cursor::MoveTo(start_col + dialog_width - 20, options_row))?;
+        stdout().execute(crossterm::cursor::MoveTo(
+            start_col + dialog_width - 20,
+            options_row,
+        ))?;
         if !selected_yes {
             println!("{}", style(no_text).cyan());
         } else {
@@ -232,7 +230,10 @@ impl Dialogs {
         }
 
         // Yes option
-        stdout().execute(crossterm::cursor::MoveTo(start_col + dialog_width - 10, options_row))?;
+        stdout().execute(crossterm::cursor::MoveTo(
+            start_col + dialog_width - 10,
+            options_row,
+        ))?;
         if selected_yes {
             println!("{}", style(yes_text).cyan());
         } else {
@@ -288,7 +289,10 @@ impl Dialogs {
         print!("{}", style(input).white());
 
         // Cursor
-        stdout().execute(crossterm::cursor::MoveTo(input_col + cursor_pos as u16, input_row))?;
+        stdout().execute(crossterm::cursor::MoveTo(
+            input_col + cursor_pos as u16,
+            input_row,
+        ))?;
         stdout().execute(crossterm::cursor::Show)?;
 
         stdout().flush()?;
@@ -344,7 +348,10 @@ impl Dialogs {
         }
 
         // Cursor at end
-        stdout().execute(crossterm::cursor::MoveTo(password_col + password_len as u16, password_row))?;
+        stdout().execute(crossterm::cursor::MoveTo(
+            password_col + password_len as u16,
+            password_row,
+        ))?;
         stdout().execute(crossterm::cursor::Show)?;
 
         stdout().flush()?;
@@ -382,12 +389,18 @@ impl Dialogs {
             if i >= 4 {
                 break; // Max 4 lines for message
             }
-            stdout().execute(crossterm::cursor::MoveTo(start_col + 2, start_row + 2 + i as u16))?;
+            stdout().execute(crossterm::cursor::MoveTo(
+                start_col + 2,
+                start_row + 2 + i as u16,
+            ))?;
             println!("{}", msg_line);
         }
 
         // Render "Press any key" text
-        stdout().execute(crossterm::cursor::MoveTo(start_col + dialog_width/2 - 7, start_row + dialog_height - 2))?;
+        stdout().execute(crossterm::cursor::MoveTo(
+            start_col + dialog_width / 2 - 7,
+            start_row + dialog_height - 2,
+        ))?;
         println!("{}", style("Press any key").dim());
 
         stdout().flush()?;

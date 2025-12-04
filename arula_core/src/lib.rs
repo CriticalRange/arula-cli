@@ -21,9 +21,15 @@ pub use utils::*;
 /// High-level streaming events exposed to consumers (CLI/desktop).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StreamEvent {
-    Start { model: String },
-    Text { text: String },
-    Reasoning { text: String },
+    Start {
+        model: String,
+    },
+    Text {
+        text: String,
+    },
+    Reasoning {
+        text: String,
+    },
     ToolCall {
         id: String,
         name: String,

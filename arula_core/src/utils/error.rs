@@ -261,7 +261,9 @@ mod tests {
         let err = ApiError::NotInitialized;
         assert!(err.to_string().contains("not initialized"));
 
-        let err = ApiError::RateLimited { retry_after_secs: 60 };
+        let err = ApiError::RateLimited {
+            retry_after_secs: 60,
+        };
         assert!(err.to_string().contains("60 seconds"));
     }
 
@@ -273,8 +275,10 @@ mod tests {
 
     #[test]
     fn test_result_ext_tool_context() {
-        let result: Result<(), std::io::Error> =
-            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found"));
+        let result: Result<(), std::io::Error> = Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "file not found",
+        ));
 
         let with_context = result.with_tool_context("read_file");
         assert!(with_context.is_err());
@@ -301,4 +305,3 @@ mod tests {
         assert!(matches!(arula_err, ArulaError::ToolExecution { .. }));
     }
 }
-

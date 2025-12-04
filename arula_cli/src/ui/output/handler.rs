@@ -80,45 +80,87 @@ impl OutputHandler {
         let stdout = io::stdout();
         let mut handle = stdout.lock();
 
-        writeln!(handle, "\n{}", style("╔══════════════════════════════════════════════╗").cyan())?;
-        writeln!(handle, "{}", style("║                                              ║").cyan())?;
-        writeln!(handle, "{}{}{}",
+        writeln!(
+            handle,
+            "\n{}",
+            style("╔══════════════════════════════════════════════╗").cyan()
+        )?;
+        writeln!(
+            handle,
+            "{}",
+            style("║                                              ║").cyan()
+        )?;
+        writeln!(
+            handle,
+            "{}{}{}",
             style("║").cyan(),
-            style("   █████╗ ██████╗ ██╗   ██╗██╗      █████╗   ").bright().cyan(),
+            style("   █████╗ ██████╗ ██╗   ██╗██╗      █████╗   ")
+                .bright()
+                .cyan(),
             style("║").cyan()
         )?;
-        writeln!(handle, "{}{}{}",
+        writeln!(
+            handle,
+            "{}{}{}",
             style("║").cyan(),
-            style("  ██╔══██╗██╔══██╗██║   ██║██║     ██╔══██╗  ").bright().cyan(),
+            style("  ██╔══██╗██╔══██╗██║   ██║██║     ██╔══██╗  ")
+                .bright()
+                .cyan(),
             style("║").cyan()
         )?;
-        writeln!(handle, "{}{}{}",
+        writeln!(
+            handle,
+            "{}{}{}",
             style("║").cyan(),
-            style("  ███████║██████╔╝██║   ██║██║     ███████║  ").bright().cyan(),
+            style("  ███████║██████╔╝██║   ██║██║     ███████║  ")
+                .bright()
+                .cyan(),
             style("║").cyan()
         )?;
-        writeln!(handle, "{}{}{}",
+        writeln!(
+            handle,
+            "{}{}{}",
             style("║").cyan(),
-            style("  ██╔══██║██╔══██╗██║   ██║██║     ██╔══██║  ").bright().cyan(),
+            style("  ██╔══██║██╔══██╗██║   ██║██║     ██╔══██║  ")
+                .bright()
+                .cyan(),
             style("║").cyan()
         )?;
-        writeln!(handle, "{}{}{}",
+        writeln!(
+            handle,
+            "{}{}{}",
             style("║").cyan(),
-            style("  ██║  ██║██║  ██║╚██████╔╝███████╗██║  ██║  ").bright().cyan(),
+            style("  ██║  ██║██║  ██║╚██████╔╝███████╗██║  ██║  ")
+                .bright()
+                .cyan(),
             style("║").cyan()
         )?;
-        writeln!(handle, "{}{}{}",
+        writeln!(
+            handle,
+            "{}{}{}",
             style("║").cyan(),
-            style("  ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝  ").bright().cyan(),
+            style("  ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝  ")
+                .bright()
+                .cyan(),
             style("║").cyan()
         )?;
-        writeln!(handle, "{}", style("║                                              ║").cyan())?;
-        writeln!(handle, "{}{}{}",
+        writeln!(
+            handle,
+            "{}",
+            style("║                                              ║").cyan()
+        )?;
+        writeln!(
+            handle,
+            "{}{}{}",
             style("║").cyan(),
             style("        Autonomous AI CLI Assistant          ").dim(),
             style("║").cyan()
         )?;
-        writeln!(handle, "{}", style("╚══════════════════════════════════════════════╝").cyan())?;
+        writeln!(
+            handle,
+            "{}",
+            style("╚══════════════════════════════════════════════╝").cyan()
+        )?;
         writeln!(handle)?;
 
         handle.flush()
@@ -156,7 +198,12 @@ impl OutputHandler {
         let stdout = io::stdout();
         let mut handle = stdout.lock();
 
-        writeln!(handle, "{} {}", style("⚠").yellow(), style(message).yellow())?;
+        writeln!(
+            handle,
+            "{} {}",
+            style("⚠").yellow(),
+            style(message).yellow()
+        )?;
         handle.flush()
     }
 
@@ -245,7 +292,12 @@ impl OutputHandler {
     }
 
     /// Print a tool result
-    pub fn print_tool_result(&self, tool_name: &str, result: &serde_json::Value, success: bool) -> io::Result<()> {
+    pub fn print_tool_result(
+        &self,
+        tool_name: &str,
+        result: &serde_json::Value,
+        success: bool,
+    ) -> io::Result<()> {
         let stdout = io::stdout();
         let mut handle = stdout.lock();
 
@@ -255,7 +307,12 @@ impl OutputHandler {
     }
 
     /// Print detailed tool result (verbose mode)
-    pub fn print_tool_result_detailed(&self, tool_name: &str, result: &serde_json::Value, success: bool) -> io::Result<()> {
+    pub fn print_tool_result_detailed(
+        &self,
+        tool_name: &str,
+        result: &serde_json::Value,
+        success: bool,
+    ) -> io::Result<()> {
         let stdout = io::stdout();
         let mut handle = stdout.lock();
 
@@ -304,7 +361,8 @@ impl OutputHandler {
 
     /// Start a tool execution spinner
     pub fn start_tool_spinner(&mut self, message: &str) {
-        self.spinner_manager.start(SpinnerStyle::ToolExecution, message);
+        self.spinner_manager
+            .start(SpinnerStyle::ToolExecution, message);
     }
 
     /// Update spinner message
@@ -333,15 +391,21 @@ impl OutputHandler {
 
         writeln!(handle, "\n{}", style("─".repeat(40)).dim())?;
         writeln!(handle, "{}", style("Usage Statistics:").dim())?;
-        writeln!(handle, "  {} Prompt tokens: {}",
+        writeln!(
+            handle,
+            "  {} Prompt tokens: {}",
             style("•").dim(),
             style(usage.prompt_tokens).cyan()
         )?;
-        writeln!(handle, "  {} Completion tokens: {}",
+        writeln!(
+            handle,
+            "  {} Completion tokens: {}",
             style("•").dim(),
             style(usage.completion_tokens).cyan()
         )?;
-        writeln!(handle, "  {} Total tokens: {}",
+        writeln!(
+            handle,
+            "  {} Total tokens: {}",
             style("•").dim(),
             style(usage.total_tokens).bold().cyan()
         )?;
@@ -398,4 +462,3 @@ mod tests {
         assert!(width > 0);
     }
 }
-

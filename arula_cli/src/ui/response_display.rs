@@ -5,12 +5,12 @@
 
 use crate::api::agent::ToolResult;
 use crate::ui::output::OutputHandler;
-use crate::utils::colors::{PRIMARY_ANSI, MISC_ANSI};
+use crate::utils::colors::{MISC_ANSI, PRIMARY_ANSI};
 use console::style;
-use std::io::{self, Write};
-use std::time::{Duration, Instant};
-use std::sync::mpsc::{self, Sender, Receiver};
 use serde_json::Value;
+use std::io::{self, Write};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::{Duration, Instant};
 
 /// Enhanced response display with animations and custom formatting
 pub struct ResponseDisplay {
@@ -49,10 +49,15 @@ impl ResponseDisplay {
     }
 
     /// Display a tool call with pulse animation on the tool name
-    pub fn display_tool_call_start(&mut self, id: &str, name: &str, arguments: &str) -> io::Result<()> {
+    pub fn display_tool_call_start(
+        &mut self,
+        id: &str,
+        name: &str,
+        arguments: &str,
+    ) -> io::Result<()> {
         // Add spacing before tool call for better readability
         println!();
-        
+
         let icon = self.get_tool_icon(name);
         let display_name = self.get_tool_display_name(name);
         let formatted_args = self.format_tool_arguments_detailed(name, arguments);
@@ -63,31 +68,41 @@ impl ResponseDisplay {
         // Show tool with pulse animation, then display with proper colors
         let title_part = format!("{} {}", icon, display_name);
         self.pulse_tool_line_colored(&title_part, &formatted_args, 10)?;
-        
+
         Ok(())
     }
 
     /// Display a tool result - show past tense for success, error for failures
-    pub fn display_tool_result(&mut self, _id: &str, tool_name: &str, result: &ToolResult) -> io::Result<()> {
+    pub fn display_tool_result(
+        &mut self,
+        _id: &str,
+        tool_name: &str,
+        result: &ToolResult,
+    ) -> io::Result<()> {
         use crossterm::{cursor, execute};
-        
+
         let icon = self.get_tool_icon(tool_name);
-        
+
         if result.success {
             // Move up one line and overwrite with past tense
             let mut stdout = io::stdout();
             execute!(stdout, cursor::MoveToPreviousLine(1))?;
             print!("\x1b[K"); // Clear line
-            
+
             let past_tense_name = self.get_tool_past_tense(tool_name);
             let result_summary = self.get_result_summary(tool_name, &result.data);
-            
-            print!("{} ", style(format!("{} {}", icon, past_tense_name)).color256(PRIMARY_ANSI).bold());
+
+            print!(
+                "{} ",
+                style(format!("{} {}", icon, past_tense_name))
+                    .color256(PRIMARY_ANSI)
+                    .bold()
+            );
             println!("{}", style(&result_summary).color256(MISC_ANSI));
-            
+
             // Show enhanced content for specific tools
             self.display_tool_content_preview(tool_name, &result.data)?;
-            
+
             stdout.flush()?;
         } else {
             let display_name = self.get_tool_display_name(tool_name);
@@ -99,12 +114,12 @@ impl ResponseDisplay {
                 style(&error_msg).red().dim()
             );
         }
-        
+
         // Clear stored tool call
         self.last_tool_call = None;
         Ok(())
     }
-    
+
     /// Display content preview for specific tools
     fn display_tool_content_preview(&self, tool_name: &str, data: &Value) -> io::Result<()> {
         // Unwrap the "Ok" wrapper if present
@@ -113,7 +128,7 @@ impl ResponseDisplay {
         } else {
             data.clone()
         };
-        
+
         match tool_name.to_lowercase().as_str() {
             "write_file" => {
                 // Show written content up to 7 lines
@@ -139,7 +154,7 @@ impl ResponseDisplay {
         }
         Ok(())
     }
-    
+
     /// Get written content from write_file result
     fn get_written_content(&self, data: &Value) -> Option<String> {
         // First try to get content_preview (new field)
@@ -148,12 +163,17 @@ impl ResponseDisplay {
         }
         None
     }
-    
+
     /// Display content lines with a max limit
-    fn display_content_lines(&self, content: &str, max_lines: usize, indent: &str) -> io::Result<()> {
+    fn display_content_lines(
+        &self,
+        content: &str,
+        max_lines: usize,
+        indent: &str,
+    ) -> io::Result<()> {
         let lines: Vec<&str> = content.lines().collect();
         let total = lines.len();
-        
+
         for (i, line) in lines.iter().take(max_lines).enumerate() {
             println!("{}{}", indent, style(line).dim());
             if i == max_lines - 1 && total > max_lines {
@@ -162,23 +182,23 @@ impl ResponseDisplay {
         }
         Ok(())
     }
-    
+
     /// Display last N lines of content
     fn display_last_lines(&self, content: &str, max_lines: usize, indent: &str) -> io::Result<()> {
         let lines: Vec<&str> = content.lines().collect();
         let total = lines.len();
         let start = total.saturating_sub(max_lines);
-        
+
         if start > 0 {
             println!("{}...", indent);
         }
-        
+
         for line in lines.iter().skip(start) {
             println!("{}{}", indent, style(line).dim());
         }
         Ok(())
     }
-    
+
     /// Display diff preview with coloring
     fn display_diff_preview(&self, diff: &str, indent: &str) -> io::Result<()> {
         // The diff already has ANSI colors from the tool, just print it with indent
@@ -195,7 +215,7 @@ impl ResponseDisplay {
         }
         Ok(())
     }
-    
+
     /// Get past tense version of tool name
     fn get_tool_past_tense(&self, tool_name: &str) -> String {
         match tool_name.to_lowercase().as_str() {
@@ -214,7 +234,7 @@ impl ResponseDisplay {
             _ => "Completed".to_string(),
         }
     }
-    
+
     /// Get result summary based on tool type and result data
     fn get_result_summary(&self, tool_name: &str, data: &Value) -> String {
         // Handle case where data might be a string that needs parsing
@@ -223,17 +243,17 @@ impl ResponseDisplay {
         } else {
             data.clone()
         };
-        
+
         // Unwrap the "Ok" wrapper if present (Result<T, E> serialization)
         let data = if let Some(ok_data) = data.get("Ok") {
             ok_data.clone()
         } else {
             data
         };
-        
+
         // Try to get path from result data
         let path_from_data = self.extract_path_from_result(&data);
-        
+
         match tool_name.to_lowercase().as_str() {
             "edit_file" => {
                 if let Some(new_content) = data.get("new_content").and_then(|v| v.as_str()) {
@@ -300,7 +320,7 @@ impl ResponseDisplay {
             "execute_bash" => {
                 // Get command from last_tool_call if available
                 let cmd_preview = self.get_command_preview();
-                
+
                 if let Some(stdout) = data.get("stdout").and_then(|v| v.as_str()) {
                     let line_count = stdout.lines().count();
                     if line_count > 0 {
@@ -373,7 +393,7 @@ impl ResponseDisplay {
             }
         }
     }
-    
+
     /// Get command preview from stored tool call arguments (max 25 chars)
     fn get_command_preview(&self) -> Option<String> {
         if let Some((_, name, args)) = &self.last_tool_call {
@@ -391,12 +411,14 @@ impl ResponseDisplay {
         }
         None
     }
-    
+
     /// Extract path from result data
     fn extract_path_from_result(&self, data: &Value) -> Option<String> {
-        data.get("path").and_then(|v| v.as_str()).map(|s| s.to_string())
+        data.get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     }
-    
+
     /// Truncate a string to max length with ellipsis
     fn truncate_str(&self, s: &str, max_len: usize) -> String {
         if s.len() > max_len {
@@ -405,25 +427,28 @@ impl ResponseDisplay {
             s.to_string()
         }
     }
-    
+
     /// Pulse animation for tool line with colored title and gray parameters
     fn pulse_tool_line_colored(&self, title: &str, params: &str, cycles: u32) -> io::Result<()> {
-        use crossterm::{execute, style::{Color, SetForegroundColor, ResetColor}};
-        
+        use crossterm::{
+            execute,
+            style::{Color, ResetColor, SetForegroundColor},
+        };
+
         let mut stdout = io::stdout();
         let full_text = format!("{} {}", title, params);
-        
+
         for cycle in 0..cycles {
             let phase = (cycle as f32) / (cycles as f32) * std::f32::consts::PI * 2.0;
             let intensity = 0.3 + 0.7 * ((phase).sin() * 0.5 + 0.5);
-            
+
             // Golden yellow pulse color (based on PRIMARY_HEX #E8C547)
             let color = Color::Rgb {
                 r: (intensity * 232.0) as u8,
                 g: (intensity * 197.0) as u8,
                 b: (intensity * 71.0) as u8,
             };
-            
+
             // Use \r (carriage return) for better terminal compatibility
             // \x1b[2K clears entire line, then we print from start
             execute!(stdout, SetForegroundColor(color))?;
@@ -431,7 +456,7 @@ impl ResponseDisplay {
             stdout.flush()?;
             std::thread::sleep(Duration::from_millis(50));
         }
-        
+
         // Final state: title in custom yellow (PRIMARY_ANSI), params in gray (MISC_ANSI)
         execute!(stdout, ResetColor)?;
         print!("\r\x1b[2K");
@@ -482,7 +507,11 @@ impl ResponseDisplay {
     }
 
     /// Display a beautiful loading animation
-    pub fn display_loading_animation(&self, loading_type: LoadingType, message: &str) -> io::Result<()> {
+    pub fn display_loading_animation(
+        &self,
+        loading_type: LoadingType,
+        message: &str,
+    ) -> io::Result<()> {
         let (frames, color, icon) = self.get_loading_config(&loading_type);
         let mut frame_index = 0;
 
@@ -510,7 +539,10 @@ impl ResponseDisplay {
     }
 
     /// Display multiple concurrent tool calls with scrolling
-    pub fn display_concurrent_tool_calls(&mut self, tools: Vec<(String, String, String)>) -> io::Result<()> {
+    pub fn display_concurrent_tool_calls(
+        &mut self,
+        tools: Vec<(String, String, String)>,
+    ) -> io::Result<()> {
         if tools.is_empty() {
             return Ok(());
         }
@@ -526,7 +558,12 @@ impl ResponseDisplay {
                 "  [{}] {} {}",
                 style(format!("{}", index + 1)).cyan(),
                 self.get_tool_icon(name),
-                style(&format!("{}: {}", name, self.format_tool_arguments(name, args))).yellow()
+                style(&format!(
+                    "{}: {}",
+                    name,
+                    self.format_tool_arguments(name, args)
+                ))
+                .yellow()
             ))?;
         }
 
@@ -536,18 +573,18 @@ impl ResponseDisplay {
     /// Get tool-specific icon based on name (using hollow/outline symbols where available)
     fn get_tool_icon(&self, tool_name: &str) -> &'static str {
         match tool_name.to_lowercase().as_str() {
-            "execute_bash" => "\u{25CB}",     // ○ White Circle (hollow shell)
-            "read_file" => "\u{25CB}",       // ○ White Circle (hollow read)
+            "execute_bash" => "\u{25CB}", // ○ White Circle (hollow shell)
+            "read_file" => "\u{25CB}",    // ○ White Circle (hollow read)
             "write_file" | "edit_file" => "\u{25A1}", // □ White Square (hollow write/edit)
-            "list_directory" => "\u{25C7}",  // ◇ White Diamond (hollow list)
-            "search_files" => "\u{25CB}",     // ○ White Circle (hollow search)
-            "web_search" => "\u{2B55}",      // ⭕ Hollow Red Circle (web/globe)
-            "mcp_call" => "\u{25CA}",        // ◊ Lozenge (hollow MCP/link)
-            "mcp_list_tools" => "\u{25C6}",  // ◆ Black Diamond (tools list)
-            "visioneer" => "\u{25CB}",       // ○ White Circle (hollow vision)
-            "capture_screen" => "\u{25CF}",   // ● Black Circle (capture)
-            "analyze_ui" => "\u{25C9}",      // ◉ Fisheye (analyze)
-            _ => "\u{25A1}",                 // □ White Square (default tool)
+            "list_directory" => "\u{25C7}", // ◇ White Diamond (hollow list)
+            "search_files" => "\u{25CB}", // ○ White Circle (hollow search)
+            "web_search" => "\u{2B55}",   // ⭕ Hollow Red Circle (web/globe)
+            "mcp_call" => "\u{25CA}",     // ◊ Lozenge (hollow MCP/link)
+            "mcp_list_tools" => "\u{25C6}", // ◆ Black Diamond (tools list)
+            "visioneer" => "\u{25CB}",    // ○ White Circle (hollow vision)
+            "capture_screen" => "\u{25CF}", // ● Black Circle (capture)
+            "analyze_ui" => "\u{25C9}",   // ◉ Fisheye (analyze)
+            _ => "\u{25A1}",              // □ White Square (default tool)
         }
     }
 
@@ -601,7 +638,11 @@ impl ResponseDisplay {
             match tool_name.to_lowercase().as_str() {
                 "execute_bash" => {
                     if let Some(cmd) = parsed.get("command").and_then(|v| v.as_str()) {
-                        let cmd_short = if cmd.len() > 50 { format!("{}...", &cmd[..47]) } else { cmd.to_string() };
+                        let cmd_short = if cmd.len() > 50 {
+                            format!("{}...", &cmd[..47])
+                        } else {
+                            cmd.to_string()
+                        };
                         return cmd_short;
                     }
                 }
@@ -622,7 +663,11 @@ impl ResponseDisplay {
                 }
                 "search_files" | "web_search" => {
                     if let Some(query) = parsed.get("query").and_then(|v| v.as_str()) {
-                        let q_short = if query.len() > 40 { format!("{}...", &query[..37]) } else { query.to_string() };
+                        let q_short = if query.len() > 40 {
+                            format!("{}...", &query[..37])
+                        } else {
+                            query.to_string()
+                        };
                         return format!("\"{}\"", q_short);
                     }
                 }
@@ -657,10 +702,10 @@ impl ResponseDisplay {
             match tool_name.to_lowercase().as_str() {
                 "execute_bash" => {
                     if let Some(cmd) = parsed.get("command").and_then(|v| v.as_str()) {
-                        let cmd_display = if cmd.len() > 80 { 
-                            format!("{}...", &cmd[..77]) 
-                        } else { 
-                            cmd.to_string() 
+                        let cmd_display = if cmd.len() > 80 {
+                            format!("{}...", &cmd[..77])
+                        } else {
+                            cmd.to_string()
                         };
                         return format!("$ {}", cmd_display);
                     }
@@ -672,7 +717,8 @@ impl ResponseDisplay {
                 }
                 "write_file" => {
                     if let Some(path) = parsed.get("path").and_then(|v| v.as_str()) {
-                        let size_hint = parsed.get("content")
+                        let size_hint = parsed
+                            .get("content")
                             .and_then(|v| v.as_str())
                             .map(|c| format!(" ({} bytes)", c.len()))
                             .unwrap_or_default();
@@ -702,7 +748,10 @@ impl ResponseDisplay {
                 }
                 "mcp_call" => {
                     if let Some(tool) = parsed.get("tool_name").and_then(|v| v.as_str()) {
-                        let server = parsed.get("server_name").and_then(|v| v.as_str()).unwrap_or("mcp");
+                        let server = parsed
+                            .get("server_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("mcp");
                         return format!("{}::{}", server, tool);
                     }
                 }
@@ -753,9 +802,17 @@ impl ResponseDisplay {
     /// Get error summary from result data
     fn get_error_summary(&self, data: &Value) -> String {
         if let Some(err) = data.get("error").and_then(|v| v.as_str()) {
-            if err.len() > 60 { format!("{}...", &err[..57]) } else { err.to_string() }
+            if err.len() > 60 {
+                format!("{}...", &err[..57])
+            } else {
+                err.to_string()
+            }
         } else if let Some(msg) = data.as_str() {
-            if msg.len() > 60 { format!("{}...", &msg[..57]) } else { msg.to_string() }
+            if msg.len() > 60 {
+                format!("{}...", &msg[..57])
+            } else {
+                msg.to_string()
+            }
         } else {
             "Failed".to_string()
         }
@@ -785,10 +842,17 @@ impl ResponseDisplay {
                         format!("Data: {}", data)
                     }
                 } else {
-                    format!("Result: {}", serde_json::to_string_pretty(result).unwrap_or_else(|_| "Complex data".to_string()))
+                    format!(
+                        "Result: {}",
+                        serde_json::to_string_pretty(result)
+                            .unwrap_or_else(|_| "Complex data".to_string())
+                    )
                 }
             }
-            _ => format!("Result: {}", serde_json::to_string_pretty(result).unwrap_or_else(|_| "Complex data".to_string())),
+            _ => format!(
+                "Result: {}",
+                serde_json::to_string_pretty(result).unwrap_or_else(|_| "Complex data".to_string())
+            ),
         }
     }
 
@@ -813,7 +877,8 @@ impl ResponseDisplay {
                             let before = &processed[..start];
                             let content = &processed[start + 2..end];
                             let after = &processed[end + 2..];
-                            processed = format!("{}{}**{}**{}",
+                            processed = format!(
+                                "{}{}**{}**{}",
                                 before,
                                 style(content).bold(),
                                 content,
@@ -856,41 +921,52 @@ impl ResponseDisplay {
     }
 
     /// Get loading animation configuration
-    fn get_loading_config(&self, loading_type: &LoadingType) -> (Vec<&'static str>, u8, &'static str) {
+    fn get_loading_config(
+        &self,
+        loading_type: &LoadingType,
+    ) -> (Vec<&'static str>, u8, &'static str) {
         match loading_type {
             LoadingType::Thinking => (
                 vec!["◐", "◓", "◑", "◒", "◐", "◓", "◑", "◒"],
-                6,  // cyan
-                "\u{1F9E7}"  // 🧧 Brain
+                6,           // cyan
+                "\u{1F9E7}", // 🧧 Brain
             ),
             LoadingType::ToolCall => (
                 vec!["⟳", "⟳", "⟳", "⟳", "⟳", "⟳"],
-                3,  // yellow
-                "\u{26A1}"  // ⚡ Lightning
+                3,          // yellow
+                "\u{26A1}", // ⚡ Lightning
             ),
             LoadingType::ToolExecution { tool_name: _ } => (
                 vec!["⏳", "⏳", "⏳", "⏳", "⏳", "⏳"],
-                4,  // blue
-                "\u{26A1}"  // ⚡ Lightning
+                4,          // blue
+                "\u{26A1}", // ⚡ Lightning
             ),
             LoadingType::NetworkRequest => (
-                vec!["\u{1F310}", "\u{1F310}", "\u{1F310}", "\u{1F310}", "\u{1F310}", "\u{1F310}"],
-                2,  // green
-                "\u{1F310}"  // 🌐 Globe
+                vec![
+                    "\u{1F310}",
+                    "\u{1F310}",
+                    "\u{1F310}",
+                    "\u{1F310}",
+                    "\u{1F310}",
+                    "\u{1F310}",
+                ],
+                2,           // green
+                "\u{1F310}", // 🌐 Globe
             ),
             LoadingType::Processing => (
-                vec!["\u{2699}", "\u{2699}", "\u{2699}", "\u{2699}", "\u{2699}", "\u{2699}"],
-                5,  // magenta
-                "\u{2699}"  // ⚙ Gear
+                vec![
+                    "\u{2699}", "\u{2699}", "\u{2699}", "\u{2699}", "\u{2699}", "\u{2699}",
+                ],
+                5,          // magenta
+                "\u{2699}", // ⚙ Gear
             ),
         }
     }
 
     /// Display a separator line
     pub fn display_separator(&mut self) -> io::Result<()> {
-        self.output.print_system(&style(
-            "─".repeat(60)
-        ).dim().to_string())
+        self.output
+            .print_system(&style("─".repeat(60)).dim().to_string())
     }
 }
 
@@ -915,7 +991,7 @@ impl ResponseProcessor {
                 CrossbeamResponse::StreamStart => {
                     self.display.display_separator()?;
                     // Display loading animation
-                    println!("\u{1F504} Starting response generation...");  // 🔄 Refresh
+                    println!("\u{1F504} Starting response generation..."); // 🔄 Refresh
                     self.display.display_separator()?;
                 }
                 CrossbeamResponse::StreamText(text) => {
@@ -924,10 +1000,19 @@ impl ResponseProcessor {
                 CrossbeamResponse::ThinkingContent(reasoning) => {
                     self.display.display_thinking_content(&reasoning)?;
                 }
-                CrossbeamResponse::ToolCall { id, name, arguments } => {
-                    self.display.display_tool_call_start(&id, &name, &arguments)?;
+                CrossbeamResponse::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                } => {
+                    self.display
+                        .display_tool_call_start(&id, &name, &arguments)?;
                 }
-                CrossbeamResponse::ToolResult { id, tool_name, result } => {
+                CrossbeamResponse::ToolResult {
+                    id,
+                    tool_name,
+                    result,
+                } => {
                     self.display.display_tool_result(&id, &tool_name, &result)?;
                 }
                 CrossbeamResponse::StreamEnd => {
@@ -1018,7 +1103,9 @@ impl InputManager {
 
     /// Send response to display system
     pub fn send_response(&self, response: CrossbeamResponse) -> anyhow::Result<()> {
-        self.response_sender.send(response).map_err(|e| anyhow::anyhow!("Failed to send response: {}", e))
+        self.response_sender
+            .send(response)
+            .map_err(|e| anyhow::anyhow!("Failed to send response: {}", e))
     }
 }
 
@@ -1026,13 +1113,13 @@ impl InputManager {
 fn strip_ansi_codes(s: &str) -> String {
     let mut result = String::new();
     let mut chars = s.chars().peekable();
-    
+
     while let Some(c) = chars.next() {
         if c == '\x1b' {
             // Skip escape sequence
             if chars.peek() == Some(&'[') {
                 chars.next(); // consume '['
-                // Skip until we hit a letter (end of escape sequence)
+                              // Skip until we hit a letter (end of escape sequence)
                 while let Some(&next) = chars.peek() {
                     chars.next();
                     if next.is_ascii_alphabetic() {

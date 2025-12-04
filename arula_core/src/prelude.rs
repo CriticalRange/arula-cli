@@ -10,15 +10,15 @@
 //! ```
 
 // Error handling
-pub use crate::utils::error::{ArulaError, ArulaResult, ApiError, ToolError};
-pub use crate::utils::error::{ResultExt, OptionExt};
+pub use crate::utils::error::{ApiError, ArulaError, ArulaResult, ToolError};
+pub use crate::utils::error::{OptionExt, ResultExt};
 
 // Debug utilities
-pub use crate::utils::debug::{is_debug_enabled, debug_print, DebugTimer};
-pub use crate::{debug, debug_module, debug_block};
+pub use crate::utils::debug::{debug_print, is_debug_enabled, DebugTimer};
+pub use crate::{debug, debug_block, debug_module};
 
 // Model caching
-pub use crate::api::models::{ModelCacheManager, ModelFetcher, CachedModels};
+pub use crate::api::models::{CachedModels, ModelCacheManager, ModelFetcher};
 
 // Configuration
 pub use crate::utils::config::Config;
@@ -27,9 +27,8 @@ pub use crate::utils::config::Config;
 pub use crate::utils::chat::{ChatMessage, MessageType};
 
 // Agent types
-pub use crate::api::agent::{Tool, ToolSchema, ToolSchemaBuilder, ToolResult, ContentBlock};
+pub use crate::api::agent::{ContentBlock, Tool, ToolResult, ToolSchema, ToolSchemaBuilder};
 
 // Commonly used external crates
-pub use anyhow::{Context, Result, bail, ensure};
+pub use anyhow::{bail, ensure, Context, Result};
 pub use async_trait::async_trait;
-

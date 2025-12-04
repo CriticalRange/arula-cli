@@ -2,16 +2,14 @@
 //! Extracted from original overlay_menu.rs for modular architecture
 
 use crate::app::App;
-use crate::ui::output::OutputHandler;
 use crate::ui::menus::dialogs::Dialogs;
+use crate::ui::output::OutputHandler;
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
-    terminal,
-    style::{SetForegroundColor, ResetColor, Print},
     cursor::MoveTo,
-    ExecutableCommand,
-    QueueableCommand,
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    style::{Print, ResetColor, SetForegroundColor},
+    terminal, ExecutableCommand, QueueableCommand,
 };
 use std::io::{stdout, Write};
 use std::time::Duration;
@@ -89,7 +87,9 @@ impl ModelSelector {
             }
             _ => {
                 // Fallback to text input for unknown providers
-                if let Some(model) = self.show_text_input("Enter model name", &current_config.get_model(), output)? {
+                if let Some(model) =
+                    self.show_text_input("Enter model name", &current_config.get_model(), output)?
+                {
                     app.set_model(&model);
                     output.print_system(&format!("✅ Model set to: {}", model))?;
                 }
@@ -107,7 +107,10 @@ impl ModelSelector {
 
         // Handle empty models list
         if final_models.is_empty() {
-            output.print_system(&format!("⚠️ No {} models available. Try selecting the provider again to fetch models.", provider))?;
+            output.print_system(&format!(
+                "⚠️ No {} models available. Try selecting the provider again to fetch models.",
+                provider
+            ))?;
             return Ok(());
         }
 
@@ -129,7 +132,10 @@ impl ModelSelector {
         let mut selected_idx = current_idx;
         let mut search_query = String::new();
         let mut all_models = final_models.clone();
-        let mut loading_spinner = all_models.len() == 1 && (all_models[0].contains("Loading") || all_models[0].contains("⚡") || all_models[0].contains("Fetching"));
+        let mut loading_spinner = all_models.len() == 1
+            && (all_models[0].contains("Loading")
+                || all_models[0].contains("⚡")
+                || all_models[0].contains("Fetching"));
         let mut spinner_counter = 0;
         let mut needs_clear = false; // Track when to clear screen
 
@@ -138,16 +144,22 @@ impl ModelSelector {
 
         loop {
             // Always check cache until we have real models (not just "Fetching models...")
-            let should_check_cache = loading_spinner ||
-                (all_models.len() == 1 && (all_models[0].contains("Loading") || all_models[0].contains("⚡") || all_models[0].contains("Fetching"))) ||
-                spinner_counter < 50; // Keep checking longer for real models to arrive
+            let should_check_cache = loading_spinner
+                || (all_models.len() == 1
+                    && (all_models[0].contains("Loading")
+                        || all_models[0].contains("⚡")
+                        || all_models[0].contains("Fetching")))
+                || spinner_counter < 50; // Keep checking longer for real models to arrive
 
             if should_check_cache {
                 spinner_counter += 1;
 
                 // Re-evaluate loading spinner state in case models changed
                 let was_loading = loading_spinner;
-                loading_spinner = all_models.len() == 1 && (all_models[0].contains("Loading") || all_models[0].contains("⚡") || all_models[0].contains("Fetching"));
+                loading_spinner = all_models.len() == 1
+                    && (all_models[0].contains("Loading")
+                        || all_models[0].contains("⚡")
+                        || all_models[0].contains("Fetching"));
                 if was_loading != loading_spinner {
                     // State changed - clear screen once to show new content
                     needs_clear = true;
@@ -155,9 +167,14 @@ impl ModelSelector {
 
                 // Shorter timeout after 10 seconds (100 iterations of 100ms)
                 if spinner_counter > 100 {
-                    all_models = vec!["⚠️ Loading taking too long - Press ESC or try a different provider".to_string()];
+                    all_models = vec![
+                        "⚠️ Loading taking too long - Press ESC or try a different provider"
+                            .to_string(),
+                    ];
                     loading_spinner = false;
-                    let _ = output.print_system("⚠️ Model loading timed out - try using a different provider");
+                    let _ = output.print_system(
+                        "⚠️ Model loading timed out - try using a different provider",
+                    );
                 } else {
                     // Check cache every iteration for immediate response
                     let cached_models = match provider.to_lowercase().as_str() {
@@ -173,7 +190,12 @@ impl ModelSelector {
                         Some(models) => {
                             if models.is_empty() {
                                 // Still empty, continue loading
-                            } else if models.len() == 1 && (models[0].contains("Loading") || models[0].contains("timeout") || models[0].contains("Fetching") || models[0].contains("⚡")) {
+                            } else if models.len() == 1
+                                && (models[0].contains("Loading")
+                                    || models[0].contains("timeout")
+                                    || models[0].contains("Fetching")
+                                    || models[0].contains("⚡"))
+                            {
                                 // Still in loading state
                             } else {
                                 // Real models loaded! Update immediately and clear screen once
@@ -202,7 +224,8 @@ impl ModelSelector {
             let filtered_models: Vec<String> = if search_query.is_empty() {
                 all_models.clone()
             } else {
-                all_models.iter()
+                all_models
+                    .iter()
                     .filter(|model| model.to_lowercase().contains(&search_query.to_lowercase()))
                     .cloned()
                     .collect()
@@ -216,11 +239,16 @@ impl ModelSelector {
             }
 
             // Create current render state tuple for comparison
-            let current_state = (filtered_models.clone(), selected_idx, search_query.clone(), loading_spinner);
+            let current_state = (
+                filtered_models.clone(),
+                selected_idx,
+                search_query.clone(),
+                loading_spinner,
+            );
 
             // Check if search query changed (requires clear and full re-render)
             let search_changed = if let Some(ref last_state) = last_rendered_state {
-                last_state.2 != search_query  // Compare search query (index 2)
+                last_state.2 != search_query // Compare search query (index 2)
             } else {
                 false
             };
@@ -236,8 +264,9 @@ impl ModelSelector {
 
             if should_render {
                 // Only clear screen for major state changes (search, loading complete, not just selection)
-                let major_change = needs_clear || search_changed ||
-                                   (last_rendered_state.as_ref().map(|s| s.3) != Some(loading_spinner));
+                let major_change = needs_clear
+                    || search_changed
+                    || (last_rendered_state.as_ref().map(|s| s.3) != Some(loading_spinner));
 
                 if major_change {
                     stdout().execute(terminal::Clear(terminal::ClearType::All))?;
@@ -246,7 +275,13 @@ impl ModelSelector {
                 }
 
                 // Render with partial update flag for minor changes (like selection movement)
-                self.render_model_selector_with_search(&filtered_models, selected_idx, &search_query, loading_spinner, !major_change)?;
+                self.render_model_selector_with_search(
+                    &filtered_models,
+                    selected_idx,
+                    &search_query,
+                    loading_spinner,
+                    !major_change,
+                )?;
 
                 // Update last rendered state
                 last_rendered_state = Some(current_state);
@@ -279,7 +314,9 @@ impl ModelSelector {
                                 }
                             }
                             KeyCode::PageDown => {
-                                if !filtered_models.is_empty() && selected_idx + 10 < filtered_models.len() {
+                                if !filtered_models.is_empty()
+                                    && selected_idx + 10 < filtered_models.len()
+                                {
                                     selected_idx += 10;
                                 } else if !filtered_models.is_empty() {
                                     selected_idx = filtered_models.len() - 1;
@@ -329,11 +366,21 @@ impl ModelSelector {
                                 if loading_spinner {
                                     // When loading, clear cache
                                     match provider.to_lowercase().as_str() {
-                                        "openai" => { app.cache_openai_models(Vec::new()); },
-                                        "anthropic" => { app.cache_anthropic_models(Vec::new()); },
-                                        "ollama" => { app.cache_ollama_models(Vec::new()); },
-                                        "z.ai coding plan" | "z.ai" | "zai" => { app.cache_zai_models(Vec::new()); },
-                                        "openrouter" => { app.cache_openrouter_models(Vec::new()); },
+                                        "openai" => {
+                                            app.cache_openai_models(Vec::new());
+                                        }
+                                        "anthropic" => {
+                                            app.cache_anthropic_models(Vec::new());
+                                        }
+                                        "ollama" => {
+                                            app.cache_ollama_models(Vec::new());
+                                        }
+                                        "z.ai coding plan" | "z.ai" | "zai" => {
+                                            app.cache_zai_models(Vec::new());
+                                        }
+                                        "openrouter" => {
+                                            app.cache_openrouter_models(Vec::new());
+                                        }
                                         _ => {}
                                     }
                                     let _ = output.print_system("🗑️ Cache cleared");
@@ -384,36 +431,62 @@ impl ModelSelector {
     }
 
     /// Show text input dialog (fallback for custom providers)
-    fn show_text_input(&self, prompt: &str, default_value: &str, output: &mut OutputHandler) -> Result<Option<String>> {
-        self.dialogs.input_dialog(prompt, Some(default_value), output)
+    fn show_text_input(
+        &self,
+        prompt: &str,
+        default_value: &str,
+        output: &mut OutputHandler,
+    ) -> Result<Option<String>> {
+        self.dialogs
+            .input_dialog(prompt, Some(default_value), output)
     }
 
     /// Get OpenAI models with loading state
-    fn get_openai_models(&self, app: &App, _output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
+    fn get_openai_models(
+        &self,
+        app: &App,
+        _output: &mut OutputHandler,
+    ) -> Result<(Vec<String>, bool)> {
         app.fetch_openai_models();
         Ok((vec!["Fetching models...".to_string()], true))
     }
 
     /// Get Anthropic models with loading state
-    fn get_anthropic_models(&self, app: &App, _output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
+    fn get_anthropic_models(
+        &self,
+        app: &App,
+        _output: &mut OutputHandler,
+    ) -> Result<(Vec<String>, bool)> {
         app.fetch_anthropic_models();
         Ok((vec!["Fetching models...".to_string()], true))
     }
 
     /// Get Ollama models with loading state
-    fn get_ollama_models(&self, app: &App, _output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
+    fn get_ollama_models(
+        &self,
+        app: &App,
+        _output: &mut OutputHandler,
+    ) -> Result<(Vec<String>, bool)> {
         app.fetch_ollama_models();
         Ok((vec!["Fetching models...".to_string()], true))
     }
 
     /// Get Z.AI models with loading state
-    fn get_zai_models(&self, app: &App, _output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
+    fn get_zai_models(
+        &self,
+        app: &App,
+        _output: &mut OutputHandler,
+    ) -> Result<(Vec<String>, bool)> {
         app.fetch_zai_models();
         Ok((vec!["Fetching models...".to_string()], true))
     }
 
     /// Get OpenRouter models with loading state
-    fn get_openrouter_models(&self, app: &App, _output: &mut OutputHandler) -> Result<(Vec<String>, bool)> {
+    fn get_openrouter_models(
+        &self,
+        app: &App,
+        _output: &mut OutputHandler,
+    ) -> Result<(Vec<String>, bool)> {
         app.fetch_openrouter_models();
         Ok((vec!["Fetching models...".to_string()], true))
     }
@@ -434,12 +507,16 @@ impl ModelSelector {
         }
 
         // Draw borders using our AI highlight color (steel blue)
-        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?;
+        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+            crate::utils::colors::AI_HIGHLIGHT_ANSI,
+        )))?;
 
         // Draw vertical borders
         for i in 0..height {
             stdout().queue(MoveTo(x, y + i))?.queue(Print(vertical))?;
-            stdout().queue(MoveTo(x + width.saturating_sub(1), y + i))?.queue(Print(vertical))?;
+            stdout()
+                .queue(MoveTo(x + width.saturating_sub(1), y + i))?
+                .queue(Print(vertical))?;
         }
 
         // Top border
@@ -450,7 +527,9 @@ impl ModelSelector {
         stdout().queue(Print(top_right))?;
 
         // Bottom border
-        stdout().queue(MoveTo(x, y + height.saturating_sub(1)))?.queue(Print(bottom_left))?;
+        stdout()
+            .queue(MoveTo(x, y + height.saturating_sub(1)))?
+            .queue(Print(bottom_left))?;
         for _i in 1..width.saturating_sub(1) {
             stdout().queue(Print(horizontal))?;
         }
@@ -461,7 +540,14 @@ impl ModelSelector {
     }
 
     /// Render model selector with search functionality
-    fn render_model_selector_with_search(&self, models: &[String], selected_idx: usize, search_query: &str, loading: bool, partial_update: bool) -> Result<()> {
+    fn render_model_selector_with_search(
+        &self,
+        models: &[String],
+        selected_idx: usize,
+        search_query: &str,
+        loading: bool,
+        partial_update: bool,
+    ) -> Result<()> {
         let (cols, rows) = crossterm::terminal::size()?;
 
         // Calculate layout that fits within terminal height
@@ -483,11 +569,20 @@ impl ModelSelector {
             menu_height
         };
 
-        let start_x = if cols > menu_width { cols.saturating_sub(menu_width) / 2 } else { 0 };
-        let start_y = if rows > final_menu_height as u16 { rows.saturating_sub(final_menu_height as u16) / 2 } else { 0 };
+        let start_x = if cols > menu_width {
+            cols.saturating_sub(menu_width) / 2
+        } else {
+            0
+        };
+        let start_y = if rows > final_menu_height as u16 {
+            rows.saturating_sub(final_menu_height as u16) / 2
+        } else {
+            0
+        };
 
         // Calculate viewport - ensure selected item is visible
-        let actual_visible_models = std::cmp::min(max_visible_models, final_menu_height.saturating_sub(6));
+        let actual_visible_models =
+            std::cmp::min(max_visible_models, final_menu_height.saturating_sub(6));
         let viewport_start = if selected_idx >= actual_visible_models {
             selected_idx - actual_visible_models + 1
         } else {
@@ -501,25 +596,34 @@ impl ModelSelector {
             let title = if search_query.is_empty() {
                 format!("Select AI Model ({} models)", total_models)
             } else {
-                format!("Select AI Model ({} of {} filtered)", models.len(), total_models)
+                format!(
+                    "Select AI Model ({} of {} filtered)",
+                    models.len(),
+                    total_models
+                )
             };
-            self.draw_modern_box(start_x, start_y, menu_width, final_menu_height as u16, &title)?;
+            self.draw_modern_box(
+                start_x,
+                start_y,
+                menu_width,
+                final_menu_height as u16,
+                &title,
+            )?;
         }
 
         // Show search input with error state detection
         let search_y = start_y + 1;
 
         // Check if models contain error messages
-        let has_error = !models.is_empty() && (
-            models[0].contains("error") ||
-            models[0].contains("Error") ||
-            models[0].contains("401") ||
-            models[0].contains("403") ||
-            models[0].contains("timeout") ||
-            models[0].contains("failed") ||
-            models[0].contains("Failed") ||
-            models[0].contains("⚠️")
-        );
+        let has_error = !models.is_empty()
+            && (models[0].contains("error")
+                || models[0].contains("Error")
+                || models[0].contains("401")
+                || models[0].contains("403")
+                || models[0].contains("timeout")
+                || models[0].contains("failed")
+                || models[0].contains("Failed")
+                || models[0].contains("⚠️"));
 
         let search_text = if has_error {
             // Show error message from models[0]
@@ -535,10 +639,13 @@ impl ModelSelector {
         // Print search text (pad with spaces to clear previous content)
         let search_width = menu_width.saturating_sub(4) as usize;
         let padded_search = format!("{:width$}", search_text, width = search_width);
-        stdout().queue(MoveTo(start_x + 2, search_y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
-              .queue(Print(&padded_search))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(MoveTo(start_x + 2, search_y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::AI_HIGHLIGHT_ANSI,
+            )))?
+            .queue(Print(&padded_search))?
+            .queue(ResetColor)?;
 
         // Display models in viewport
         let max_text_width = menu_width.saturating_sub(6) as usize; // Leave space for prefix and padding
@@ -553,15 +660,21 @@ impl ModelSelector {
             };
             let msg_width = menu_width.saturating_sub(4) as usize;
             let padded_msg = format!("{:^width$}", no_results_msg, width = msg_width);
-            stdout().queue(MoveTo(start_x + 2, y))?
-                  .queue(SetForegroundColor(crossterm::style::Color::DarkGrey))?
-                  .queue(Print(&padded_msg))?
-                  .queue(ResetColor)?;
+            stdout()
+                .queue(MoveTo(start_x + 2, y))?
+                .queue(SetForegroundColor(crossterm::style::Color::DarkGrey))?
+                .queue(Print(&padded_msg))?
+                .queue(ResetColor)?;
         } else {
             // Safe subtraction with saturating_sub to prevent overflow
             let items_to_show = viewport_end.saturating_sub(viewport_start);
 
-            for (idx, model) in models.iter().enumerate().skip(viewport_start).take(items_to_show) {
+            for (idx, model) in models
+                .iter()
+                .enumerate()
+                .skip(viewport_start)
+                .take(items_to_show)
+            {
                 let y = start_y + 3 + (idx - viewport_start) as u16;
 
                 // Truncate long model names to fit
@@ -579,16 +692,21 @@ impl ModelSelector {
                 let padded_text = format!("{:width$}", text, width = text_width);
 
                 let color = if idx == selected_idx {
-                    SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::PRIMARY_ANSI))
+                    SetForegroundColor(crossterm::style::Color::AnsiValue(
+                        crate::utils::colors::PRIMARY_ANSI,
+                    ))
                 } else {
-                    SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::MISC_ANSI))
+                    SetForegroundColor(crossterm::style::Color::AnsiValue(
+                        crate::utils::colors::MISC_ANSI,
+                    ))
                 };
 
                 // Print the padded model text
-                stdout().queue(MoveTo(start_x + 2, y))?
-                      .queue(color)?
-                      .queue(Print(&padded_text))?
-                      .queue(ResetColor)?;
+                stdout()
+                    .queue(MoveTo(start_x + 2, y))?
+                    .queue(color)?
+                    .queue(Print(&padded_text))?
+                    .queue(ResetColor)?;
             }
         }
 
@@ -601,16 +719,23 @@ impl ModelSelector {
             "↑↓ Navigate • ↵ Select • ESC Back".to_string()
         } else {
             // Showing a subset - show position with enter and back options
-            format!("↑↓ Navigate ({}-{} of {}) • ↵ Select • ESC Back",
-                    viewport_start + 1, viewport_end, total_models)
+            format!(
+                "↑↓ Navigate ({}-{} of {}) • ↵ Select • ESC Back",
+                viewport_start + 1,
+                viewport_end,
+                total_models
+            )
         };
 
         // Print navigation text (left aligned with padding)
         let nav_x = start_x + 2;
-        stdout().queue(MoveTo(nav_x, nav_y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
-              .queue(Print(&nav_text))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(MoveTo(nav_x, nav_y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::AI_HIGHLIGHT_ANSI,
+            )))?
+            .queue(Print(&nav_text))?
+            .queue(ResetColor)?;
 
         stdout().flush()?;
         Ok(())

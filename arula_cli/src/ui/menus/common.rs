@@ -2,10 +2,10 @@
 
 use anyhow::Result;
 use crossterm::{
-    terminal::{self, size},
     cursor::{Hide, Show},
-    ExecutableCommand,
     event::{self, Event, KeyEvent, KeyEventKind},
+    terminal::{self, size},
+    ExecutableCommand,
 };
 use std::io::{stdout, Write};
 use std::time::Duration;
@@ -26,10 +26,10 @@ pub enum MenuResult {
 /// Internal menu action for flow control
 #[derive(Debug, PartialEq)]
 pub enum MenuAction {
-    Continue,     // Stay in menu
-    CloseMenu,    // Exit menu, continue app
-    ExitApp,      // Exit menu AND exit app
-    CtrlC,        // Ctrl+C pressed (close menu, show exit confirmation)
+    Continue,  // Stay in menu
+    CloseMenu, // Exit menu, continue app
+    ExitApp,   // Exit menu AND exit app
+    CtrlC,     // Ctrl+C pressed (close menu, show exit confirmation)
 }
 
 /// Common menu utilities
@@ -117,7 +117,12 @@ impl MenuUtils {
             if i_usize >= title_start && i_usize < title_end && title_end <= width as usize {
                 let title_char_index = i_usize - title_start;
                 if title_char_index < title_with_padding.len() {
-                    top_border.push(title_with_padding.chars().nth(title_char_index).unwrap_or('─'));
+                    top_border.push(
+                        title_with_padding
+                            .chars()
+                            .nth(title_char_index)
+                            .unwrap_or('─'),
+                    );
                 } else {
                     top_border.push('─');
                 }
@@ -130,7 +135,12 @@ impl MenuUtils {
 
         // Side borders with empty content
         for _ in 1..(height - 1) {
-            output.push(format!("{}{}{}", vertical, " ".repeat(width as usize - 2), vertical));
+            output.push(format!(
+                "{}{}{}",
+                vertical,
+                " ".repeat(width as usize - 2),
+                vertical
+            ));
         }
 
         // Bottom border

@@ -1,16 +1,15 @@
 //! Main menu functionality for ARULA CLI
 
 use crate::app::App;
+use crate::ui::menus::common::{MenuResult, MenuState, MenuUtils};
 use crate::ui::output::OutputHandler;
 use crate::utils::colors::ColorTheme;
-use crate::ui::menus::common::{MenuResult, MenuUtils, MenuState};
 use anyhow::Result;
 use crossterm::{
-    event::{Event, KeyCode, KeyEventKind, KeyModifiers},
-    terminal,
     cursor::MoveTo,
-    style::{SetForegroundColor, ResetColor, Print},
-    ExecutableCommand, QueueableCommand,
+    event::{Event, KeyCode, KeyEventKind, KeyModifiers},
+    style::{Print, ResetColor, SetForegroundColor},
+    terminal, ExecutableCommand, QueueableCommand,
 };
 use std::io::{stdout, Write};
 use std::time::Duration;
@@ -146,7 +145,9 @@ impl MainMenu {
                                 stdout().flush()?;
                                 return Ok(MenuResult::Continue);
                             }
-                            crossterm::event::KeyCode::Char('c') if key_event.modifiers == KeyModifiers::CONTROL => {
+                            crossterm::event::KeyCode::Char('c')
+                                if key_event.modifiers == KeyModifiers::CONTROL =>
+                            {
                                 // Clear screen before exiting
                                 stdout().execute(terminal::Clear(terminal::ClearType::All))?;
                                 stdout().flush()?;
@@ -174,8 +175,16 @@ impl MainMenu {
         let (cols, rows) = crossterm::terminal::size()?;
         let menu_width = 50.min(cols.saturating_sub(4));
         let menu_height = 10;
-        let start_x = if cols > menu_width { (cols - menu_width) / 2 } else { 0 };
-        let start_y = if rows > menu_height { (rows - menu_height) / 2 } else { 0 };
+        let start_x = if cols > menu_width {
+            (cols - menu_width) / 2
+        } else {
+            0
+        };
+        let start_y = if rows > menu_height {
+            (rows - menu_height) / 2
+        } else {
+            0
+        };
 
         // Don't clear screen on every render - we're in alternate screen mode
         // Only position cursor at top
@@ -193,8 +202,9 @@ impl MainMenu {
         } else {
             start_x + 1
         };
-        stdout().queue(MoveTo(title_x, title_y))?
-              .queue(Print(ColorTheme::primary().bold().apply_to(title)))?;
+        stdout()
+            .queue(MoveTo(title_x, title_y))?
+            .queue(Print(ColorTheme::primary().bold().apply_to(title)))?;
 
         // Draw menu items with modern styling
         let items_start_y = start_y + 3;
@@ -213,10 +223,13 @@ impl MainMenu {
                 // Then draw the text with truncation
                 let max_text_width = menu_width.saturating_sub(6) as usize; // padding for margins
                 let display_text = MenuUtils::truncate_text(item.label(), max_text_width);
-                stdout().queue(MoveTo(start_x + 4, y))?
-                      .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::MISC_ANSI)))?
-                      .queue(Print(display_text))?
-                      .queue(ResetColor)?;
+                stdout()
+                    .queue(MoveTo(start_x + 4, y))?
+                    .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                        crate::utils::colors::MISC_ANSI,
+                    )))?
+                    .queue(Print(display_text))?
+                    .queue(ResetColor)?;
             }
         }
 
@@ -226,10 +239,13 @@ impl MainMenu {
         let max_help_width = menu_width.saturating_sub(4) as usize;
         let display_help = MenuUtils::truncate_text(help_text, max_help_width);
         let help_x = start_x + 2; // Left aligned with padding
-        stdout().queue(MoveTo(help_x, help_y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
-              .queue(Print(display_help))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(MoveTo(help_x, help_y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::AI_HIGHLIGHT_ANSI,
+            )))?
+            .queue(Print(display_help))?
+            .queue(ResetColor)?;
 
         stdout().flush()?;
         Ok(())
@@ -251,12 +267,16 @@ impl MainMenu {
         }
 
         // Draw borders using our AI highlight color (steel blue)
-        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?;
+        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+            crate::utils::colors::AI_HIGHLIGHT_ANSI,
+        )))?;
 
         // Draw vertical borders
         for i in 0..height {
             stdout().queue(MoveTo(x, y + i))?.queue(Print(vertical))?;
-            stdout().queue(MoveTo(x + width.saturating_sub(1), y + i))?.queue(Print(vertical))?;
+            stdout()
+                .queue(MoveTo(x + width.saturating_sub(1), y + i))?
+                .queue(Print(vertical))?;
         }
 
         // Top border
@@ -267,7 +287,9 @@ impl MainMenu {
         stdout().queue(Print(top_right))?;
 
         // Bottom border
-        stdout().queue(MoveTo(x, y + height.saturating_sub(1)))?.queue(Print(bottom_left))?;
+        stdout()
+            .queue(MoveTo(x, y + height.saturating_sub(1)))?
+            .queue(Print(bottom_left))?;
         for _i in 1..width.saturating_sub(1) {
             stdout().queue(Print(horizontal))?;
         }
@@ -290,7 +312,9 @@ impl MainMenu {
             // Truncate if too long - use character boundaries, not byte boundaries
             let safe_len = width.saturating_sub(7) as usize;
             // Use char_indices to get safe character boundaries
-            let char_end = text.char_indices().nth(safe_len)
+            let char_end = text
+                .char_indices()
+                .nth(safe_len)
                 .map(|(idx, _)| idx)
                 .unwrap_or(text.len());
             format!("▶ {}...", &text[..char_end])
@@ -298,10 +322,13 @@ impl MainMenu {
             display_text
         };
 
-        stdout().queue(MoveTo(x + 2, y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::PRIMARY_ANSI)))?
-              .queue(Print(safe_text))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(MoveTo(x + 2, y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::PRIMARY_ANSI,
+            )))?
+            .queue(Print(safe_text))?
+            .queue(ResetColor)?;
 
         Ok(())
     }
@@ -330,7 +357,11 @@ impl MainMenu {
     }
 
     /// Handle selection from main menu
-    pub fn handle_selection(&mut self, app: &mut App, output: &mut OutputHandler) -> Result<MenuResult> {
+    pub fn handle_selection(
+        &mut self,
+        app: &mut App,
+        output: &mut OutputHandler,
+    ) -> Result<MenuResult> {
         if let Some(selected_item) = self.items.get(self.state.selected_index) {
             match selected_item {
                 MainMenuItem::ContinueChat => {
@@ -493,7 +524,10 @@ impl MainMenu {
             "  • list_directory - Browse directories",
             "  • search_files - Fast parallel search",
             "  • visioneer - Desktop automation",
-        ].iter().map(|s| s.to_string()).collect()
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
     }
 
     /// Render help dialog (original implementation)
@@ -518,8 +552,9 @@ impl MainMenu {
         } else {
             start_x + 1
         };
-        stdout().queue(MoveTo(title_x, title_y))?
-              .queue(Print(ColorTheme::primary().bold().apply_to(title)))?;
+        stdout()
+            .queue(MoveTo(title_x, title_y))?
+            .queue(Print(ColorTheme::primary().bold().apply_to(title)))?;
 
         // Get all help content
         let help_lines = self.get_help_content();
@@ -538,12 +573,23 @@ impl MainMenu {
             let y = start_y + 3 + i as u16;
 
             // Use different colors for different sections
-            let color = if line.starts_with("🔧") || line.starts_with("⌨️") || line.starts_with("💡") || line.starts_with("🛠️") || line.starts_with("📊") {
-                SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI))
+            let color = if line.starts_with("🔧")
+                || line.starts_with("⌨️")
+                || line.starts_with("💡")
+                || line.starts_with("🛠️")
+                || line.starts_with("📊")
+            {
+                SetForegroundColor(crossterm::style::Color::AnsiValue(
+                    crate::utils::colors::AI_HIGHLIGHT_ANSI,
+                ))
             } else if line.starts_with("  •") {
-                SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::MISC_ANSI))
+                SetForegroundColor(crossterm::style::Color::AnsiValue(
+                    crate::utils::colors::MISC_ANSI,
+                ))
             } else {
-                SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::MISC_ANSI))
+                SetForegroundColor(crossterm::style::Color::AnsiValue(
+                    crate::utils::colors::MISC_ANSI,
+                ))
             };
 
             // Clear the line first to remove any previous content
@@ -553,10 +599,11 @@ impl MainMenu {
             }
 
             // Draw the text
-            stdout().queue(MoveTo(start_x + 2, y))?
-                  .queue(color)?
-                  .queue(Print(*line))?
-                  .queue(ResetColor)?;
+            stdout()
+                .queue(MoveTo(start_x + 2, y))?
+                .queue(color)?
+                .queue(Print(*line))?
+                .queue(ResetColor)?;
         }
 
         // Clear any remaining lines if content is shorter than viewport
@@ -593,10 +640,13 @@ impl MainMenu {
         // Left aligned with padding
         let nav_x = start_x + 2;
 
-        stdout().queue(MoveTo(nav_x, footer_y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
-              .queue(Print(nav_text))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(MoveTo(nav_x, footer_y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::AI_HIGHLIGHT_ANSI,
+            )))?
+            .queue(Print(nav_text))?
+            .queue(ResetColor)?;
 
         stdout().flush()?;
         Ok(())

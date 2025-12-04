@@ -244,7 +244,10 @@ impl std::fmt::Debug for ModelCacheManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ModelCacheManager")
             .field("default_ttl", &self.default_ttl)
-            .field("cache_count", &self.caches.lock().map(|c| c.len()).unwrap_or(0))
+            .field(
+                "cache_count",
+                &self.caches.lock().map(|c| c.len()).unwrap_or(0),
+            )
             .finish()
     }
 }
@@ -427,7 +430,8 @@ impl ModelFetcher for OpenRouterFetcher {
                                         if let Some(architecture) =
                                             model_info["architecture"].as_object()
                                         {
-                                            if let Some(modality) = architecture["modality"].as_str()
+                                            if let Some(modality) =
+                                                architecture["modality"].as_str()
                                             {
                                                 if modality.contains("text") {
                                                     models.push(id.to_string());
@@ -585,4 +589,3 @@ mod tests {
         assert!(models.iter().any(|m| m.contains("glm")));
     }
 }
-

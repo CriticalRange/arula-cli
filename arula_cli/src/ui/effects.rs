@@ -159,7 +159,7 @@ impl TerminalEffects {
         for step in 0..=steps {
             let intensity = (step as f32) / (steps as f32);
             let color = Color::Rgb {
-                r: (intensity * 205.0) as u8,   // Light gray base
+                r: (intensity * 205.0) as u8, // Light gray base
                 g: (intensity * 209.0) as u8,
                 b: (intensity * 196.0) as u8,
             };
@@ -183,7 +183,12 @@ impl TerminalEffects {
     /// * `start_col` - Starting column (typically terminal width)
     /// * `target_col` - Target column (usually 0)
     /// * `delay_ms` - Delay between slide steps
-    pub fn slide_in_from_right(text: &str, start_col: u16, target_col: u16, delay_ms: u64) -> io::Result<()> {
+    pub fn slide_in_from_right(
+        text: &str,
+        start_col: u16,
+        target_col: u16,
+        delay_ms: u64,
+    ) -> io::Result<()> {
         let mut stdout = io::stdout();
 
         for col in (target_col..=start_col).rev() {
@@ -208,15 +213,21 @@ impl TerminalEffects {
     /// * `cycles` - Number of pulse cycles
     /// * `min_intensity` - Minimum intensity (0.0 to 1.0)
     /// * `max_intensity` - Maximum intensity (0.0 to 1.0)
-    pub fn pulse_text(text: &str, cycles: u32, min_intensity: f32, max_intensity: f32) -> io::Result<()> {
+    pub fn pulse_text(
+        text: &str,
+        cycles: u32,
+        min_intensity: f32,
+        max_intensity: f32,
+    ) -> io::Result<()> {
         let mut stdout = io::stdout();
 
         for cycle in 0..cycles {
             let phase = (cycle as f32) / (cycles as f32) * std::f32::consts::PI * 2.0;
-            let intensity = min_intensity + (max_intensity - min_intensity) * ((phase).sin() * 0.5 + 0.5);
+            let intensity =
+                min_intensity + (max_intensity - min_intensity) * ((phase).sin() * 0.5 + 0.5);
 
             let color = Color::Rgb {
-                r: (intensity * 205.0) as u8,   // Light gray base
+                r: (intensity * 205.0) as u8, // Light gray base
                 g: (intensity * 209.0) as u8,
                 b: (intensity * 196.0) as u8,
             };

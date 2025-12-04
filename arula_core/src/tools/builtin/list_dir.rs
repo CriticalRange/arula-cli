@@ -193,11 +193,14 @@ mod tests {
         fs::create_dir(temp_dir.path().join("subdir")).unwrap();
 
         let tool = ListDirectoryTool::new();
-        let result = tool.execute(ListDirParams {
-            path: temp_dir.path().to_string_lossy().to_string(),
-            show_hidden: Some(false),
-            recursive: Some(false),
-        }).await.unwrap();
+        let result = tool
+            .execute(ListDirParams {
+                path: temp_dir.path().to_string_lossy().to_string(),
+                show_hidden: Some(false),
+                recursive: Some(false),
+            })
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert_eq!(result.entries.len(), 3);
@@ -211,11 +214,14 @@ mod tests {
         fs::write(temp_dir.path().join("subdir").join("nested.txt"), "nested").unwrap();
 
         let tool = ListDirectoryTool::new();
-        let result = tool.execute(ListDirParams {
-            path: temp_dir.path().to_string_lossy().to_string(),
-            show_hidden: Some(false),
-            recursive: Some(true),
-        }).await.unwrap();
+        let result = tool
+            .execute(ListDirParams {
+                path: temp_dir.path().to_string_lossy().to_string(),
+                show_hidden: Some(false),
+                recursive: Some(true),
+            })
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert!(result.entries.len() >= 3);
@@ -224,13 +230,14 @@ mod tests {
     #[tokio::test]
     async fn test_list_nonexistent_directory() {
         let tool = ListDirectoryTool::new();
-        let result = tool.execute(ListDirParams {
-            path: "/nonexistent/path".to_string(),
-            show_hidden: None,
-            recursive: None,
-        }).await;
+        let result = tool
+            .execute(ListDirParams {
+                path: "/nonexistent/path".to_string(),
+                show_hidden: None,
+                recursive: None,
+            })
+            .await;
 
         assert!(result.is_err());
     }
 }
-

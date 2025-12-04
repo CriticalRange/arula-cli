@@ -1,7 +1,7 @@
 //! Demonstration of the Question Tool functionality
 
-use arula_cli::tools::builtin::{QuestionTool, QuestionParams, QuestionResult};
 use arula_cli::api::agent::Tool;
+use arula_cli::tools::builtin::{QuestionParams, QuestionResult, QuestionTool};
 
 #[test]
 fn test_question_tool_basic_properties() {
@@ -23,7 +23,11 @@ fn test_question_params_serialization() -> Result<(), Box<dyn std::error::Error>
     // Test question with options
     let params = QuestionParams {
         question: "What is your favorite color?".to_string(),
-        options: Some(vec!["Red".to_string(), "Blue".to_string(), "Green".to_string()]),
+        options: Some(vec![
+            "Red".to_string(),
+            "Blue".to_string(),
+            "Green".to_string(),
+        ]),
     };
 
     // Test JSON serialization
@@ -98,7 +102,7 @@ async fn test_question_tool_validation() {
 
     let result = tool.execute(valid_params).await;
     assert!(result.is_ok());
-    
+
     let response = result.unwrap();
     assert!(response.success);
     assert!(response.awaiting_response);

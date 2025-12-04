@@ -32,10 +32,7 @@ async fn test_visioneer_tool_methods() {
 
 #[tokio::test]
 async fn test_visioneer_with_vlm() {
-    let tool = VisioneerTool::with_vlm(
-        "http://localhost:11434".to_string(),
-        "llava".to_string()
-    );
+    let tool = VisioneerTool::with_vlm("http://localhost:11434".to_string(), "llava".to_string());
 
     // Test basic tool methods
     assert_eq!(tool.name(), "visioneer");
@@ -83,7 +80,7 @@ async fn test_visioneer_with_vlm_config() {
 
     assert_eq!(params.target, "test_window");
     assert!(params.vlm_config.is_some());
-    
+
     let vlm_config = params.vlm_config.unwrap();
     assert_eq!(vlm_config.model.unwrap(), "llava");
     assert_eq!(vlm_config.endpoint.unwrap(), "http://localhost:11434");
@@ -161,7 +158,10 @@ async fn test_visioneer_vlm_config() {
     };
 
     assert_eq!(vlm_config.model, Some("llava".to_string()));
-    assert_eq!(vlm_config.endpoint, Some("http://localhost:11434".to_string()));
+    assert_eq!(
+        vlm_config.endpoint,
+        Some("http://localhost:11434".to_string())
+    );
     assert_eq!(vlm_config.provider, Some("ollama".to_string()));
     assert_eq!(vlm_config.max_tokens, Some(500));
     assert_eq!(vlm_config.temperature, Some(0.1));
@@ -403,13 +403,23 @@ async fn test_visioneer_tool_creation() {
 async fn test_visioneer_all_action_types() {
     // Test that all action types can be created and serialized
     let capture_action = VisioneerAction::Capture {
-        region: Some(CaptureRegion { x: 0, y: 0, width: 100, height: 100 }),
+        region: Some(CaptureRegion {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+        }),
         save_path: Some("/tmp/test.png".to_string()),
         encode_base64: Some(true),
     };
 
     let extract_text_action = VisioneerAction::ExtractText {
-        region: Some(CaptureRegion { x: 0, y: 0, width: 100, height: 100 }),
+        region: Some(CaptureRegion {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+        }),
         language: Some("eng".to_string()),
     };
 
@@ -510,7 +520,7 @@ fn test_visioneer_enum_variants() {
 
     let _wait_condition = WaitCondition::Text {
         text: "test".to_string(),
-        appears: Some(true)
+        appears: Some(true),
     };
 
     let _nav_direction = NavigationDirection::Up;

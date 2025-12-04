@@ -5,9 +5,9 @@
 
 use crate::api::agent::{Tool, ToolSchema, ToolSchemaBuilder};
 use async_trait::async_trait;
-use base64::Engine;
 #[cfg(target_os = "windows")]
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -91,10 +91,22 @@ pub struct CaptureRegion {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClickTarget {
-    Coordinates { x: u32, y: u32 },
-    Text { text: String, region: Option<CaptureRegion> },
-    Pattern { pattern: String, region: Option<CaptureRegion> },
-    Element { selector: String, index: Option<u32> },
+    Coordinates {
+        x: u32,
+        y: u32,
+    },
+    Text {
+        text: String,
+        region: Option<CaptureRegion>,
+    },
+    Pattern {
+        pattern: String,
+        region: Option<CaptureRegion>,
+    },
+    Element {
+        selector: String,
+        index: Option<u32>,
+    },
 }
 
 /// Mouse button options
@@ -109,10 +121,22 @@ pub enum ClickButton {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum WaitCondition {
-    Text { text: String, appears: Option<bool> },
-    Element { selector: String, appears: Option<bool> },
-    Pixel { x: u32, y: u32, color: String },
-    Idle { timeout_ms: u32 },
+    Text {
+        text: String,
+        appears: Option<bool>,
+    },
+    Element {
+        selector: String,
+        appears: Option<bool>,
+    },
+    Pixel {
+        x: u32,
+        y: u32,
+        color: String,
+    },
+    Idle {
+        timeout_ms: u32,
+    },
 }
 
 /// Navigation directions
@@ -148,7 +172,7 @@ pub struct VlmConfig {
     pub model: Option<String>, // "gpt-4-vision", "claude-3-vision", "llava", etc.
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
-    pub detail: Option<String>, // "low", "medium", "high"
+    pub detail: Option<String>,   // "low", "medium", "high"
     pub endpoint: Option<String>, // Ollama endpoint URL
     pub provider: Option<String>, // "ollama", "openai", "claude", etc.
 }
@@ -261,23 +285,29 @@ impl VisioneerTool {
     pub fn with_vlm(endpoint: String, model: String) -> Self {
         Self {
             ocr_engine: Some(Box::new(TesseractOcrEngine::new())),
-            vlm_engine: Arc::new(Mutex::new(Some(Box::new(OllamaVlmEngine::new(endpoint, model))))),
+            vlm_engine: Arc::new(Mutex::new(Some(Box::new(OllamaVlmEngine::new(
+                endpoint, model,
+            ))))),
             screen_capture: Box::new(WindowsScreenCapture::new()),
             action_executor: Box::new(WindowsActionExecutor::new()),
         }
     }
 
-    fn get_or_init_vlm_engine(&self, config: &VlmConfig) -> Result<Arc<Mutex<Option<Box<dyn VlmEngine>>>>, String> {
+    fn get_or_init_vlm_engine(
+        &self,
+        config: &VlmConfig,
+    ) -> Result<Arc<Mutex<Option<Box<dyn VlmEngine>>>>, String> {
         let mut vlm_engine_guard = self.vlm_engine.lock().unwrap();
         if vlm_engine_guard.is_none() {
-            let endpoint = config.endpoint.clone()
+            let endpoint = config
+                .endpoint
+                .clone()
                 .unwrap_or_else(|| "http://localhost:11434".to_string());
-            let model = config.model.clone()
-                .unwrap_or_else(|| "llava".to_string());
-            
+            let model = config.model.clone().unwrap_or_else(|| "llava".to_string());
+
             *vlm_engine_guard = Some(Box::new(OllamaVlmEngine::new(endpoint, model)));
         }
-        
+
         Ok(Arc::clone(&self.vlm_engine))
     }
 }
@@ -378,37 +408,117 @@ impl Tool for VisioneerTool {
         let window_handle = self.find_target_window(&target)?;
 
         let (action_type, result_data) = match action {
-            VisioneerAction::Capture { region, save_path, encode_base64 } => {
-                let capture_result = self.capture_screen(window_handle, region, save_path, encode_base64.unwrap_or(false)).await?;
-                ("capture".to_string(), serde_json::to_value(capture_result).unwrap_or(Value::Null))
+            VisioneerAction::Capture {
+                region,
+                save_path,
+                encode_base64,
+            } => {
+                let capture_result = self
+                    .capture_screen(
+                        window_handle,
+                        region,
+                        save_path,
+                        encode_base64.unwrap_or(false),
+                    )
+                    .await?;
+                (
+                    "capture".to_string(),
+                    serde_json::to_value(capture_result).unwrap_or(Value::Null),
+                )
             }
             VisioneerAction::ExtractText { region, language } => {
                 let text_result = self.extract_text(window_handle, region, language).await?;
-                ("extract_text".to_string(), serde_json::to_value(text_result).unwrap_or(Value::Null))
+                (
+                    "extract_text".to_string(),
+                    serde_json::to_value(text_result).unwrap_or(Value::Null),
+                )
             }
             VisioneerAction::Analyze { query, region } => {
-                let analyze_result = self.analyze_ui(window_handle, &query, region, params.vlm_config).await?;
-                ("analyze".to_string(), serde_json::to_value(analyze_result).unwrap_or(Value::Null))
+                let analyze_result = self
+                    .analyze_ui(window_handle, &query, region, params.vlm_config)
+                    .await?;
+                (
+                    "analyze".to_string(),
+                    serde_json::to_value(analyze_result).unwrap_or(Value::Null),
+                )
             }
-            VisioneerAction::Click { target: click_target, button, double_click } => {
-                let action_result = self.execute_click(window_handle, click_target, button, double_click.unwrap_or(false)).await?;
-                ("click".to_string(), serde_json::to_value(action_result).unwrap_or(Value::Null))
+            VisioneerAction::Click {
+                target: click_target,
+                button,
+                double_click,
+            } => {
+                let action_result = self
+                    .execute_click(
+                        window_handle,
+                        click_target,
+                        button,
+                        double_click.unwrap_or(false),
+                    )
+                    .await?;
+                (
+                    "click".to_string(),
+                    serde_json::to_value(action_result).unwrap_or(Value::Null),
+                )
             }
-            VisioneerAction::Type { text, clear_first, delay_ms } => {
-                let action_result = self.execute_type(window_handle, &text, clear_first.unwrap_or(false), delay_ms.unwrap_or(50)).await?;
-                ("type".to_string(), serde_json::to_value(action_result).unwrap_or(Value::Null))
+            VisioneerAction::Type {
+                text,
+                clear_first,
+                delay_ms,
+            } => {
+                let action_result = self
+                    .execute_type(
+                        window_handle,
+                        &text,
+                        clear_first.unwrap_or(false),
+                        delay_ms.unwrap_or(50),
+                    )
+                    .await?;
+                (
+                    "type".to_string(),
+                    serde_json::to_value(action_result).unwrap_or(Value::Null),
+                )
             }
             VisioneerAction::Hotkey { keys, hold_ms } => {
                 let action_result = self.execute_hotkey(&keys, hold_ms.unwrap_or(100)).await?;
-                ("hotkey".to_string(), serde_json::to_value(action_result).unwrap_or(Value::Null))
+                (
+                    "hotkey".to_string(),
+                    serde_json::to_value(action_result).unwrap_or(Value::Null),
+                )
             }
-            VisioneerAction::WaitFor { condition, timeout_ms, check_interval_ms } => {
-                let action_result = self.execute_wait(condition, timeout_ms.unwrap_or(10000), check_interval_ms.unwrap_or(500)).await?;
-                ("wait_for".to_string(), serde_json::to_value(action_result).unwrap_or(Value::Null))
+            VisioneerAction::WaitFor {
+                condition,
+                timeout_ms,
+                check_interval_ms,
+            } => {
+                let action_result = self
+                    .execute_wait(
+                        condition,
+                        timeout_ms.unwrap_or(10000),
+                        check_interval_ms.unwrap_or(500),
+                    )
+                    .await?;
+                (
+                    "wait_for".to_string(),
+                    serde_json::to_value(action_result).unwrap_or(Value::Null),
+                )
             }
-            VisioneerAction::Navigate { direction, distance, steps } => {
-                let action_result = self.execute_navigate(window_handle, direction, distance.unwrap_or(100), steps.unwrap_or(1)).await?;
-                ("navigate".to_string(), serde_json::to_value(action_result).unwrap_or(Value::Null))
+            VisioneerAction::Navigate {
+                direction,
+                distance,
+                steps,
+            } => {
+                let action_result = self
+                    .execute_navigate(
+                        window_handle,
+                        direction,
+                        distance.unwrap_or(100),
+                        steps.unwrap_or(1),
+                    )
+                    .await?;
+                (
+                    "navigate".to_string(),
+                    serde_json::to_value(action_result).unwrap_or(Value::Null),
+                )
             }
         };
 
@@ -422,7 +532,10 @@ impl Tool for VisioneerTool {
             metadata: {
                 let mut meta = HashMap::new();
                 meta.insert("target".to_string(), Value::String(target));
-                meta.insert("platform".to_string(), Value::String(std::env::consts::OS.to_string()));
+                meta.insert(
+                    "platform".to_string(),
+                    Value::String(std::env::consts::OS.to_string()),
+                );
                 meta
             },
         })
@@ -468,7 +581,9 @@ impl VisioneerTool {
         save_path: Option<String>,
         encode_base64: bool,
     ) -> Result<CaptureResult, String> {
-        self.screen_capture.capture(window, region, save_path, encode_base64).await
+        self.screen_capture
+            .capture(window, region, save_path, encode_base64)
+            .await
     }
 
     async fn extract_text(
@@ -478,7 +593,9 @@ impl VisioneerTool {
         language: Option<String>,
     ) -> Result<ExtractTextResult, String> {
         // First capture the screen
-        let capture_result = self.capture_screen(window, region.clone(), None, false).await?;
+        let capture_result = self
+            .capture_screen(window, region.clone(), None, false)
+            .await?;
 
         // Then extract text using OCR
         if let Some(ocr_engine) = &self.ocr_engine {
@@ -497,32 +614,34 @@ impl VisioneerTool {
     ) -> Result<AnalyzeResult, String> {
         // Capture the screen first
         let capture_result = self.capture_screen(window, region, None, true).await?;
-        
+
         // Check if we have base64 image data
-        let base64_data = capture_result.base64_data
+        let base64_data = capture_result
+            .base64_data
             .as_ref()
             .ok_or("No base64 image data found in capture result")?;
-        
+
         // Use VLM if configured, otherwise return mock analysis
         if let Some(config) = vlm_config {
             // Initialize VLM engine if needed
             let vlm_engine_ref = self.get_or_init_vlm_engine(&config)?;
-            
+
             // Extract the VLM engine from the mutex
             let vlm_engine = {
                 let guard = vlm_engine_ref.lock().unwrap();
                 if guard.is_some() {
                     // We need to create a new engine since we can't clone the trait object
-                    let endpoint = config.endpoint.clone()
+                    let endpoint = config
+                        .endpoint
+                        .clone()
                         .unwrap_or_else(|| "http://localhost:11434".to_string());
-                    let model = config.model.clone()
-                        .unwrap_or_else(|| "llava".to_string());
+                    let model = config.model.clone().unwrap_or_else(|| "llava".to_string());
                     Some(OllamaVlmEngine::new(endpoint, model))
                 } else {
                     None
                 }
             };
-            
+
             if let Some(vlm) = vlm_engine {
                 // Use the VLM to analyze the image
                 vlm.analyze_image(base64_data, query, &config).await
@@ -548,7 +667,14 @@ impl VisioneerTool {
         button: Option<ClickButton>,
         double_click: bool,
     ) -> Result<ActionResult, String> {
-        self.action_executor.click(window, target, button.unwrap_or(ClickButton::Left), double_click).await
+        self.action_executor
+            .click(
+                window,
+                target,
+                button.unwrap_or(ClickButton::Left),
+                double_click,
+            )
+            .await
     }
 
     async fn execute_type(
@@ -558,7 +684,9 @@ impl VisioneerTool {
         clear_first: bool,
         delay_ms: u32,
     ) -> Result<ActionResult, String> {
-        self.action_executor.type_text(window, text, clear_first, delay_ms).await
+        self.action_executor
+            .type_text(window, text, clear_first, delay_ms)
+            .await
     }
 
     async fn execute_hotkey(&self, keys: &[String], hold_ms: u32) -> Result<ActionResult, String> {
@@ -571,7 +699,9 @@ impl VisioneerTool {
         timeout_ms: u32,
         check_interval_ms: u32,
     ) -> Result<ActionResult, String> {
-        self.action_executor.wait(condition, timeout_ms, check_interval_ms).await
+        self.action_executor
+            .wait(condition, timeout_ms, check_interval_ms)
+            .await
     }
 
     async fn execute_navigate(
@@ -581,24 +711,33 @@ impl VisioneerTool {
         distance: u32,
         steps: u32,
     ) -> Result<ActionResult, String> {
-        self.action_executor.navigate(window, direction, distance, steps).await
+        self.action_executor
+            .navigate(window, direction, distance, steps)
+            .await
     }
 
     /// Find text coordinates using OCR
     #[cfg(target_os = "windows")]
-    async fn find_text_coordinates(&self, text: &str, region: Option<CaptureRegion>) -> Result<(u32, u32), String> {
-        use rusty_tesseract::{Image, Args, image_to_data};
+    async fn find_text_coordinates(
+        &self,
+        text: &str,
+        region: Option<CaptureRegion>,
+    ) -> Result<(u32, u32), String> {
+        use rusty_tesseract::{image_to_data, Args, Image};
         use std::collections::HashMap;
 
         // Configure Tesseract path for Windows
         #[cfg(target_os = "windows")]
-        let tesseract_path = if std::path::Path::new("C:\\Program Files\\Tesseract-OCR\\tesseract.exe").exists() {
-            Some("C:\\Program Files\\Tesseract-OCR")
-        } else if std::path::Path::new("C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe").exists() {
-            Some("C:\\Program Files (x86)\\Tesseract-OCR")
-        } else {
-            None // Try system PATH
-        };
+        let tesseract_path =
+            if std::path::Path::new("C:\\Program Files\\Tesseract-OCR\\tesseract.exe").exists() {
+                Some("C:\\Program Files\\Tesseract-OCR")
+            } else if std::path::Path::new("C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe")
+                .exists()
+            {
+                Some("C:\\Program Files (x86)\\Tesseract-OCR")
+            } else {
+                None // Try system PATH
+            };
 
         #[cfg(not(target_os = "windows"))]
         let tesseract_path: Option<&str> = None;
@@ -612,7 +751,14 @@ impl VisioneerTool {
         let temp_path = format!("temp_find_text_{}.png", chrono::Utc::now().timestamp());
         let window_handle = WindowHandle::Windows("screen".to_string()); // Use entire screen
 
-        let _capture_result = self.capture_screen(window_handle, region.clone(), Some(temp_path.clone()), false).await?;
+        let _capture_result = self
+            .capture_screen(
+                window_handle,
+                region.clone(),
+                Some(temp_path.clone()),
+                false,
+            )
+            .await?;
 
         // Load image for Tesseract
         let image = Image::from_path(&temp_path)
@@ -633,8 +779,10 @@ impl VisioneerTool {
         // Add Tesseract path if found
         #[cfg(target_os = "windows")]
         if let Some(path) = tesseract_path {
-            args.config_variables.insert("tessedit_cmd_tesseract".to_string(),
-                format!("{}\\tesseract.exe", path));
+            args.config_variables.insert(
+                "tessedit_cmd_tesseract".to_string(),
+                format!("{}\\tesseract.exe", path),
+            );
         }
 
         // Extract detailed OCR data with confidence scores
@@ -661,7 +809,12 @@ impl VisioneerTool {
 
     /// Execute wait condition
     #[cfg(target_os = "windows")]
-    async fn execute_wait_condition(&self, condition: WaitCondition, timeout_ms: u32, check_interval_ms: u32) -> Result<VisioneerResult, String> {
+    async fn execute_wait_condition(
+        &self,
+        condition: WaitCondition,
+        timeout_ms: u32,
+        check_interval_ms: u32,
+    ) -> Result<VisioneerResult, String> {
         let start_time = std::time::Instant::now();
         let timeout_duration = std::time::Duration::from_millis(timeout_ms as u64);
         let check_interval = std::time::Duration::from_millis(check_interval_ms as u64);
@@ -675,7 +828,10 @@ impl VisioneerTool {
                     execution_time_ms: timeout_ms as u64,
                     metadata: {
                         let mut meta = HashMap::new();
-                        meta.insert("condition".to_string(), serde_json::to_value(condition).unwrap_or(Value::Null));
+                        meta.insert(
+                            "condition".to_string(),
+                            serde_json::to_value(condition).unwrap_or(Value::Null),
+                        );
                         meta.insert("timeout".to_string(), Value::Bool(true));
                         meta
                     },
@@ -683,15 +839,23 @@ impl VisioneerTool {
             }
 
             let condition_met = match &condition {
-                WaitCondition::Text { text, appears: Some(true) } => {
+                WaitCondition::Text {
+                    text,
+                    appears: Some(true),
+                } => {
                     // Check if text appears
                     self.find_text_coordinates(text, None).await.is_ok()
                 }
-                WaitCondition::Text { text, appears: Some(false) } => {
+                WaitCondition::Text {
+                    text,
+                    appears: Some(false),
+                } => {
                     // Check if text disappears
                     self.find_text_coordinates(text, None).await.is_err()
                 }
-                WaitCondition::Idle { timeout_ms: idle_timeout } => {
+                WaitCondition::Idle {
+                    timeout_ms: idle_timeout,
+                } => {
                     // Simple idle check - would need more sophisticated implementation
                     start_time.elapsed().as_millis() > *idle_timeout as u128
                 }
@@ -706,8 +870,16 @@ impl VisioneerTool {
                     execution_time_ms: start_time.elapsed().as_millis() as u64,
                     metadata: {
                         let mut meta = HashMap::new();
-                        meta.insert("condition".to_string(), serde_json::to_value(condition).unwrap_or(Value::Null));
-                        meta.insert("elapsed_ms".to_string(), Value::Number(serde_json::Number::from(start_time.elapsed().as_millis() as u64)));
+                        meta.insert(
+                            "condition".to_string(),
+                            serde_json::to_value(condition).unwrap_or(Value::Null),
+                        );
+                        meta.insert(
+                            "elapsed_ms".to_string(),
+                            Value::Number(serde_json::Number::from(
+                                start_time.elapsed().as_millis() as u64,
+                            )),
+                        );
                         meta
                     },
                 });
@@ -719,13 +891,22 @@ impl VisioneerTool {
 
     /// Find text coordinates using OCR (non-Windows stub)
     #[cfg(not(target_os = "windows"))]
-    async fn find_text_coordinates(&self, _text: &str, _region: Option<CaptureRegion>) -> Result<(u32, u32), String> {
+    async fn find_text_coordinates(
+        &self,
+        _text: &str,
+        _region: Option<CaptureRegion>,
+    ) -> Result<(u32, u32), String> {
         Err("Text finding not supported on this platform".to_string())
     }
 
     /// Execute wait condition (non-Windows stub)
     #[cfg(not(target_os = "windows"))]
-    async fn execute_wait_condition(&self, _condition: WaitCondition, _timeout_ms: u32, _check_interval_ms: u32) -> Result<VisioneerResult, String> {
+    async fn execute_wait_condition(
+        &self,
+        _condition: WaitCondition,
+        _timeout_ms: u32,
+        _check_interval_ms: u32,
+    ) -> Result<VisioneerResult, String> {
         Ok(VisioneerResult {
             success: false,
             action_type: "wait".to_string(),
@@ -733,8 +914,14 @@ impl VisioneerTool {
             execution_time_ms: 0,
             metadata: {
                 let mut meta = HashMap::new();
-                meta.insert("platform".to_string(), Value::String(std::env::consts::OS.to_string()));
-                meta.insert("error".to_string(), Value::String("not_supported".to_string()));
+                meta.insert(
+                    "platform".to_string(),
+                    Value::String(std::env::consts::OS.to_string()),
+                );
+                meta.insert(
+                    "error".to_string(),
+                    Value::String("not_supported".to_string()),
+                );
                 meta
             },
         })
@@ -829,7 +1016,7 @@ impl OllamaVlmEngine {
             .timeout(std::time::Duration::from_secs(60))
             .build()
             .expect("Failed to create HTTP client");
-        
+
         Self {
             client,
             endpoint,
@@ -871,8 +1058,9 @@ impl VlmEngine for OllamaVlmEngine {
         }
 
         let request_url = format!("{}/api/generate", self.endpoint);
-        
-        let response = self.client
+
+        let response = self
+            .client
             .post(&request_url)
             .json(&request_payload)
             .send()
@@ -890,7 +1078,7 @@ impl VlmEngine for OllamaVlmEngine {
                 let analysis = response_text.to_string();
                 let elements = parse_ui_elements_from_response(&analysis);
                 let suggestions = parse_suggestions_from_response(&analysis);
-                
+
                 Ok(AnalyzeResult {
                     analysis,
                     elements,
@@ -916,7 +1104,7 @@ fn parse_ui_elements_from_response(response: &str) -> Vec<UiElement> {
     // This is a simple implementation - in a real scenario, you might want to use
     // more sophisticated parsing or ask the VLM to return structured JSON
     let mut elements = Vec::new();
-    
+
     // Look for patterns like "Button: [text]" or "Input field: [placeholder]"
     let lines: Vec<&str> = response.lines().collect();
     for line in lines.iter() {
@@ -925,7 +1113,12 @@ fn parse_ui_elements_from_response(response: &str) -> Vec<UiElement> {
                 elements.push(UiElement {
                     element_type: "button".to_string(),
                     text: Some(text),
-                    bbox: BoundingBox { x: 0, y: 0, width: 0, height: 0 }, // Placeholder
+                    bbox: BoundingBox {
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0,
+                    }, // Placeholder
                     confidence: 0.8,
                     attributes: std::collections::HashMap::new(),
                 });
@@ -935,7 +1128,12 @@ fn parse_ui_elements_from_response(response: &str) -> Vec<UiElement> {
                 elements.push(UiElement {
                     element_type: "input".to_string(),
                     text: Some(text),
-                    bbox: BoundingBox { x: 0, y: 0, width: 0, height: 0 }, // Placeholder
+                    bbox: BoundingBox {
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0,
+                    }, // Placeholder
                     confidence: 0.8,
                     attributes: std::collections::HashMap::new(),
                 });
@@ -945,20 +1143,25 @@ fn parse_ui_elements_from_response(response: &str) -> Vec<UiElement> {
                 elements.push(UiElement {
                     element_type: "link".to_string(),
                     text: Some(text),
-                    bbox: BoundingBox { x: 0, y: 0, width: 0, height: 0 }, // Placeholder
+                    bbox: BoundingBox {
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0,
+                    }, // Placeholder
                     confidence: 0.8,
                     attributes: std::collections::HashMap::new(),
                 });
             }
         }
     }
-    
+
     elements
 }
 
 fn parse_suggestions_from_response(response: &str) -> Vec<String> {
     let mut suggestions = Vec::new();
-    
+
     // Look for suggestion patterns like "Suggestion: ..." or "You can ..."
     let lines: Vec<&str> = response.lines().collect();
     for line in lines {
@@ -970,12 +1173,13 @@ fn parse_suggestions_from_response(response: &str) -> Vec<String> {
             suggestions.push(line.trim().to_string());
         }
     }
-    
+
     // If no explicit suggestions found, add a default one
     if suggestions.is_empty() {
-        suggestions.push("Consider using the analyze action with more specific queries".to_string());
+        suggestions
+            .push("Consider using the analyze action with more specific queries".to_string());
     }
-    
+
     suggestions
 }
 
@@ -1022,7 +1226,8 @@ impl ScreenCapture for WindowsScreenCapture {
                 .next()
                 .ok_or("No screen found")?;
 
-            let screenshot = screen.capture()
+            let screenshot = screen
+                .capture()
                 .map_err(|e| format!("Failed to capture screen: {:?}", e))?;
 
             let width = screenshot.width();
@@ -1081,18 +1286,21 @@ impl OcrEngine for TesseractOcrEngine {
         language: Option<String>,
     ) -> Result<ExtractTextResult, String> {
         // Real Tesseract OCR implementation
-        use rusty_tesseract::{Image, Args, image_to_data};
+        use rusty_tesseract::{image_to_data, Args, Image};
         use std::collections::HashMap;
 
         // Configure Tesseract path for Windows
         #[cfg(target_os = "windows")]
-        let tesseract_path = if std::path::Path::new("C:\\Program Files\\Tesseract-OCR\\tesseract.exe").exists() {
-            Some("C:\\Program Files\\Tesseract-OCR")
-        } else if std::path::Path::new("C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe").exists() {
-            Some("C:\\Program Files (x86)\\Tesseract-OCR")
-        } else {
-            None // Try system PATH
-        };
+        let tesseract_path =
+            if std::path::Path::new("C:\\Program Files\\Tesseract-OCR\\tesseract.exe").exists() {
+                Some("C:\\Program Files\\Tesseract-OCR")
+            } else if std::path::Path::new("C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe")
+                .exists()
+            {
+                Some("C:\\Program Files (x86)\\Tesseract-OCR")
+            } else {
+                None // Try system PATH
+            };
 
         #[cfg(not(target_os = "windows"))]
         let tesseract_path: Option<&str> = None;
@@ -1103,12 +1311,14 @@ impl OcrEngine for TesseractOcrEngine {
         }
 
         // Get base64 data from capture result, decode and save to temp file
-        let base64_data = capture.base64_data
+        let base64_data = capture
+            .base64_data
             .as_ref()
             .and_then(|s| s.strip_prefix("data:image/png;base64,"))
             .ok_or("No base64 image data found in capture result")?;
 
-        let image_data = base64::engine::general_purpose::STANDARD.decode(base64_data)
+        let image_data = base64::engine::general_purpose::STANDARD
+            .decode(base64_data)
             .map_err(|e| format!("Failed to decode base64 image data: {:?}", e))?;
 
         let temp_path = format!("temp_ocr_{}.png", chrono::Utc::now().timestamp());
@@ -1132,8 +1342,10 @@ impl OcrEngine for TesseractOcrEngine {
         // Add Tesseract path if found
         #[cfg(target_os = "windows")]
         if let Some(path) = tesseract_path {
-            args.config_variables.insert("tessedit_cmd_tesseract".to_string(),
-                format!("{}\\tesseract.exe", path));
+            args.config_variables.insert(
+                "tessedit_cmd_tesseract".to_string(),
+                format!("{}\\tesseract.exe", path),
+            );
         }
 
         // Load image for Tesseract
@@ -1148,7 +1360,9 @@ impl OcrEngine for TesseractOcrEngine {
         let _ = std::fs::remove_file(&temp_path);
 
         // Process OCR results
-        let words: Vec<_> = ocr_data.data.iter()
+        let words: Vec<_> = ocr_data
+            .data
+            .iter()
             .filter(|entry| !entry.text.is_empty() && entry.conf > 0.0)
             .map(|entry| TextWord {
                 text: entry.text.clone(),
@@ -1162,7 +1376,8 @@ impl OcrEngine for TesseractOcrEngine {
             })
             .collect();
 
-        let full_text = words.iter()
+        let full_text = words
+            .iter()
             .map(|word| word.text.as_str())
             .collect::<Vec<_>>()
             .join(" ");

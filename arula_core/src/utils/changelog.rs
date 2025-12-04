@@ -45,8 +45,8 @@ impl Changelog {
 
     /// Fetch changelog from local file
     pub fn fetch_local() -> Result<Self> {
-        let content = std::fs::read_to_string("CHANGELOG.md")
-            .unwrap_or_else(|_| Self::default_changelog());
+        let content =
+            std::fs::read_to_string("CHANGELOG.md").unwrap_or_else(|_| Self::default_changelog());
         Ok(Self::parse(&content))
     }
 

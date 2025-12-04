@@ -11,10 +11,10 @@
 //! - `mcp_dynamic` - Dynamic MCP tool loading
 
 pub mod builtin;
-pub mod tools;
-pub mod visioneer;
 pub mod mcp;
 pub mod mcp_dynamic;
+pub mod tools;
+pub mod visioneer;
 
 // Builtin tools available via:
 // builtin::{BashTool, FileReadTool, WriteFileTool, FileEditTool, etc.}

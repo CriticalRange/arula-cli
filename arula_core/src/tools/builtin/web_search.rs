@@ -123,8 +123,14 @@ impl Tool for WebSearchTool {
                 break;
             }
 
-            let url = cap.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
-            let title = cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
+            let url = cap
+                .get(1)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
+            let title = cap
+                .get(2)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
 
             // Skip empty or invalid results
             if url.is_empty() || title.is_empty() || url.starts_with("/d.js") {
@@ -156,4 +162,3 @@ impl Tool for WebSearchTool {
         })
     }
 }
-

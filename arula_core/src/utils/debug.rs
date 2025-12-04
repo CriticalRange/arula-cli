@@ -200,10 +200,7 @@ impl DebugTimer {
     pub fn checkpoint(&self, label: &str) {
         if self.enabled {
             let elapsed = self.start.elapsed();
-            debug_print_module(
-                "PERF",
-                &format!("{} - {}: {:?}", self.name, label, elapsed),
-            );
+            debug_print_module("PERF", &format!("{} - {}: {:?}", self.name, label, elapsed));
         }
     }
 
@@ -323,4 +320,3 @@ mod tests {
         }
     }
 }
-

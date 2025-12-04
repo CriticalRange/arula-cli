@@ -19,19 +19,16 @@
 // These are public API exports - not used internally but exposed for library consumers
 #[allow(unused_imports)]
 pub use crate::tools::builtin::{
-    BashTool, BashParams, BashResult,
-    FileReadTool, FileReadParams, FileReadResult,
-    WriteFileTool, WriteFileParams, WriteFileResult,
-    FileEditTool, FileEditParams, FileEditResult,
-    ListDirectoryTool, ListDirParams, DirectoryEntry, ListDirResult,
-    SearchTool, SearchParams, SearchMatch, SearchResult,
-    WebSearchTool, WebSearchParams, WebSearchResultItem, WebSearchResult,
-    QuestionTool, QuestionParams, QuestionResult,
+    BashParams, BashResult, BashTool, DirectoryEntry, FileEditParams, FileEditResult, FileEditTool,
+    FileReadParams, FileReadResult, FileReadTool, ListDirParams, ListDirResult, ListDirectoryTool,
+    QuestionParams, QuestionResult, QuestionTool, SearchMatch, SearchParams, SearchResult,
+    SearchTool, WebSearchParams, WebSearchResult, WebSearchResultItem, WebSearchTool,
+    WriteFileParams, WriteFileResult, WriteFileTool,
 };
 
 // Re-export Visioneer tool from its own module
 #[allow(unused_imports)]
-pub use crate::tools::visioneer::{VisioneerTool, VisioneerParams, VisioneerResult};
+pub use crate::tools::visioneer::{VisioneerParams, VisioneerResult, VisioneerTool};
 
 /// Factory function to create a basic tool registry (without MCP discovery)
 /// Used by AgentClient when a cached registry is already available
@@ -97,7 +94,7 @@ mod tests {
     fn test_create_basic_registry() {
         let registry = create_basic_tool_registry();
         let tools = registry.get_tools();
-        
+
         // Should have all basic tools registered
         assert!(tools.contains(&"execute_bash"));
         assert!(tools.contains(&"read_file"));

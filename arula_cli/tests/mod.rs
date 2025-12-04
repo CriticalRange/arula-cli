@@ -9,9 +9,9 @@
 // pub mod test_helpers;
 // pub mod test_utils;
 
+use arula_cli::chat::{ChatRole, EnhancedChatMessage};
 use async_trait::async_trait;
 use std::path::PathBuf;
-use arula_cli::chat::{EnhancedChatMessage, ChatRole};
 
 /// Trait for terminal output operations
 #[async_trait]
@@ -27,15 +27,29 @@ pub trait OutputHandler: Send + Sync {
 #[async_trait]
 pub trait ConfigManager: Send + Sync {
     async fn load_config(&self) -> Result<arula_cli::utils::config::Config, anyhow::Error>;
-    async fn save_config(&self, config: &arula_cli::utils::config::Config) -> Result<(), anyhow::Error>;
+    async fn save_config(
+        &self,
+        config: &arula_cli::utils::config::Config,
+    ) -> Result<(), anyhow::Error>;
     async fn get_default_endpoint(&self) -> Result<String, anyhow::Error>;
 }
 
 /// Trait for AI client operations
 #[async_trait]
 pub trait AiClient: Send + Sync {
-    async fn send_message(&self, message: &str, history: &[EnhancedChatMessage]) -> Result<String, anyhow::Error>;
-    async fn send_message_stream(&self, message: &str, history: &[EnhancedChatMessage]) -> Result<Box<dyn futures::Stream<Item = Result<String, anyhow::Error>> + Send + Unpin>, anyhow::Error>;
+    async fn send_message(
+        &self,
+        message: &str,
+        history: &[EnhancedChatMessage],
+    ) -> Result<String, anyhow::Error>;
+    async fn send_message_stream(
+        &self,
+        message: &str,
+        history: &[EnhancedChatMessage],
+    ) -> Result<
+        Box<dyn futures::Stream<Item = Result<String, anyhow::Error>> + Send + Unpin>,
+        anyhow::Error,
+    >;
 }
 
 /// Trait for file system operations
@@ -51,15 +65,35 @@ pub trait FileSystem: Send + Sync {
 /// Trait for process execution
 #[async_trait]
 pub trait ProcessExecutor: Send + Sync {
-    async fn execute_command(&self, command: &str, args: &[&str]) -> Result<std::process::Output, anyhow::Error>;
-    async fn execute_command_with_input(&self, command: &str, args: &[&str], input: &[u8]) -> Result<std::process::Output, anyhow::Error>;
+    async fn execute_command(
+        &self,
+        command: &str,
+        args: &[&str],
+    ) -> Result<std::process::Output, anyhow::Error>;
+    async fn execute_command_with_input(
+        &self,
+        command: &str,
+        args: &[&str],
+        input: &[u8],
+    ) -> Result<std::process::Output, anyhow::Error>;
 }
 
 /// Trait for HTTP operations
 #[async_trait]
 pub trait HttpClient: Send + Sync {
-    async fn post_json(&self, url: &str, body: &serde_json::Value) -> Result<serde_json::Value, anyhow::Error>;
-    async fn post_json_stream(&self, url: &str, body: &serde_json::Value) -> Result<Box<dyn futures::Stream<Item = Result<String, anyhow::Error>> + Send + Unpin>, anyhow::Error>;
+    async fn post_json(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, anyhow::Error>;
+    async fn post_json_stream(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> Result<
+        Box<dyn futures::Stream<Item = Result<String, anyhow::Error>> + Send + Unpin>,
+        anyhow::Error,
+    >;
     async fn get(&self, url: &str) -> Result<serde_json::Value, anyhow::Error>;
 }
 
@@ -75,7 +109,11 @@ pub trait InputHandler: Send + Sync {
     async fn read_line(&mut self) -> Result<String, anyhow::Error>;
     async fn read_password(&mut self) -> Result<String, anyhow::Error>;
     async fn confirm(&mut self, message: &str) -> Result<bool, anyhow::Error>;
-    async fn select_option(&mut self, message: &str, options: &[String]) -> Result<usize, anyhow::Error>;
+    async fn select_option(
+        &mut self,
+        message: &str,
+        options: &[String],
+    ) -> Result<usize, anyhow::Error>;
 }
 
 /// Trait for menu operations

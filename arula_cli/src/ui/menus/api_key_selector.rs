@@ -6,11 +6,10 @@ use crate::ui::output::OutputHandler;
 use anyhow::Result;
 use console::style;
 use crossterm::{
-    event::{Event, KeyCode, KeyEventKind, KeyModifiers},
-    terminal,
     cursor::MoveTo,
-    style::{SetForegroundColor, ResetColor, Print},
-    ExecutableCommand, QueueableCommand,
+    event::{Event, KeyCode, KeyEventKind, KeyModifiers},
+    style::{Print, ResetColor, SetForegroundColor},
+    terminal, ExecutableCommand, QueueableCommand,
 };
 use std::io::{stdout, Write};
 use std::time::Duration;
@@ -41,14 +40,9 @@ impl ApiKeySelector {
 
         // Create options menu
         let options = if has_key {
-            vec![
-                "Update API Key".to_string(),
-                "Clear API Key".to_string(),
-            ]
+            vec!["Update API Key".to_string(), "Clear API Key".to_string()]
         } else {
-            vec![
-                "Set API Key".to_string(),
-            ]
+            vec!["Set API Key".to_string()]
         };
 
         let mut selected_idx = 0;
@@ -90,13 +84,20 @@ impl ApiKeySelector {
                                 match selected_idx {
                                     0 => {
                                         // Set or Update API Key
-                                        if let Some(new_key) = self.input_api_key(has_key, output)? {
+                                        if let Some(new_key) =
+                                            self.input_api_key(has_key, output)?
+                                        {
                                             if !new_key.trim().is_empty() {
                                                 app.config.set_api_key(&new_key);
                                                 if let Err(e) = app.config.save() {
-                                                    output.print_error(&format!("Failed to save config: {}", e))?;
+                                                    output.print_error(&format!(
+                                                        "Failed to save config: {}",
+                                                        e
+                                                    ))?;
                                                 } else {
-                                                    output.print_system("✅ API key updated successfully")?;
+                                                    output.print_system(
+                                                        "✅ API key updated successfully",
+                                                    )?;
                                                     // Reinitialize agent client with new API key
                                                     let _ = app.initialize_agent_client();
                                                 }
@@ -110,7 +111,10 @@ impl ApiKeySelector {
                                         if has_key {
                                             app.config.set_api_key("");
                                             if let Err(e) = app.config.save() {
-                                                output.print_error(&format!("Failed to save config: {}", e))?;
+                                                output.print_error(&format!(
+                                                    "Failed to save config: {}",
+                                                    e
+                                                ))?;
                                             } else {
                                                 output.print_system("✅ API key cleared")?;
                                                 // Reinitialize agent client
@@ -155,7 +159,12 @@ impl ApiKeySelector {
     }
 
     /// Render the API key selector with original styling (1:1 from overlay_menu.rs pattern)
-    fn render_api_key_selector(&self, options: &[String], selected_idx: usize, has_key: bool) -> Result<()> {
+    fn render_api_key_selector(
+        &self,
+        options: &[String],
+        selected_idx: usize,
+        has_key: bool,
+    ) -> Result<()> {
         let (cols, rows) = crossterm::terminal::size()?;
 
         // Don't clear entire screen - causes flicker (like original)
@@ -171,8 +180,16 @@ impl ApiKeySelector {
             menu_height
         };
 
-        let start_x = if cols > menu_width { cols.saturating_sub(menu_width) / 2 } else { 0 };
-        let start_y = if rows > menu_height as u16 { rows.saturating_sub(menu_height as u16) / 2 } else { 0 };
+        let start_x = if cols > menu_width {
+            cols.saturating_sub(menu_width) / 2
+        } else {
+            0
+        };
+        let start_y = if rows > menu_height as u16 {
+            rows.saturating_sub(menu_height as u16) / 2
+        } else {
+            0
+        };
 
         // Draw modern box using original function
         self.draw_modern_box(start_x, start_y, menu_width, menu_height as u16, "API KEY")?;
@@ -185,10 +202,13 @@ impl ApiKeySelector {
         } else {
             start_x + 1
         };
-        stdout().queue(MoveTo(title_x, title_y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::MISC_ANSI)))?
-              .queue(Print(style(title).bold()))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(MoveTo(title_x, title_y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::MISC_ANSI,
+            )))?
+            .queue(Print(style(title).bold()))?
+            .queue(ResetColor)?;
 
         // Draw status line
         let status_y = start_y + 3;
@@ -203,10 +223,11 @@ impl ApiKeySelector {
         } else {
             crossterm::style::Color::Red
         };
-        stdout().queue(MoveTo(status_x, status_y))?
-              .queue(SetForegroundColor(status_color))?
-              .queue(Print(status))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(MoveTo(status_x, status_y))?
+            .queue(SetForegroundColor(status_color))?
+            .queue(Print(status))?
+            .queue(ResetColor)?;
 
         // Draw options (like original)
         let items_start_y = start_y + 5;
@@ -217,10 +238,13 @@ impl ApiKeySelector {
                 self.draw_selected_item(start_x + 2, y, menu_width - 4, option)?;
             } else {
                 // Unselected item with normal color
-                stdout().queue(MoveTo(start_x + 4, y))?
-                      .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::MISC_ANSI)))?
-                      .queue(Print(option))?
-                      .queue(ResetColor)?;
+                stdout()
+                    .queue(MoveTo(start_x + 4, y))?
+                    .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                        crate::utils::colors::MISC_ANSI,
+                    )))?
+                    .queue(Print(option))?
+                    .queue(ResetColor)?;
             }
         }
 
@@ -233,17 +257,24 @@ impl ApiKeySelector {
         } else {
             start_x + 1
         };
-        stdout().queue(MoveTo(help_x, help_y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
-              .queue(Print(help_text))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(MoveTo(help_x, help_y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::AI_HIGHLIGHT_ANSI,
+            )))?
+            .queue(Print(help_text))?
+            .queue(ResetColor)?;
 
         stdout().flush()?;
         Ok(())
     }
 
     /// Input API key with inline rendering (modern pattern)
-    fn input_api_key(&self, has_existing: bool, _output: &mut OutputHandler) -> Result<Option<String>> {
+    fn input_api_key(
+        &self,
+        has_existing: bool,
+        _output: &mut OutputHandler,
+    ) -> Result<Option<String>> {
         let prompt = if has_existing {
             "Enter new API key (leave empty to keep current):"
         } else {
@@ -257,30 +288,50 @@ impl ApiKeySelector {
         let dialog_width = 60.min(cols.saturating_sub(4));
         let dialog_height = 8;
 
-        let start_x = if cols > dialog_width { (cols - dialog_width) / 2 } else { 0 };
-        let start_y = if rows > dialog_height { (rows - dialog_height) / 2 } else { 0 };
+        let start_x = if cols > dialog_width {
+            (cols - dialog_width) / 2
+        } else {
+            0
+        };
+        let start_y = if rows > dialog_height {
+            (rows - dialog_height) / 2
+        } else {
+            0
+        };
 
         let mut input = String::new();
         let mut cursor_pos = 0;
 
         loop {
             // Render input dialog
-            self.draw_modern_box(start_x, start_y, dialog_width, dialog_height, "API KEY INPUT")?;
+            self.draw_modern_box(
+                start_x,
+                start_y,
+                dialog_width,
+                dialog_height,
+                "API KEY INPUT",
+            )?;
 
             // Draw prompt
             let prompt_y = start_y + 2;
-            stdout().queue(MoveTo(start_x + 2, prompt_y))?
-                  .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::MISC_ANSI)))?
-                  .queue(Print(prompt))?
-                  .queue(ResetColor)?;
+            stdout()
+                .queue(MoveTo(start_x + 2, prompt_y))?
+                .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                    crate::utils::colors::MISC_ANSI,
+                )))?
+                .queue(Print(prompt))?
+                .queue(ResetColor)?;
 
             // Draw input field with masked characters
             let input_y = start_y + 4;
             let masked_input = "•".repeat(input.len());
-            stdout().queue(MoveTo(start_x + 2, input_y))?
-                  .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::PRIMARY_ANSI)))?
-                  .queue(Print(&format!("{}_", masked_input)))?
-                  .queue(ResetColor)?;
+            stdout()
+                .queue(MoveTo(start_x + 2, input_y))?
+                .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                    crate::utils::colors::PRIMARY_ANSI,
+                )))?
+                .queue(Print(&format!("{}_", masked_input)))?
+                .queue(ResetColor)?;
 
             // Draw help
             let help_y = start_y + dialog_height - 1;
@@ -290,10 +341,13 @@ impl ApiKeySelector {
             } else {
                 start_x + 1
             };
-            stdout().queue(MoveTo(help_x, help_y))?
-                  .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?
-                  .queue(Print(help_text))?
-                  .queue(ResetColor)?;
+            stdout()
+                .queue(MoveTo(help_x, help_y))?
+                .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                    crate::utils::colors::AI_HIGHLIGHT_ANSI,
+                )))?
+                .queue(Print(help_text))?
+                .queue(ResetColor)?;
 
             stdout().flush()?;
 
@@ -362,12 +416,16 @@ impl ApiKeySelector {
         }
 
         // Draw borders using our AI highlight color (steel blue)
-        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::AI_HIGHLIGHT_ANSI)))?;
+        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+            crate::utils::colors::AI_HIGHLIGHT_ANSI,
+        )))?;
 
         // Draw vertical borders
         for i in 0..height {
             stdout().queue(MoveTo(x, y + i))?.queue(Print(vertical))?;
-            stdout().queue(MoveTo(x + width.saturating_sub(1), y + i))?.queue(Print(vertical))?;
+            stdout()
+                .queue(MoveTo(x + width.saturating_sub(1), y + i))?
+                .queue(Print(vertical))?;
         }
 
         // Top border
@@ -378,7 +436,9 @@ impl ApiKeySelector {
         stdout().queue(Print(top_right))?;
 
         // Bottom border
-        stdout().queue(MoveTo(x, y + height.saturating_sub(1)))?.queue(Print(bottom_left))?;
+        stdout()
+            .queue(MoveTo(x, y + height.saturating_sub(1)))?
+            .queue(Print(bottom_left))?;
         for _i in 1..width.saturating_sub(1) {
             stdout().queue(Print(horizontal))?;
         }
@@ -401,7 +461,9 @@ impl ApiKeySelector {
             // Truncate if too long - use character boundaries, not byte boundaries
             let safe_len = width.saturating_sub(7) as usize;
             // Use char_indices to get safe character boundaries
-            let char_end = text.char_indices().nth(safe_len)
+            let char_end = text
+                .char_indices()
+                .nth(safe_len)
                 .map(|(idx, _)| idx)
                 .unwrap_or(text.len());
             format!("▶ {}...", &text[..char_end])
@@ -409,10 +471,13 @@ impl ApiKeySelector {
             display_text
         };
 
-        stdout().queue(MoveTo(x + 2, y))?
-              .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(crate::utils::colors::PRIMARY_ANSI)))?
-              .queue(Print(safe_text))?
-              .queue(ResetColor)?;
+        stdout()
+            .queue(MoveTo(x + 2, y))?
+            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+                crate::utils::colors::PRIMARY_ANSI,
+            )))?
+            .queue(Print(safe_text))?
+            .queue(ResetColor)?;
 
         Ok(())
     }

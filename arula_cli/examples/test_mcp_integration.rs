@@ -2,9 +2,9 @@
 //!
 //! This example tests the MCP tool discovery and integration system
 
-use arula_cli::utils::config::{Config, McpServerConfig};
-use arula_cli::tools::mcp_dynamic::{initialize_dynamic_mcp_tools, get_discovered_mcp_servers};
+use arula_cli::tools::mcp_dynamic::{get_discovered_mcp_servers, initialize_dynamic_mcp_tools};
 use arula_cli::tools::tools::create_default_tool_registry;
+use arula_cli::utils::config::{Config, McpServerConfig};
 use std::collections::HashMap;
 
 #[tokio::main]
@@ -15,12 +15,15 @@ async fn main() -> anyhow::Result<()> {
     let mut mcp_servers = HashMap::new();
 
     // Add a test MCP server configuration
-    mcp_servers.insert("test_server".to_string(), McpServerConfig {
-        url: "http://localhost:3000".to_string(),
-        headers: HashMap::new(),
-        timeout: Some(30),
-        retries: Some(3),
-    });
+    mcp_servers.insert(
+        "test_server".to_string(),
+        McpServerConfig {
+            url: "http://localhost:3000".to_string(),
+            headers: HashMap::new(),
+            timeout: Some(30),
+            retries: Some(3),
+        },
+    );
 
     let config = Config {
         active_provider: "test".to_string(),
@@ -38,7 +41,10 @@ async fn main() -> anyhow::Result<()> {
             println!("✅ MCP discovery completed: {} servers processed", count);
         }
         Err(e) => {
-            println!("⚠️  MCP discovery failed (expected for test servers): {}", e);
+            println!(
+                "⚠️  MCP discovery failed (expected for test servers): {}",
+                e
+            );
         }
     }
 

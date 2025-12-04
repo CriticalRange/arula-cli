@@ -69,7 +69,10 @@ impl Tool for QuestionTool {
     }
 
     async fn execute(&self, params: Self::Params) -> Result<Self::Result, String> {
-        let QuestionParams { question, options: _ } = params;
+        let QuestionParams {
+            question,
+            options: _,
+        } = params;
 
         if question.trim().is_empty() {
             return Err("Question cannot be empty".to_string());
@@ -92,10 +95,13 @@ mod tests {
     #[tokio::test]
     async fn test_ask_question() {
         let tool = QuestionTool::new();
-        let result = tool.execute(QuestionParams {
-            question: "What is your preferred language?".to_string(),
-            options: Some(vec!["Rust".to_string(), "Python".to_string()]),
-        }).await.unwrap();
+        let result = tool
+            .execute(QuestionParams {
+                question: "What is your preferred language?".to_string(),
+                options: Some(vec!["Rust".to_string(), "Python".to_string()]),
+            })
+            .await
+            .unwrap();
 
         assert!(result.success);
         assert!(result.awaiting_response);
@@ -105,12 +111,13 @@ mod tests {
     #[tokio::test]
     async fn test_empty_question_error() {
         let tool = QuestionTool::new();
-        let result = tool.execute(QuestionParams {
-            question: "".to_string(),
-            options: None,
-        }).await;
+        let result = tool
+            .execute(QuestionParams {
+                question: "".to_string(),
+                options: None,
+            })
+            .await;
 
         assert!(result.is_err());
     }
 }
-

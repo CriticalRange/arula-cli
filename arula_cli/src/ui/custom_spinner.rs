@@ -23,18 +23,18 @@ use std::time::{Duration, Instant};
 /// Dots Orbit frames - atom-like orbital animation
 /// Using braille patterns to create rotating dots around center
 const STAR_FRAMES: [&str; 12] = [
-    "⢎⡰",  // 0: Dots at position 1
-    "⢎⡡",  // 1: Dots rotating
-    "⢎⡑",  // 2: Dots rotating
-    "⢎⠱",  // 3: Dots rotating
-    "⠎⡱",  // 4: Dots at position 2
-    "⢊⡱",  // 5: Dots rotating
-    "⢌⡱",  // 6: Dots rotating
-    "⢆⡱",  // 7: Dots rotating
-    "⢎⡰",  // 8: Dots at position 3
-    "⢎⡔",  // 9: Dots rotating
-    "⢎⡒",  // 10: Dots rotating
-    "⢎⡂",  // 11: Dots rotating (cycle complete)
+    "⢎⡰", // 0: Dots at position 1
+    "⢎⡡", // 1: Dots rotating
+    "⢎⡑", // 2: Dots rotating
+    "⢎⠱", // 3: Dots rotating
+    "⠎⡱", // 4: Dots at position 2
+    "⢊⡱", // 5: Dots rotating
+    "⢌⡱", // 6: Dots rotating
+    "⢆⡱", // 7: Dots rotating
+    "⢎⡰", // 8: Dots at position 3
+    "⢎⡔", // 9: Dots rotating
+    "⢎⡒", // 10: Dots rotating
+    "⢎⡂", // 11: Dots rotating (cycle complete)
 ];
 
 /// Transition effects for animations
@@ -51,7 +51,10 @@ enum Cmd {
     SetMessage(String),
     StopOk(String),
     StopErr(String),
-    TransitionTo { frames: Vec<String>, transition: Transition },
+    TransitionTo {
+        frames: Vec<String>,
+        transition: Transition,
+    },
     Shutdown,
 }
 
@@ -62,18 +65,19 @@ struct SpinnerState {
 
 /// Random direction: +1 or -1
 fn random_dir() -> i32 {
-    if fastrand::bool() { 1 } else { -1 }
+    if fastrand::bool() {
+        1
+    } else {
+        -1
+    }
 }
 
 /// Additional animation frame sets for transitions
-const ARC_FRAMES: [&str; 8] = [
-    "◜", "◠", "◝", "◞", "◡", "◟", "◜", "◠"
-];
+const ARC_FRAMES: [&str; 8] = ["◜", "◠", "◝", "◞", "◡", "◟", "◜", "◠"];
 
 const DOTS_ORBIT: [&str; 20] = [
-    "⢀⠠", "⡀⢀", "⠄⡀", "⢄⠄", "⡄⢄", "⠌⡄", "⢌⠌", "⡌⢌",
-    "⠎⡌", "⢎⠎", "⡎⢎", "⠱⡎", "⢱⠱", "⡱⢱", "⠹⡱", "⢹⠹",
-    "⠼⢹", "⢼⠼", "⡼⢼", "⠧⡼"
+    "⢀⠠", "⡀⢀", "⠄⡀", "⢄⠄", "⡄⢄", "⠌⡄", "⢌⠌", "⡌⢌", "⠎⡌", "⢎⠎", "⡎⢎", "⠱⡎", "⢱⠱", "⡱⢱", "⠹⡱", "⢹⠹",
+    "⠼⢹", "⢼⠼", "⡼⢼", "⠧⡼",
 ];
 
 /// ARULA Single-Character Star Pulse Spinner
@@ -141,7 +145,10 @@ impl CustomSpinner {
 
     /// Transition to a different animation style with smooth effect
     pub fn transition_to(&self, new_frames: Vec<String>, transition: Transition) {
-        let _ = self.tx.send(Cmd::TransitionTo { frames: new_frames, transition });
+        let _ = self.tx.send(Cmd::TransitionTo {
+            frames: new_frames,
+            transition,
+        });
     }
 
     /// Transition to arc animation
@@ -205,7 +212,6 @@ impl Drop for CustomSpinner {
         self.stop();
     }
 }
-
 
 /// Internal star pulse spinner loop
 fn run_star_spinner(
@@ -271,7 +277,13 @@ fn run_star_spinner(
 
             if transition_in_progress {
                 if let Some(ref transition) = transition_type {
-                    draw_star_with_transition(frame, &label, frame_count, transition.clone(), transition_frame_count)?;
+                    draw_star_with_transition(
+                        frame,
+                        &label,
+                        frame_count,
+                        transition.clone(),
+                        transition_frame_count,
+                    )?;
                 }
                 transition_frame_count += 1;
 
@@ -320,7 +332,11 @@ fn draw_star(star: &str, label: &str, frame_count: u64) -> io::Result<()> {
     };
 
     // Light gray for text
-    let text_color = Color::Rgb { r: 205, g: 209, b: 196 };
+    let text_color = Color::Rgb {
+        r: 205,
+        g: 209,
+        b: 196,
+    };
 
     // Use \r for better terminal compatibility
     execute!(stdout, cursor::SavePosition)?;
@@ -385,7 +401,11 @@ fn draw_star_with_transition(
     };
 
     let pulsed_golden = Color::Rgb { r, g, b };
-    let text_color = Color::Rgb { r: 205, g: 209, b: 196 };
+    let text_color = Color::Rgb {
+        r: 205,
+        g: 209,
+        b: 196,
+    };
 
     // Use \r for better terminal compatibility
     execute!(stdout, cursor::SavePosition)?;
@@ -433,7 +453,12 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
 }
 
 /// Draw final status message with optional transition effect
-fn draw_final_with_transition(label: &str, final_msg: &str, is_err: bool, _has_transition: bool) -> io::Result<()> {
+fn draw_final_with_transition(
+    label: &str,
+    final_msg: &str,
+    is_err: bool,
+    _has_transition: bool,
+) -> io::Result<()> {
     // For now, just use the regular final drawing
     // Could enhance this with transition animations if desired
     draw_final(label, final_msg, is_err)
@@ -444,12 +469,30 @@ fn draw_final(label: &str, final_msg: &str, is_err: bool) -> io::Result<()> {
     let mut stdout = io::stdout();
 
     let (status_symbol, status_color) = if is_err {
-        ("✖", Color::Rgb { r: 231, g: 76, b: 60 })
+        (
+            "✖",
+            Color::Rgb {
+                r: 231,
+                g: 76,
+                b: 60,
+            },
+        )
     } else {
-        ("✔", Color::Rgb { r: 46, g: 204, b: 113 })
+        (
+            "✔",
+            Color::Rgb {
+                r: 46,
+                g: 204,
+                b: 113,
+            },
+        )
     };
 
-    let text_color = Color::Rgb { r: 205, g: 209, b: 196 };
+    let text_color = Color::Rgb {
+        r: 205,
+        g: 209,
+        b: 196,
+    };
 
     // Clear line and draw final message - use \r for better terminal compatibility
     print!("\r\x1b[2K");
@@ -504,7 +547,11 @@ mod tests {
     fn test_all_frames_braille() {
         // Ensure all frames are valid braille patterns (2 chars combined into 1 visual)
         for frame in STAR_FRAMES.iter() {
-            assert!(frame.chars().count() == 2, "Frame '{}' should be 2 braille chars", frame);
+            assert!(
+                frame.chars().count() == 2,
+                "Frame '{}' should be 2 braille chars",
+                frame
+            );
         }
     }
 }

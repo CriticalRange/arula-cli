@@ -43,10 +43,10 @@ pub struct AiClientConfig {
 impl Default for AiClientConfig {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(300),           // 5 minutes for AI responses
-            connect_timeout: Duration::from_secs(30),    // 30s to establish connection
-            pool_idle_timeout: Duration::from_secs(90),  // Keep connections alive
-            pool_max_idle_per_host: 10,                  // Multiple parallel requests
+            timeout: Duration::from_secs(300), // 5 minutes for AI responses
+            connect_timeout: Duration::from_secs(30), // 30s to establish connection
+            pool_idle_timeout: Duration::from_secs(90), // Keep connections alive
+            pool_max_idle_per_host: 10,        // Multiple parallel requests
             http2_keep_alive_interval: Duration::from_secs(30),
             tcp_keepalive: Duration::from_secs(60),
         }
@@ -73,8 +73,7 @@ impl Default for AiClientConfig {
 /// ```
 pub fn get_ai_client() -> &'static Client {
     AI_CLIENT.get_or_init(|| {
-        create_ai_client(AiClientConfig::default())
-            .expect("Failed to create AI HTTP client")
+        create_ai_client(AiClientConfig::default()).expect("Failed to create AI HTTP client")
     })
 }
 
@@ -91,10 +90,8 @@ pub fn get_ai_client() -> &'static Client {
 /// let response = client.get(url).send().await?;
 /// ```
 pub fn get_general_client() -> &'static Client {
-    GENERAL_CLIENT.get_or_init(|| {
-        create_general_client()
-            .expect("Failed to create general HTTP client")
-    })
+    GENERAL_CLIENT
+        .get_or_init(|| create_general_client().expect("Failed to create general HTTP client"))
 }
 
 /// Create an AI API client with the specified configuration
@@ -206,4 +203,3 @@ mod tests {
         assert!(result.is_ok());
     }
 }
-

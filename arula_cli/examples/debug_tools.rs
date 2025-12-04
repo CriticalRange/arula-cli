@@ -1,12 +1,11 @@
 //! Debug tool listing to see what's actually registered
 
+use arula_cli::tools::mcp_dynamic;
 use arula_cli::tools::tools::create_default_tool_registry;
 use arula_cli::utils::config::Config;
-use arula_cli::tools::mcp_dynamic;
 
 #[tokio::main]
 async fn main() {
-
     let config = Config::default();
 
     // Create basic tool registry
@@ -20,7 +19,6 @@ async fn main() {
     println!("\n🔧 Initializing MCP tools...");
     match mcp_dynamic::initialize_dynamic_mcp_tools(&config).await {
         Ok(count) => {
-
             if let Err(e) = mcp_dynamic::register_dynamic_mcp_tools(&mut registry).await {
                 println!("❌ Failed to register MCP tools: {}", e);
             } else {
@@ -38,8 +36,16 @@ async fn main() {
 
     println!("\n🔧 OpenAI tools format:");
     for tool in registry.get_openai_tools() {
-        let name = tool.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("unknown");
-        let description = tool.get("function").and_then(|f| f.get("description")).and_then(|d| d.as_str()).unwrap_or("no description");
+        let name = tool
+            .get("function")
+            .and_then(|f| f.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("unknown");
+        let description = tool
+            .get("function")
+            .and_then(|f| f.get("description"))
+            .and_then(|d| d.as_str())
+            .unwrap_or("no description");
         println!("  - {}: {}", name, description);
     }
 }

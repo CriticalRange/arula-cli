@@ -4,9 +4,9 @@
 //! conversation history with AI, including messages, tool calls, and metadata.
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use chrono::{DateTime, Utc};
 
 /// Conversation format version for compatibility
 pub const CONVERSATION_VERSION: &str = "1.0";
@@ -185,11 +185,7 @@ impl Conversation {
         let random_suffix: String = (0..6)
             .map(|_| format!("{:x}", fastrand::u8(0..16)))
             .collect();
-        format!(
-            "conv_{}_{}",
-            now.format("%Y_%m_%d_%H%M%S"),
-            random_suffix
-        )
+        format!("conv_{}_{}", now.format("%Y_%m_%d_%H%M%S"), random_suffix)
     }
 
     /// Generate a unique message ID
@@ -207,8 +203,19 @@ impl Conversation {
         }
 
         // Common greetings that don't make good titles
-        let greetings = ["hi", "hello", "hey", "yo", "sup", "good morning", "good afternoon"];
-        if greetings.iter().any(|greeting| content.eq_ignore_ascii_case(greeting)) {
+        let greetings = [
+            "hi",
+            "hello",
+            "hey",
+            "yo",
+            "sup",
+            "good morning",
+            "good afternoon",
+        ];
+        if greetings
+            .iter()
+            .any(|greeting| content.eq_ignore_ascii_case(greeting))
+        {
             return None;
         }
 
@@ -226,7 +233,9 @@ impl Conversation {
         let mut title = words.join(" ");
 
         // Remove trailing punctuation that doesn't look good in titles
-        title = title.trim_end_matches(['.', ',', ';', ':', '!', '?']).to_string();
+        title = title
+            .trim_end_matches(['.', ',', ';', ':', '!', '?'])
+            .to_string();
 
         // Ensure title is reasonable length
         if title.len() > 60 {
@@ -240,13 +249,17 @@ impl Conversation {
 
         // Capitalize first letter
         if !title.is_empty() {
-            title = title.chars().enumerate().map(|(i, c)| {
-                if i == 0 {
-                    c.to_uppercase().collect::<String>()
-                } else {
-                    c.to_string()
-                }
-            }).collect();
+            title = title
+                .chars()
+                .enumerate()
+                .map(|(i, c)| {
+                    if i == 0 {
+                        c.to_uppercase().collect::<String>()
+                    } else {
+                        c.to_string()
+                    }
+                })
+                .collect();
         }
 
         Some(title)
@@ -287,7 +300,11 @@ impl Conversation {
     }
 
     /// Add an assistant message
-    pub fn add_assistant_message(&mut self, content: String, tool_calls: Option<Vec<ToolCall>>) -> String {
+    pub fn add_assistant_message(
+        &mut self,
+        content: String,
+        tool_calls: Option<Vec<ToolCall>>,
+    ) -> String {
         let msg_id = self.generate_message_id();
         let message = Message {
             id: msg_id.clone(),
@@ -299,7 +316,11 @@ impl Conversation {
             tool_name: None,
             metadata: MessageMetadata {
                 token_count: None,
-                finish_reason: if tool_calls.is_some() { Some("tool_use".to_string()) } else { Some("end_turn".to_string()) },
+                finish_reason: if tool_calls.is_some() {
+                    Some("tool_use".to_string())
+                } else {
+                    Some("end_turn".to_string())
+                },
                 execution_time_ms: None,
                 success: None,
             },
@@ -318,7 +339,14 @@ impl Conversation {
     }
 
     /// Add a tool result message
-    pub fn add_tool_result(&mut self, tool_call_id: String, tool_name: String, content: serde_json::Value, success: bool, execution_time_ms: u64) -> String {
+    pub fn add_tool_result(
+        &mut self,
+        tool_call_id: String,
+        tool_name: String,
+        content: serde_json::Value,
+        success: bool,
+        execution_time_ms: u64,
+    ) -> String {
         let msg_id = self.generate_message_id();
         let message = Message {
             id: msg_id.clone(),
