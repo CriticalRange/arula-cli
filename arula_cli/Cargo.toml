@@ -1,0 +1,78 @@
+[package]
+name = "arula-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["ARULA CLI Team"]
+description = "Autonomous AI CLI with native terminal chat interface"
+
+[dependencies]
+arula_core = { path = "../arula_core" }
+console = "0.16"
+crossterm = "0.29"
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+color-eyre = "0.6"
+thiserror = "2.0"
+clap = { version = "4.5", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
+tokio = { version = "1.48", features = ["full"] }
+serde_json = "1.0"
+futures = "0.3"
+tokio-util = "0.7"
+# Modern tool calling - implementing patterns from open-agent-sdk manually
+async-trait = "0.1"
+tokio-stream = "0.1"
+dirs = "6.0"
+duct = "1.1"
+memmap2 = "0.9"
+ignore = "0.4"
+globset = "0.4"
+num_cpus = "1.16"
+indicatif = "0.18"
+fastrand = "2.0"
+syntect = "5.0"
+termimad = "0.34"
+base64 = "0.22"
+rusty-tesseract = "1.1"
+lazy_static = "1.4"
+uuid = { version = "1.0", features = ["v4"] }
+# Temporary: for YAML to JSON migration (can be removed after migration)
+serde_yaml = "0.9"
+urlencoding = "2.1"
+diff = "0.1"
+regex = "1.10"
+# Visioneer dependencies - Real implementations (Windows only)
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Console", "Win32_System_ProcessStatus", "Win32_UI_Accessibility", "Win32_UI_TextServices"] }
+uiautomation = "0.24"
+screenshots = "0.8"
+
+# Cross-platform dependencies
+image = "0.25"
+
+[dev-dependencies]
+mockall = "0.14"
+tempfile = "3.8"
+wiremock = "0.6"
+assert_matches = "1.5"
+pretty_assertions = "1.4"
+serial_test = "3.0"
+criterion = "0.7"
+
+[[bench]]
+name = "config_benchmarks"
+harness = false
+
+# Temporarily disabled due to missing test_utils module
+# [[bench]]
+# name = "chat_benchmarks"
+# harness = false
+
+[[bench]]
+name = "tools_benchmarks"
+harness = false
+
+[[example]]
+name = "animation_demo"
+path = "examples/animation_demo.rs"

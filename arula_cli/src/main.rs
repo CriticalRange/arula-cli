@@ -23,20 +23,14 @@ struct Cli {
     debug: bool,
 }
 
-// Module declarations for the organized folder structure
-mod api;
-mod app;
-mod tools;
-mod ui;
-mod utils;
-
-// Re-export for easier imports
-use app::App;
-use ui::output::OutputHandler;
-use ui::response_display::ResponseDisplay;
-// InputHandler not needed for simple blocking input
-use ui::menus::main_menu::MainMenu;
-use utils::changelog;
+use arula_core::app::AiResponse;
+use arula_core::utils::changelog;
+use arula_core::App;
+use arula_core::api::agent::ToolResult;
+use arula_cli::ui::menus::main_menu::MainMenu;
+use arula_cli::ui::output::OutputHandler;
+use arula_cli::ui::response_display::ResponseDisplay;
+use arula_cli::ui::ThinkingWidget;
 
 fn graceful_exit() -> ! {
     std::process::exit(0);
@@ -112,7 +106,7 @@ async fn main() -> Result<()> {
     }
 
     // Initialize global logger
-    if let Err(e) = crate::utils::logger::init_global_logger() {
+    if let Err(e) = arula_core::utils::logger::init_global_logger() {
         eprintln!("⚠️ Failed to initialize logger: {}", e);
     }
 
@@ -211,8 +205,6 @@ async fn process_ai_request(
     output: &mut OutputHandler,
     response_display: &mut ResponseDisplay,
 ) -> Result<()> {
-    use crate::ui::ThinkingWidget;
-    
     match app.send_to_ai(input).await {
         Ok(_) => {
             let mut response_text = String::new();
@@ -230,25 +222,25 @@ async fn process_ai_request(
                 
                 if let Some(response) = app.check_ai_response_nonblocking() {
                     match response {
-                        app::AiResponse::AgentStreamStart => {
+                        AiResponse::AgentStreamStart => {
                             response_text.clear();
                             stream_started = true;
                             // Initialize the markdown streamer for new response
                             let _ = output.start_ai_stream();
                         }
-                        app::AiResponse::AgentThinkingStart => {
+                        AiResponse::AgentThinkingStart => {
                             // Start the thinking widget with pulsing animation
                             let _ = thinking_widget.start();
                         }
-                        app::AiResponse::AgentThinkingContent(content) => {
+                        AiResponse::AgentThinkingContent(content) => {
                             // Add content to thinking widget
                             let _ = thinking_widget.add_content(&content);
                         }
-                        app::AiResponse::AgentThinkingEnd => {
+                        AiResponse::AgentThinkingEnd => {
                             // Finish thinking and display the thought
                             let _ = thinking_widget.finish();
                         }
-                        app::AiResponse::AgentStreamText(chunk) => {
+                        AiResponse::AgentStreamText(chunk) => {
                             // If thinking is still active, finish it first
                             if thinking_widget.is_active() {
                                 let _ = thinking_widget.finish();
@@ -257,7 +249,7 @@ async fn process_ai_request(
                             // Use stream_chunk for proper markdown rendering
                             let _ = output.stream_chunk(&chunk);
                         }
-                        app::AiResponse::AgentToolCall { id, name, arguments } => {
+                        AiResponse::AgentToolCall { id, name, arguments } => {
                             // Finish thinking if active
                             if thinking_widget.is_active() {
                                 let _ = thinking_widget.finish();
@@ -270,24 +262,24 @@ async fn process_ai_request(
                             pending_tools.insert(id.clone(), name.clone());
                             let _ = response_display.display_tool_call_start(&id, &name, &arguments);
                         }
-                        app::AiResponse::AgentToolResult { tool_call_id, success, result } => {
+                        AiResponse::AgentToolResult { tool_call_id, success, result } => {
                             // Get the actual tool name from our tracking map
                             let tool_name = pending_tools.remove(&tool_call_id).unwrap_or_else(|| "Tool".to_string());
-                            let tool_result = crate::api::agent::ToolResult {
+                            let tool_result = ToolResult {
                                 success,
                                 data: result.clone(),
                                 error: None,
                             };
                             let _ = response_display.display_tool_result(&tool_call_id, &tool_name, &tool_result);
                         }
-                        app::AiResponse::AgentReasoningContent(content) => {
+                        AiResponse::AgentReasoningContent(content) => {
                             // Legacy reasoning content - show in thinking widget
                             if !thinking_widget.is_active() {
                                 let _ = thinking_widget.start();
                             }
                             let _ = thinking_widget.add_content(&content);
                         }
-                        app::AiResponse::AgentStreamEnd => {
+                        AiResponse::AgentStreamEnd => {
                             // Finish thinking if still active
                             if thinking_widget.is_active() {
                                 let _ = thinking_widget.finish();
