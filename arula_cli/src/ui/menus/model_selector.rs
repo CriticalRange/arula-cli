@@ -2,6 +2,7 @@
 //! Extracted from original overlay_menu.rs for modular architecture
 
 use crate::app::App;
+use crate::ui::menus::common::draw_modern_box;
 use crate::ui::menus::dialogs::Dialogs;
 use crate::ui::output::OutputHandler;
 use anyhow::Result;
@@ -491,53 +492,7 @@ impl ModelSelector {
         Ok((vec!["Fetching models...".to_string()], true))
     }
 
-    /// Draw modern box (copied from original overlay_menu.rs)
-    fn draw_modern_box(&self, x: u16, y: u16, width: u16, height: u16, _title: &str) -> Result<()> {
-        // Modern box with rounded corners using our color theme
-        let top_left = "╭";
-        let top_right = "╮";
-        let bottom_left = "╰";
-        let bottom_right = "╯";
-        let horizontal = "─";
-        let vertical = "│";
-
-        // Validate dimensions to prevent overflow
-        if width < 2 || height < 2 {
-            return Ok(());
-        }
-
-        // Draw borders using our AI highlight color (steel blue)
-        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
-            crate::utils::colors::AI_HIGHLIGHT_ANSI,
-        )))?;
-
-        // Draw vertical borders
-        for i in 0..height {
-            stdout().queue(MoveTo(x, y + i))?.queue(Print(vertical))?;
-            stdout()
-                .queue(MoveTo(x + width.saturating_sub(1), y + i))?
-                .queue(Print(vertical))?;
-        }
-
-        // Top border
-        stdout().queue(MoveTo(x, y))?.queue(Print(top_left))?;
-        for _i in 1..width.saturating_sub(1) {
-            stdout().queue(Print(horizontal))?;
-        }
-        stdout().queue(Print(top_right))?;
-
-        // Bottom border
-        stdout()
-            .queue(MoveTo(x, y + height.saturating_sub(1)))?
-            .queue(Print(bottom_left))?;
-        for _i in 1..width.saturating_sub(1) {
-            stdout().queue(Print(horizontal))?;
-        }
-        stdout().queue(Print(bottom_right))?;
-
-        stdout().queue(ResetColor)?;
-        Ok(())
-    }
+    // NOTE: draw_modern_box is now in common.rs
 
     /// Render model selector with search functionality
     fn render_model_selector_with_search(
@@ -590,24 +545,13 @@ impl ModelSelector {
         };
         let viewport_end = std::cmp::min(viewport_start + actual_visible_models, total_models);
 
-        // Only draw box and title on full render
+        // Only draw box on full render
         if !partial_update {
-            // Display title with search hint
-            let title = if search_query.is_empty() {
-                format!("Select AI Model ({} models)", total_models)
-            } else {
-                format!(
-                    "Select AI Model ({} of {} filtered)",
-                    models.len(),
-                    total_models
-                )
-            };
-            self.draw_modern_box(
+            draw_modern_box(
                 start_x,
                 start_y,
                 menu_width,
                 final_menu_height as u16,
-                &title,
             )?;
         }
 

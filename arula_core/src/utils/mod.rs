@@ -9,11 +9,13 @@ pub mod config;
 pub mod conversation;
 pub mod debug;
 pub mod error;
+pub mod error_utils;
 pub mod git_state;
 pub mod logger;
+pub mod time;
 pub mod tool_call;
-pub mod tool_progress;
 
 // Available exports via submodules:
 // debug::{is_debug_enabled, debug_print, DebugTimer}
 // error::{ArulaError, ArulaResult, ApiError, ToolError, ResultExt, OptionExt}
+// error_utils::{ErrorContext, api_error, stream_error, network_error}

@@ -1,8 +1,8 @@
 //! Exit confirmation menu for ARULA CLI
 
-use crate::ui::menus::common::MenuUtils;
+use crate::ui::menus::common::{draw_modern_box, draw_selected_item, MenuUtils};
 use crate::ui::output::OutputHandler;
-use crate::utils::colors::{ColorTheme, AI_HIGHLIGHT_ANSI, MISC_ANSI, PRIMARY_ANSI};
+use crate::utils::colors::{ColorTheme, AI_HIGHLIGHT_ANSI, MISC_ANSI};
 use anyhow::Result;
 use crossterm::{
     cursor::MoveTo,
@@ -114,8 +114,8 @@ impl ExitMenu {
         let start_x = (cols - menu_width) / 2;
         let start_y = (rows - menu_height) / 2;
 
-        // Draw modern box
-        self.draw_modern_box(start_x, start_y, menu_width, menu_height)?;
+        // Draw modern box using shared function
+        draw_modern_box(start_x, start_y, menu_width, menu_height)?;
 
         // Draw title
         let title = " Exit Confirmation ";
@@ -129,7 +129,7 @@ impl ExitMenu {
             let y = start_y + 3 + i as u16;
 
             if i == selected_index {
-                self.draw_selected_item(start_x + 1, y, menu_width - 2, option)?;
+                draw_selected_item(start_x, y, menu_width, option)?;
             } else {
                 // Unselected item
                 stdout()
@@ -157,82 +157,7 @@ impl ExitMenu {
         Ok(())
     }
 
-    /// Draw modern box with rounded corners
-    fn draw_modern_box(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
-        let top_left = "╭";
-        let top_right = "╮";
-        let bottom_left = "╰";
-        let bottom_right = "╯";
-        let horizontal = "─";
-        let vertical = "│";
-
-        if width < 2 || height < 2 {
-            return Ok(());
-        }
-
-        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
-            AI_HIGHLIGHT_ANSI,
-        )))?;
-
-        // Draw vertical borders
-        for i in 0..height {
-            stdout().queue(MoveTo(x, y + i))?.queue(Print(vertical))?;
-            stdout()
-                .queue(MoveTo(x + width.saturating_sub(1), y + i))?
-                .queue(Print(vertical))?;
-        }
-
-        // Top border
-        stdout().queue(MoveTo(x, y))?.queue(Print(top_left))?;
-        for _ in 1..width.saturating_sub(1) {
-            stdout().queue(Print(horizontal))?;
-        }
-        stdout().queue(Print(top_right))?;
-
-        // Bottom border
-        stdout()
-            .queue(MoveTo(x, y + height.saturating_sub(1)))?
-            .queue(Print(bottom_left))?;
-        for _ in 1..width.saturating_sub(1) {
-            stdout().queue(Print(horizontal))?;
-        }
-        stdout().queue(Print(bottom_right))?;
-
-        stdout().queue(ResetColor)?;
-        Ok(())
-    }
-
-    /// Draw selected item without background (matches other menus)
-    fn draw_selected_item(&self, x: u16, y: u16, width: u16, text: &str) -> Result<()> {
-        if width < 3 {
-            return Ok(());
-        }
-
-        // Draw text with arrow and primary color (NO background)
-        let display_text = format!("▶ {}", text);
-        let safe_text = if display_text.len() > width.saturating_sub(4) as usize {
-            // Truncate if too long
-            let safe_len = width.saturating_sub(7) as usize;
-            let char_end = text
-                .char_indices()
-                .nth(safe_len)
-                .map(|(idx, _)| idx)
-                .unwrap_or(text.len());
-            format!("▶ {}...", &text[..char_end])
-        } else {
-            display_text
-        };
-
-        stdout()
-            .execute(MoveTo(x + 2, y))?
-            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
-                PRIMARY_ANSI,
-            )))?
-            .queue(Print(safe_text))?
-            .queue(ResetColor)?;
-
-        Ok(())
-    }
+    // NOTE: draw_modern_box and draw_selected_item are now in common.rs
 }
 
 impl Default for ExitMenu {

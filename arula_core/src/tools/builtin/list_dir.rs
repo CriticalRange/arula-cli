@@ -31,6 +31,9 @@ pub struct DirectoryEntry {
     pub size: Option<u64>,
 }
 
+/// Maximum number of entries to return (to prevent context overflow)
+const MAX_ENTRIES: usize = 500;
+
 /// Result from directory listing
 #[derive(Debug, Serialize)]
 pub struct ListDirResult {
@@ -40,6 +43,10 @@ pub struct ListDirResult {
     pub path: String,
     /// Whether the operation was successful
     pub success: bool,
+    /// Whether the entry limit was reached during scanning
+    pub limit_reached: bool,
+    /// Total number of entries found (may be larger than entries.len() if limit was reached)
+    pub total_found: usize,
 }
 
 /// Directory listing tool with recursive support
@@ -68,7 +75,8 @@ impl ListDirectoryTool {
         show_hidden: bool,
         recursive: bool,
         entries: &mut Vec<DirectoryEntry>,
-    ) -> Result<(), String> {
+        total_count: &mut usize,
+    ) -> Result<bool, String> {
         use std::fs;
 
         let dir_entries = fs::read_dir(path)
@@ -103,21 +111,37 @@ impl ListDirectoryTool {
 
             let entry_path = entry.path().to_string_lossy().to_string();
 
+            *total_count += 1;
+            
+            // Check if we've hit the limit
+            if entries.len() >= MAX_ENTRIES {
+                // Stop adding entries but continue counting
+                if recursive && metadata.file_type().is_dir() {
+                    let dir_path = entry.path().to_string_lossy().to_string();
+                    if self.scan_directory(&dir_path, show_hidden, true, entries, total_count)? {
+                        return Ok(true); // Limit reached in recursive call
+                    }
+                }
+                continue;
+            }
+
             entries.push(DirectoryEntry {
                 name: name.clone(),
-                path: entry_path,
+                path: entry_path.clone(),
                 file_type,
                 size,
             });
 
-            // Recursively scan subdirectories if requested
+            // Recursively scan subdirectories if requested  
             if recursive && metadata.file_type().is_dir() {
                 let dir_path = entry.path().to_string_lossy().to_string();
-                self.scan_directory(&dir_path, show_hidden, true, entries)?;
+                if self.scan_directory(&dir_path, show_hidden, true, entries, total_count)? {
+                    return Ok(true); // Limit reached in recursive call
+                }
             }
         }
 
-        Ok(())
+        Ok(entries.len() >= MAX_ENTRIES)
     }
 }
 
@@ -169,12 +193,15 @@ impl Tool for ListDirectoryTool {
         let recursive = recursive.unwrap_or(false);
 
         let mut entries = Vec::new();
-        self.scan_directory(&path, show_hidden, recursive, &mut entries)?;
+        let mut total_count = 0;
+        let limit_reached = self.scan_directory(&path, show_hidden, recursive, &mut entries, &mut total_count)?;
 
         Ok(ListDirResult {
             entries,
             path,
             success: true,
+            limit_reached,
+            total_found: total_count,
         })
     }
 }

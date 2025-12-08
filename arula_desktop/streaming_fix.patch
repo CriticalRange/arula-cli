@@ -1,0 +1,65 @@
+--- a/src/styles/container.rs
++++ b/src/styles/container.rs
+@@ -22,11 +22,11 @@
+ pub fn ai_bubble_style(palette: PaletteColors, is_streaming: bool) -> impl Fn(&Theme) -> container::Style + Clone {
+     move |_theme: &Theme| {
+-        let opacity = if is_streaming { 0.6 } else { 1.0 };
+-        let text_opacity = if is_streaming { 0.7 } else { 1.0 };
++        // Remove opacity handling here - let message_bubble handle it consistently
++        let opacity = 1.0;
++        let text_opacity = 1.0;
+ 
+         container::Style {
+-            // Apply opacity to background color
+             background: Some(Background::Color(Color { 
+                 a: 0.4 * opacity, 
+                 ..palette.surface_raised 
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -664,14 +664,14 @@
+         let fade_duration = 0.5;
+         let fade_opacity = (elapsed / fade_duration).min(1.0);
+ 
+-        // For streaming messages, only apply a subtle opacity change
+-        // and keep it consistent to avoid flickering
+-        let target_bg_opacity = if is_streaming { 0.9 } else { 1.0 };
+-        let target_text_opacity = if is_streaming { 0.95 } else { 1.0 };
++        // Simplified opacity for streaming - just one consistent factor
++        let streaming_opacity = if is_streaming { 0.85 } else { 1.0 };
+         // Tool messages are slightly transparent/different
+         let tool_opacity_mult = if is_tool { 0.8 } else { 1.0 };
+ 
+-        // Apply a smooth transition for streaming state
+-        // Reduce the opacity difference to make the transition less jarring
+-        let streaming_factor = if is_streaming { 0.95 } else { 1.0 };
+-        
+-        // Combine fade-in with target opacity
+-        let final_bg_multiplier = target_bg_opacity * fade_opacity * tool_opacity_mult * streaming_factor;
+-        let final_text_multiplier = target_text_opacity * fade_opacity * tool_opacity_mult * streaming_factor;
++        // Simple opacity calculation - no more complex chains
++        let final_bg_multiplier = fade_opacity * tool_opacity_mult * streaming_opacity;
++        let final_text_multiplier = fade_opacity * tool_opacity_mult * streaming_opacity;
+@@ -405,10 +405,16 @@
+                     let msg_idx = session.messages.len() - 1;
+                     let key = format!("{}:{}", idx, msg_idx);
+                     
+-                    if !self.message_editors.contains_key(&key) {
+-                        self.message_editors.insert(key, text_editor::Content::with_text(&session.messages[msg_idx].content));
+-                    } else if let Some(editor_content) = self.message_editors.get_mut(&key) {
+-                        // Update existing content more smoothly
+-                        let text = &session.messages[msg_idx].content;
+-                        *editor_content = text_editor::Content::with_text(text);
+-                    }
++                    // Only update text editor content if it doesn't exist or if this is a final token
++                    // This prevents flickering during streaming
++                    if !self.message_editors.contains_key(&key) {
++                        self.message_editors.insert(key, text_editor::Content::with_text(&session.messages[msg_idx].content));
++                    } else if is_final {
++                        // Only update on final token to avoid constant recreation
++                        if let Some(editor_content) = self.message_editors.get_mut(&key) {
++                            let text = &session.messages[msg_idx].content;
++                            *editor_content = text_editor::Content::with_text(text);
++                        }
++                    }
++                    // During streaming, the existing editor content will display the accumulated text
++                    // without constant recreation, preventing visual glitches

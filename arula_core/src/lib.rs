@@ -4,6 +4,7 @@
 pub mod api;
 pub mod app;
 pub mod prelude;
+pub mod session_manager;
 pub mod tools;
 pub mod utils;
 
@@ -15,6 +16,7 @@ pub use api::agent::{ContentBlock, ToolRegistry};
 pub use api::api::Usage;
 pub use app::App;
 pub use prelude::*;
+pub use session_manager::{SessionManager, UiEvent};
 pub use tools::*;
 pub use utils::*;
 
@@ -38,6 +40,11 @@ pub enum StreamEvent {
     ToolResult {
         tool_call_id: String,
         result: api::agent::ToolResult,
+    },
+    BashOutputLine {
+        tool_call_id: String,
+        line: String,
+        is_stderr: bool,
     },
     Finished,
     Error(String),
@@ -128,7 +135,14 @@ impl Backend for AgentBackend {
         let stream = async_stream::stream! {
             use futures::StreamExt;
             yield StreamEvent::Start { model: model.clone() };
-            match client.query_streaming(&prompt, history).await {
+
+            let result = if client.is_streaming_enabled() {
+                client.query_streaming(&prompt, history).await
+            } else {
+                client.query_non_streaming(&prompt, history).await
+            };
+
+            match result {
                 Ok(mut s) => {
                     while let Some(block) = s.next().await {
                         let ev = match block {
@@ -136,6 +150,7 @@ impl Backend for AgentBackend {
                             ContentBlock::Reasoning { reasoning } => StreamEvent::Reasoning { text: reasoning },
                             ContentBlock::ToolCall { id, name, arguments } => StreamEvent::ToolCall { id, name, arguments },
                             ContentBlock::ToolResult { tool_call_id, result } => StreamEvent::ToolResult { tool_call_id, result },
+                            ContentBlock::BashOutputLine { tool_call_id, line, is_stderr } => StreamEvent::BashOutputLine { tool_call_id, line, is_stderr },
                             ContentBlock::Error { error } => StreamEvent::Error(error),
                         };
                         yield ev;

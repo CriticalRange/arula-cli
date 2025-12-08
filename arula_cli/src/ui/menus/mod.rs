@@ -16,3 +16,6 @@ pub mod provider_menu;
 // Re-export commonly used types for internal convenience
 pub use config_menu::ConfigMenu;
 pub use conversation_menu::ConversationMenu;
+
+// Re-export shared drawing functions for use by all menu modules
+pub use common::{draw_menu_item, draw_modern_box, draw_selected_item, draw_unselected_item};

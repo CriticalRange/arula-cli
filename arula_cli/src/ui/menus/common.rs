@@ -1,14 +1,23 @@
 //! Common utilities and types for the ARULA menu system
+//!
+//! This module provides shared utilities for all ARULA CLI menus including:
+//! - Common result/action types
+//! - Terminal setup/restore helpers
+//! - Shared drawing functions (box, item rendering)
+//! - Menu state management
 
 use anyhow::Result;
 use crossterm::{
-    cursor::{Hide, Show},
+    cursor::{Hide, MoveTo, Show},
     event::{self, Event, KeyEvent, KeyEventKind},
+    style::{Print, ResetColor, SetForegroundColor},
     terminal::{self, size},
-    ExecutableCommand,
+    ExecutableCommand, QueueableCommand,
 };
 use std::io::{stdout, Write};
 use std::time::Duration;
+
+use crate::utils::colors::{AI_HIGHLIGHT_ANSI, MISC_ANSI, PRIMARY_ANSI};
 
 /// Common result types for menu operations
 #[derive(Debug, Clone, PartialEq)]
@@ -204,4 +213,160 @@ impl MenuState {
         self.selected_index = 0;
         self.is_in_submenu = false;
     }
+}
+
+// =============================================================================
+// Shared Drawing Functions
+// =============================================================================
+// These were previously duplicated across all menu modules.
+// Now consolidated here for maintainability.
+
+/// Draw a modern box with rounded corners using the AI highlight color.
+///
+/// This is the shared implementation previously duplicated in:
+/// - main_menu.rs
+/// - config_menu.rs
+/// - provider_menu.rs
+/// - model_selector.rs
+/// - api_key_selector.rs
+/// - exit_menu.rs
+pub fn draw_modern_box(x: u16, y: u16, width: u16, height: u16) -> Result<()> {
+    // Modern box with rounded corners using our color theme
+    let top_left = "╭";
+    let top_right = "╮";
+    let bottom_left = "╰";
+    let bottom_right = "╯";
+    let horizontal = "─";
+    let vertical = "│";
+
+    // Validate dimensions to prevent overflow
+    if width < 2 || height < 2 {
+        return Ok(());
+    }
+
+    // Draw borders using our AI highlight color (steel blue)
+    stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+        AI_HIGHLIGHT_ANSI,
+    )))?;
+
+    // Draw vertical borders
+    for i in 0..height {
+        stdout().queue(MoveTo(x, y + i))?.queue(Print(vertical))?;
+        stdout()
+            .queue(MoveTo(x + width.saturating_sub(1), y + i))?
+            .queue(Print(vertical))?;
+    }
+
+    // Top border
+    stdout().queue(MoveTo(x, y))?.queue(Print(top_left))?;
+    for _ in 1..width.saturating_sub(1) {
+        stdout().queue(Print(horizontal))?;
+    }
+    stdout().queue(Print(top_right))?;
+
+    // Bottom border
+    stdout()
+        .queue(MoveTo(x, y + height.saturating_sub(1)))?
+        .queue(Print(bottom_left))?;
+    for _ in 1..width.saturating_sub(1) {
+        stdout().queue(Print(horizontal))?;
+    }
+    stdout().queue(Print(bottom_right))?;
+
+    stdout().queue(ResetColor)?;
+    Ok(())
+}
+
+/// Draw a selected menu item with the selection indicator and primary color.
+///
+/// This is the shared implementation previously duplicated in:
+/// - main_menu.rs
+/// - config_menu.rs
+/// - provider_menu.rs
+/// - model_selector.rs
+/// - api_key_selector.rs
+/// - exit_menu.rs
+pub fn draw_selected_item(x: u16, y: u16, width: u16, text: &str) -> Result<()> {
+    // Validate dimensions
+    if width < 3 {
+        return Ok(());
+    }
+
+    // Draw text with proper spacing and primary color (NO background)
+    let display_text = format!("▶ {}", text);
+    let safe_text = if display_text.len() > width.saturating_sub(4) as usize {
+        // Truncate if too long - use character boundaries, not byte boundaries
+        let safe_len = width.saturating_sub(7) as usize;
+        // Use char_indices to get safe character boundaries
+        let char_end = text
+            .char_indices()
+            .nth(safe_len)
+            .map(|(idx, _)| idx)
+            .unwrap_or(text.len());
+        format!("▶ {}...", &text[..char_end])
+    } else {
+        display_text
+    };
+
+    stdout()
+        .queue(MoveTo(x + 2, y))?
+        .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+            PRIMARY_ANSI,
+        )))?
+        .queue(Print(safe_text))?
+        .queue(ResetColor)?;
+
+    Ok(())
+}
+
+/// Draw an unselected menu item with the muted color.
+pub fn draw_unselected_item(x: u16, y: u16, width: u16, text: &str) -> Result<()> {
+    // Validate dimensions
+    if width < 3 {
+        return Ok(());
+    }
+
+    // Draw text with proper spacing and MISC color
+    let display_text = format!("  {}", text);
+    let safe_text = if display_text.len() > width.saturating_sub(4) as usize {
+        let safe_len = width.saturating_sub(7) as usize;
+        let char_end = text
+            .char_indices()
+            .nth(safe_len)
+            .map(|(idx, _)| idx)
+            .unwrap_or(text.len());
+        format!("  {}...", &text[..char_end])
+    } else {
+        display_text
+    };
+
+    stdout()
+        .queue(MoveTo(x + 2, y))?
+        .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
+            MISC_ANSI,
+        )))?
+        .queue(Print(safe_text))?
+        .queue(ResetColor)?;
+
+    Ok(())
+}
+
+/// Draw a menu item (selected or not) - convenience wrapper
+pub fn draw_menu_item(x: u16, y: u16, width: u16, text: &str, selected: bool) -> Result<()> {
+    if selected {
+        draw_selected_item(x, y, width, text)
+    } else {
+        draw_unselected_item(x, y, width, text)
+    }
+}
+
+/// Clear a rectangular area of the terminal
+pub fn clear_menu_area(x: u16, y: u16, width: u16, height: u16) -> Result<()> {
+    let blank = " ".repeat(width as usize);
+    for i in 0..height {
+        stdout()
+            .queue(MoveTo(x, y + i))?
+            .queue(Print(&blank))?;
+    }
+    Ok(())
 }

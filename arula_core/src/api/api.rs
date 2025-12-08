@@ -3,7 +3,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::mpsc;
+
 
 // Z.AI specific error types
 #[derive(Debug, thiserror::Error)]
@@ -147,14 +147,14 @@ pub struct ToolCallFunction {
     pub arguments: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Usage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ApiResponse {
     pub response: String,
     pub success: bool,
@@ -208,7 +208,7 @@ pub enum AIProvider {
 pub struct ApiClient {
     client: Client,
     pub provider: AIProvider,
-    endpoint: String,
+    pub endpoint: String,
     api_key: String,
     model: String,
 }
@@ -233,14 +233,19 @@ impl ApiClient {
 
         // Normalize endpoint URL - remove trailing slashes and common API paths
         // This prevents double paths like /api/chat/api/chat
-        let normalized_endpoint = endpoint
-            .trim_end_matches('/')
-            .trim_end_matches("/api/chat")
-            .trim_end_matches("/api/generate")
-            .trim_end_matches("/v1/chat/completions")
-            .trim_end_matches("/v1")
-            .trim_end_matches("/chat/completions")
-            .to_string();
+        let normalized_endpoint = if endpoint.contains("api.z.ai") && endpoint.contains("/v4") {
+            // Special handling for Z.AI v4 endpoints - don't trim the /v4 part
+            endpoint.trim_end_matches('/').to_string()
+        } else {
+            endpoint
+                .trim_end_matches('/')
+                .trim_end_matches("/api/chat")
+                .trim_end_matches("/api/generate")
+                .trim_end_matches("/v1/chat/completions")
+                .trim_end_matches("/v1")
+                .trim_end_matches("/chat/completions")
+                .to_string()
+        };
 
         if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
             debug_print(&format!(
@@ -274,6 +279,86 @@ impl ApiClient {
             api_key,
             model,
         }
+    }
+
+    /// Get the current model name
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// Send a raw streaming request and return the HTTP response
+    /// Used by the unified stream.rs module
+    pub async fn make_streaming_request(
+        &self,
+        request_body: serde_json::Value,
+    ) -> Result<reqwest::Response> {
+        // Align streaming endpoints with provider-specific REST paths
+        let request_url = match self.provider {
+            AIProvider::Ollama => format!("{}/api/chat", self.endpoint),
+            AIProvider::Claude => format!("{}/v1/messages", self.endpoint),
+            AIProvider::OpenAI | AIProvider::OpenRouter => {
+                format!("{}/chat/completions", self.endpoint)
+            }
+            AIProvider::ZAiCoding => {
+                // Z.AI uses the endpoint with /chat/completions appended
+                if self.endpoint.ends_with("/v4") {
+                    format!("{}/chat/completions", self.endpoint)
+                } else {
+                    self.endpoint.clone()
+                }
+            }
+            AIProvider::Custom => self.endpoint.clone(),
+        };
+
+        let mut request_builder = self
+            .client
+            .post(&request_url)
+            .header("Content-Type", "application/json");
+
+        match self.provider {
+            AIProvider::Claude => {
+                request_builder = request_builder
+                    .header("x-api-key", &self.api_key)
+                    .header("anthropic-version", "2023-06-01");
+            }
+            AIProvider::OpenAI | AIProvider::ZAiCoding | AIProvider::OpenRouter => {
+                request_builder = request_builder
+                    .header("Authorization", format!("Bearer {}", self.api_key));
+            }
+            // Ollama usually doesn't need auth, but Custom might
+            AIProvider::Custom => {
+                if !self.api_key.is_empty() {
+                    request_builder = request_builder
+                        .header("Authorization", format!("Bearer {}", self.api_key));
+                }
+            }
+            _ => {}
+        }
+
+        // Log the request if debug mode is enabled
+        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+            let body_str = serde_json::to_string_pretty(&request_body).unwrap_or_default();
+            println!("🔧 DEBUG: Streaming request to {}: {}", request_url, body_str);
+        }
+
+        let response = request_builder
+            .json(&request_body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            
+            // Check for specific Z.AI errors
+            if self.provider == AIProvider::ZAiCoding {
+                return Err(ZAIApiError::from_status_code(status.as_u16(), &text).into());
+            }
+            
+            return Err(anyhow!("API Error {}: {}", status, text));
+        }
+
+        Ok(response)
     }
 
     pub async fn send_message(
@@ -310,234 +395,421 @@ impl ApiClient {
             tool_name: None,
         });
 
-        match self.provider {
-            AIProvider::OpenAI => self.send_openai_request(messages).await,
-            AIProvider::Claude => self.send_claude_request(messages).await,
-            AIProvider::Ollama => self.send_ollama_request(messages).await,
-            AIProvider::ZAiCoding => self.send_zai_request(messages).await,
-            AIProvider::OpenRouter => self.send_openrouter_request(messages).await,
-            AIProvider::Custom => self.send_custom_request(messages).await,
-        }
+        // Use the unified send_request method without tools
+        self.send_request(messages, None).await
     }
 
-    pub async fn send_message_stream(
-        &self,
-        message: &str,
-        conversation_history: Option<Vec<ChatMessage>>,
-    ) -> Result<mpsc::UnboundedReceiver<StreamingResponse>> {
-        let mut messages = Vec::new();
-
-        // Add system message
-        messages.push(ChatMessage {
-            role: "system".to_string(),
-            content: Some("You are ARULA, an Autonomous AI Interface assistant. You help users with coding, shell commands, and general software development tasks. Be concise, helpful, and provide practical solutions.".to_string()),
-            tool_calls: None,
-            tool_call_id: None,
-            tool_name: None,
-        });
-
-        // Add conversation history if provided
-        if let Some(history) = conversation_history {
-            for msg in history {
-                if msg.role != "system" {
-                    messages.push(msg);
-                }
-            }
-        }
-
-        // Add current user message
-        messages.push(ChatMessage {
-            role: "user".to_string(),
-            content: Some(message.to_string()),
-            tool_calls: None,
-            tool_call_id: None,
-            tool_name: None,
-        });
-
-        let (tx, rx) = mpsc::unbounded_channel();
-
-        match self.provider {
-            AIProvider::OpenAI => {
-                debug_print("DEBUG: Using OpenAI provider in send_message_stream");
-                // Use regular OpenAI request for now to support tool calls
-                let client = self.clone();
-                tokio::spawn(async move {
-                    match client.send_openai_request(messages).await {
-                        Ok(response) => {
-                            debug_print(&format!(
-                                "DEBUG: OpenAI response with tool_calls: {:?}",
-                                response.tool_calls.is_some()
-                            ));
-                            let _ = tx.send(StreamingResponse::Start);
-                            let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
-                            let _ = tx.send(StreamingResponse::End(response));
-                        }
-                        Err(e) => {
-                            debug_print(&format!("DEBUG: OpenAI request error: {}", e));
-                            let _ = tx.send(StreamingResponse::Error(format!(
-                                "OpenAI request error: {}",
-                                e
-                            )));
-                        }
-                    }
-                });
-            }
-            AIProvider::OpenRouter => {
-                debug_print("DEBUG: Using OpenRouter provider in send_message_stream");
-                // Use OpenAI-compatible format for OpenRouter
-                let client = self.clone();
-                tokio::spawn(async move {
-                    match client.send_openai_request(messages).await {
-                        Ok(response) => {
-                            debug_print(&format!(
-                                "DEBUG: OpenRouter response with tool_calls: {:?}",
-                                response.tool_calls.is_some()
-                            ));
-                            let _ = tx.send(StreamingResponse::Start);
-                            let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
-                            let _ = tx.send(StreamingResponse::End(response));
-                        }
-                        Err(e) => {
-                            debug_print(&format!("DEBUG: OpenRouter request error: {}", e));
-                            let _ = tx.send(StreamingResponse::Error(format!(
-                                "OpenRouter request error: {}",
-                                e
-                            )));
-                        }
-                    }
-                });
-            }
-            _ => {
-                // Fallback to non-streaming for other providers
-                let client = self.clone();
-                tokio::spawn(async move {
-                    // Use the provider-specific methods directly with the complete message array
-                    let result = match client.provider {
-                        AIProvider::Claude => client.send_claude_request(messages).await,
-                        AIProvider::Ollama => client.send_ollama_request(messages).await,
-                        AIProvider::ZAiCoding => client.send_zai_request(messages).await,
-                        AIProvider::Custom => client.send_custom_request(messages).await,
-                        AIProvider::OpenRouter => client.send_openai_request(messages).await, // OpenRouter uses OpenAI-compatible format
-                        _ => Err(anyhow::anyhow!("Unsupported provider")),
-                    };
-
-                    match result {
-                        Ok(response) => {
-                            let _ = tx.send(StreamingResponse::Start);
-
-                            // Check if this response contains tool calls
-                            if let Some(_tool_calls) = &response.tool_calls {
-                                // Return tool calls for the app layer to handle
-                                // Don't execute here - let the app manage the conversation flow
-                                let _ = tx.send(StreamingResponse::Chunk(
-                                    "Let me help you with that...".to_string(),
-                                ));
-                                let _ = tx.send(StreamingResponse::End(response));
-                            } else {
-                                // Regular text response
-                                let _ =
-                                    tx.send(StreamingResponse::Chunk(response.response.clone()));
-                                let _ = tx.send(StreamingResponse::End(response));
-                            }
-                        }
-                        Err(e) => {
-                            let _ =
-                                tx.send(StreamingResponse::Error(format!("Request failed: {}", e)));
-                        }
-                    }
-                });
-            }
-        }
-
-        Ok(rx)
-    }
-
-    pub async fn continue_conversation_with_tool_results(
+    /// Unified request method that handles all providers dynamically
+    async fn send_request(
         &self,
         messages: Vec<ChatMessage>,
-    ) -> Result<mpsc::UnboundedReceiver<StreamingResponse>> {
-        let (tx, rx) = mpsc::unbounded_channel();
-
+        tools: Option<Vec<serde_json::Value>>,
+    ) -> Result<ApiResponse> {
+        // Load configuration
+        let config = crate::utils::config::Config::load_or_default()?;
+        let thinking_enabled = config.get_thinking_enabled().unwrap_or(false);
+        
+        // Build request body based on provider
+        let request_body = match self.provider {
+            AIProvider::Claude => {
+                // Claude-specific request format
+                let mut request = json!({
+                    "model": self.model,
+                    "max_tokens": 4096,
+                    "messages": messages.iter().map(|msg| {
+                        let mut msg_obj = json!({
+                            "role": msg.role,
+                        });
+                        if let Some(content) = &msg.content {
+                            msg_obj["content"] = json!(content);
+                        }
+                        msg_obj
+                    }).collect::<Vec<_>>()
+                });
+                
+                if let Some(tools) = tools {
+                    request["tools"] = json!(tools);
+                }
+                
+                request
+            }
+            AIProvider::Ollama => {
+                // Ollama-specific request format
+                let mut request = json!({
+                    "model": self.model,
+                    "messages": messages.iter().map(|msg| {
+                        let mut msg_obj = json!({
+                            "role": msg.role,
+                        });
+                        if let Some(content) = &msg.content {
+                            msg_obj["content"] = json!(content);
+                        }
+                        
+                        // Add tool-related fields for Ollama
+                        if let Some(tool_calls) = &msg.tool_calls {
+                            let converted: Vec<Value> = tool_calls.iter().map(|tc| {
+                                let args = serde_json::from_str::<Value>(&tc.function.arguments)
+                                    .unwrap_or_else(|_| json!({}));
+                                json!({
+                                    "function": {
+                                        "name": tc.function.name,
+                                        "arguments": args
+                                    }
+                                })
+                            }).collect();
+                            msg_obj["tool_calls"] = json!(converted);
+                        }
+                        
+                        msg_obj
+                    }).collect::<Vec<_>>(),
+                    "stream": false
+                });
+                
+                if let Some(tools) = tools {
+                    request["tools"] = json!(tools);
+                }
+                
+                // Add Ollama-specific options
+                request["options"] = json!({
+                    "temperature": 0.7,
+                    "num_predict": 4096
+                });
+                
+                request
+            }
+            AIProvider::ZAiCoding => {
+                // Z.AI-specific request format
+                let is_zai_endpoint = self.endpoint.contains("api.z.ai");
+                
+                // Convert ChatMessage format to plain objects for Z.AI
+                let zai_messages: Vec<Value> = messages
+                    .into_iter()
+                    .filter_map(|msg| {
+                        // Skip assistant messages that only have tool_calls (no content)
+                        if msg.role == "assistant" && msg.content.is_none() && msg.tool_calls.is_some() {
+                            return None;
+                        }
+                        
+                        // Convert tool role messages to user messages (Z.AI doesn't support tool role)
+                        if msg.role == "tool" {
+                            // Format tool result as a user message
+                            let tool_name = msg.tool_name.as_deref().unwrap_or("unknown_tool");
+                            let content = msg.content.as_deref().unwrap_or("");
+                            return Some(json!({
+                                "role": "user",
+                                "content": format!("Tool {} returned: {}", tool_name, content)
+                            }));
+                        }
+                        
+                        // Regular messages
+                        Some(json!({
+                            "role": msg.role,
+                            "content": msg.content.unwrap_or_default()
+                        }))
+                    })
+                    .collect();
+                
+                // Set up model-specific parameters based on official GLM specs
+                let max_tokens = match self.model.as_str() {
+                    "GLM-4.6" => 65536,
+                    "GLM-4.5" | "GLM-4.5-AIR" | "GLM-4.5-X" | "GLM-4.5-AIRX" | "GLM-4.5-FLASH"
+                    | "GLM-4.5V" => 65536,
+                    "GLM-4-32B-0414-128K" => 16384,
+                    _ => 2048,
+                };
+                
+                let mut request = json!({
+                    "model": self.model,
+                    "messages": zai_messages,
+                    "max_tokens": max_tokens,
+                    "stream": false
+                });
+                
+                // Add thinking mode if enabled
+                if thinking_enabled {
+                    request["thinking"] = serde_json::json!({
+                        "type": "enabled"
+                    });
+                }
+                
+                // Only add tools for non-coding endpoints and if tools are provided
+                if !is_zai_endpoint {
+                    if let Some(t) = tools {
+                        if !t.is_empty() {
+                            request["tools"] = json!(t);
+                            // Don't add tool_choice for Z.AI as it might not be supported
+                        }
+                    }
+                } else if let Some(t) = tools {
+                    // For Z.AI coding endpoint, check if tools are provided
+                    if !t.is_empty() {
+                        // Z.AI coding endpoint might not support tools
+                        // We'll add them but without tool_choice to see if that helps
+                        request["tools"] = json!(t);
+                    }
+                }
+                
+                request
+            }
+            AIProvider::OpenAI | AIProvider::OpenRouter | AIProvider::Custom => {
+                // OpenAI-compatible request format
+                let mut request = json!({
+                    "model": self.model,
+                    "messages": messages.iter().map(|msg| {
+                        let mut msg_obj = json!({
+                            "role": msg.role,
+                        });
+                        if let Some(content) = &msg.content {
+                            msg_obj["content"] = json!(content);
+                        } else if msg.tool_calls.is_some() {
+                            msg_obj["content"] = json!(null);
+                        }
+                        
+                        // Add tool-related fields
+                        if let Some(tool_calls) = &msg.tool_calls {
+                            msg_obj["tool_calls"] = json!(tool_calls);
+                        }
+                        
+                        if let Some(tool_call_id) = &msg.tool_call_id {
+                            msg_obj["tool_call_id"] = json!(tool_call_id);
+                        }
+                        
+                        msg_obj
+                    }).collect::<Vec<_>>(),
+                    "temperature": 0.7,
+                    "max_tokens": 4096,
+                    "stream": false
+                });
+                
+                // Add tools if provided
+                if let Some(t) = tools {
+                    if !t.is_empty() {
+                        request["tools"] = json!(t);
+                        request["tool_choice"] = json!("auto");
+                    }
+                }
+                
+                // Add reasoning effort when thinking is enabled
+                if thinking_enabled {
+                    request["reasoning_effort"] = serde_json::json!("medium");
+                }
+                
+                request
+            }
+        };
+        
+        // Determine the endpoint URL
+        let endpoint_url = match self.provider {
+            AIProvider::Ollama => format!("{}/api/chat", self.endpoint),
+            AIProvider::Claude => format!("{}/v1/messages", self.endpoint),
+            AIProvider::ZAiCoding => {
+                // Z.AI uses the endpoint with /chat/completions appended
+                if self.endpoint.ends_with("/v4") {
+                    format!("{}/chat/completions", self.endpoint)
+                } else {
+                    self.endpoint.clone()
+                }
+            }
+            AIProvider::OpenAI | AIProvider::OpenRouter | AIProvider::Custom => {
+                format!("{}/chat/completions", self.endpoint)
+            }
+        };
+        
+        // Create HTTP client
+        let client = if matches!(self.provider, AIProvider::ZAiCoding) {
+            // Create a new client specifically for Z.AI to force HTTP/1.1
+            Client::builder()
+                .timeout(Duration::from_secs(60))
+                .user_agent("arula-cli/1.0")
+                .http1_only() // Force HTTP/1.1 for Z.AI compatibility
+                .tcp_nodelay(true)
+                .connection_verbose(std::env::var("ARULA_DEBUG").unwrap_or_default() == "1")
+                .build()
+                .expect("Failed to create Z.AI HTTP client")
+        } else {
+            self.client.clone()
+        };
+        
+        // Build request with appropriate headers
+        let mut request_builder = client
+            .post(&endpoint_url)
+            .header("Content-Type", "application/json");
+            
+        // Add authorization headers based on provider
         match self.provider {
-            AIProvider::OpenAI => {
-                debug_print("DEBUG: Using OpenAI provider in send_message_stream");
-                // Use regular OpenAI request for now to support tool calls
-                let client = self.clone();
-                tokio::spawn(async move {
-                    match client.send_openai_request(messages).await {
-                        Ok(response) => {
-                            debug_print(&format!(
-                                "DEBUG: OpenAI response with tool_calls: {:?}",
-                                response.tool_calls.is_some()
-                            ));
-                            let _ = tx.send(StreamingResponse::Start);
-                            let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
-                            let _ = tx.send(StreamingResponse::End(response));
-                        }
-                        Err(e) => {
-                            debug_print(&format!("DEBUG: OpenAI request error: {}", e));
-                            let _ = tx.send(StreamingResponse::Error(format!(
-                                "OpenAI request error: {}",
-                                e
-                            )));
-                        }
-                    }
-                });
+            AIProvider::Claude => {
+                request_builder = request_builder
+                    .header("x-api-key", &self.api_key)
+                    .header("anthropic-version", "2023-06-01");
             }
-            AIProvider::OpenRouter => {
-                debug_print("DEBUG: Using OpenRouter provider in send_message_stream");
-                // Use OpenAI-compatible format for OpenRouter
-                let client = self.clone();
-                tokio::spawn(async move {
-                    match client.send_openai_request(messages).await {
-                        Ok(response) => {
-                            debug_print(&format!(
-                                "DEBUG: OpenRouter response with tool_calls: {:?}",
-                                response.tool_calls.is_some()
-                            ));
-                            let _ = tx.send(StreamingResponse::Start);
-                            let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
-                            let _ = tx.send(StreamingResponse::End(response));
-                        }
-                        Err(e) => {
-                            debug_print(&format!("DEBUG: OpenRouter request error: {}", e));
-                            let _ = tx.send(StreamingResponse::Error(format!(
-                                "OpenRouter request error: {}",
-                                e
-                            )));
-                        }
-                    }
-                });
+            AIProvider::OpenAI | AIProvider::ZAiCoding | AIProvider::OpenRouter => {
+                if !self.api_key.is_empty() {
+                    request_builder = request_builder
+                        .header("Authorization", format!("Bearer {}", self.api_key));
+                }
             }
-            _ => {
-                // Fallback to non-streaming for other providers
-                let client = self.clone();
-                tokio::spawn(async move {
-                    let result = match client.provider {
-                        AIProvider::Claude => client.send_claude_request(messages).await,
-                        AIProvider::Ollama => client.send_ollama_request(messages).await,
-                        AIProvider::ZAiCoding => client.send_zai_request(messages).await,
-                        AIProvider::OpenRouter => client.send_openai_request(messages).await, // OpenRouter uses OpenAI-compatible format
-                        AIProvider::Custom => client.send_custom_request(messages).await,
-                        _ => Err(anyhow::anyhow!("Unsupported provider")),
-                    };
-
-                    match result {
-                        Ok(response) => {
-                            let _ = tx.send(StreamingResponse::Start);
-                            let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
-                            let _ = tx.send(StreamingResponse::End(response));
-                        }
-                        Err(e) => {
-                            let _ =
-                                tx.send(StreamingResponse::Error(format!("Request failed: {}", e)));
-                        }
-                    }
-                });
+            AIProvider::Custom => {
+                if !self.api_key.is_empty() {
+                    request_builder = request_builder
+                        .header("Authorization", format!("Bearer {}", self.api_key));
+                }
+            }
+            _ => {} // Ollama usually doesn't need auth
+        }
+        
+        // Log the request if debug mode is enabled
+        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+            let body_str = serde_json::to_string_pretty(&request_body).unwrap_or_default();
+            println!("🔧 DEBUG: Sending request to {}: {}", endpoint_url, body_str);
+        }
+        
+        // Send the request
+        let response = request_builder
+            .json(&request_body)
+            .send()
+            .await?;
+            
+        // Handle the response
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            
+            // Log the response for debugging
+            if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+                println!("🔧 DEBUG: API Response ({}): {}", status, text);
+            }
+            
+            return Err(anyhow::anyhow!(
+                "API request failed with status {}: {}",
+                status,
+                text
+            ));
+        }
+        
+        // Parse response based on provider
+        match self.provider {
+            AIProvider::Claude => {
+                let response_text = response.text().await?;
+                
+                // Log the successful response if debug mode is enabled
+                if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+                    println!("🔧 DEBUG: API Response (200 OK): {}", response_text);
+                }
+                
+                let response_json: serde_json::Value = serde_json::from_str(&response_text)?;
+                
+                let content = response_json
+                    .get("content")
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|c| c.get("text"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                
+                Ok(ApiResponse {
+                    response: content,
+                    success: true,
+                    error: None,
+                    usage: None,
+                    tool_calls: None,
+                    model: Some(self.model.clone()),
+                    created: None,
+                    reasoning_content: None,
+                })
+            }
+            AIProvider::Ollama => {
+                let response_text = response.text().await?;
+                
+                // Log the successful response if debug mode is enabled
+                if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+                    println!("🔧 DEBUG: API Response (200 OK): {}", response_text);
+                }
+                
+                let response_json: serde_json::Value = serde_json::from_str(&response_text)?;
+                
+                let content = response_json
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                
+                Ok(ApiResponse {
+                    response: content,
+                    success: true,
+                    error: None,
+                    usage: None,
+                    tool_calls: None,
+                    model: Some(self.model.clone()),
+                    created: None,
+                    reasoning_content: None,
+                })
+            }
+            AIProvider::ZAiCoding | AIProvider::OpenAI | AIProvider::OpenRouter | AIProvider::Custom => {
+                // OpenAI-compatible response format
+                let response_text = response.text().await?;
+                
+                // Log the successful response if debug mode is enabled
+                if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+                    println!("🔧 DEBUG: API Response (200 OK): {}", response_text);
+                }
+                
+                let response_json: serde_json::Value = serde_json::from_str(&response_text)?;
+                
+                let content = response_json
+                    .get("choices")
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|c| c.get("message"))
+                    .and_then(|m| m.get("content"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                
+                // Extract tool calls if present
+                let tool_calls = response_json
+                    .get("choices")
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|c| c.get("message"))
+                    .and_then(|m| m.get("tool_calls"))
+                    .and_then(|tc| serde_json::from_value(tc.clone()).ok());
+                
+                // Extract reasoning_content if present (for Z.AI and other reasoning models)
+                let reasoning_content = response_json
+                    .get("choices")
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|c| c.get("message"))
+                    .and_then(|m| m.get("reasoning_content"))
+                    .and_then(|r| r.as_str())
+                    .map(|s| s.to_string());
+                
+                Ok(ApiResponse {
+                    response: content,
+                    success: true,
+                    error: None,
+                    usage: None,
+                    tool_calls,
+                    model: Some(self.model.clone()),
+                    created: None,
+                    reasoning_content,
+                })
             }
         }
+    }
 
-        Ok(rx)
+    pub async fn send_message_with_tools_sync(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+    ) -> Result<ApiResponse> {
+        let messages = messages.to_vec();
+        let tools = if tools.is_empty() { None } else { Some(tools.to_vec()) };
+
+        // Use the unified send_request method with tools
+        self.send_request(messages, tools).await
     }
 
     async fn send_openai_request(&self, messages: Vec<ChatMessage>) -> Result<ApiResponse> {
@@ -565,6 +837,7 @@ impl ApiClient {
         // Use provider-specific endpoint
         let request_url = match self.provider {
             AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
+            AIProvider::ZAiCoding => self.endpoint.clone(), // Z.AI uses the endpoint directly
             _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
         };
         let mut request_builder = self.client.post(&request_url).json(&request_body);
@@ -853,8 +1126,12 @@ impl ApiClient {
             request["options"]["think"] = json!(true);
         }
 
-        // Use the newer /api/chat endpoint which is OpenAI-compatible
-        let request_url = format!("{}/api/chat", self.endpoint);
+        // Use provider-specific endpoint
+        let request_url = match self.provider {
+            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
+            AIProvider::ZAiCoding => self.endpoint.clone(), // Z.AI uses the endpoint directly
+            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
+        };
         let request_builder = self.client.post(&request_url).json(&request);
 
         // Log the outgoing request
@@ -1019,6 +1296,7 @@ impl ApiClient {
             // Use provider-specific endpoint
             let endpoint = match self.provider {
                 AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
+                AIProvider::ZAiCoding => self.endpoint.clone(), // Z.AI uses the endpoint directly
                 _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
             };
 
@@ -1058,6 +1336,7 @@ impl ApiClient {
             // Use provider-specific endpoint for logging
             let log_url = match self.provider {
                 AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
+                AIProvider::ZAiCoding => self.endpoint.clone(), // Z.AI uses the endpoint directly
                 _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
             };
             log_http_request("POST", &log_url, &request_headers, Some(&body_str));
@@ -1450,43 +1729,64 @@ impl ApiClient {
             })
             .collect();
 
-        // Z.AI uses OpenAI-compatible format with specific endpoint
-        let mut request = json!({
-            "model": self.model,
-            "messages": zai_messages,
-            "temperature": 0.7f32,  // Use f32 to ensure consistent precision
-            "max_tokens": 2048,
-            "stream": false
-        });
+        // Determine the final request URL first (needed for conditional payload)
+        let final_endpoint = match self.provider {
+            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama
+            AIProvider::ZAiCoding => self.endpoint.clone(), // Z.AI uses the endpoint directly
+            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible
+        };
 
-        // Define bash tool
-        request["tools"] = json!([
-            {
-                "type": "function",
-                "function": {
-                    "name": "execute_bash",
-                    "description": "Execute bash shell commands. Use this when you need to run shell commands, check files, navigate directories, install packages, etc.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "command": {
-                                "type": "string",
-                                "description": "The bash command to execute"
-                            }
-                        },
-                        "required": ["command"]
+        // Build request payload – minimal for the Coding-Plan endpoint, full (with tools) for all other endpoints
+        let request = if final_endpoint.contains("coding/paas/v4") {
+            // Ultra-minimal test payload for debugging
+            json!({
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "hi"
+                    }
+                ]
+            })
+        } else {
+            // Full payload for generic OpenAI-compatible endpoints
+            let mut req = json!({
+                "model": self.model,
+                "messages": zai_messages,
+                "temperature": 0.7f32,
+                "max_tokens": 2048,
+                "stream": false
+            });
+
+            // Define bash tool (only for non-coding endpoints)
+            req["tools"] = json!([
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "execute_bash",
+                        "description": "Execute bash shell commands. Use this when you need to run shell commands, check files, navigate directories, install packages, etc.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "command": {
+                                    "type": "string",
+                                    "description": "The bash command to execute"
+                                }
+                            },
+                            "required": ["command"]
+                        }
                     }
                 }
-            }
-        ]);
-        request["tool_choice"] = json!("auto"); // "required" is not supported by Z.AI
-
-        // Use provider-specific endpoint
-        let endpoint = match self.provider {
-            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
-            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
+            ]);
+            req["tool_choice"] = json!("auto"); // Z.AI does not support "required"
+            req
         };
-        let mut request_builder = self.client.post(endpoint).json(&request);
+
+        // Debug logging
+        debug_print(&format!("DEBUG: Final endpoint URL: {}", final_endpoint));
+        debug_print(&format!("DEBUG: Request payload: {}", serde_json::to_string_pretty(&request).unwrap_or_else(|_| "Failed to serialize".to_string())));
+
+        // Send the request
+        let mut request_builder = self.client.post(final_endpoint).json(&request);
 
         // Add authorization header if API key is provided
         if !self.api_key.is_empty() {
@@ -1603,942 +1903,6 @@ impl ApiClient {
             Ok(response) => Ok(response.success),
             Err(_) => Ok(false),
         }
-    }
-
-    /// Send message with true SSE streaming (OpenAI-compatible)
-    ///
-    /// This method enables real Server-Sent Events streaming for:
-    /// - Real-time text output as it's generated
-    /// - Proper tool call delta accumulation
-    /// - Usage statistics via stream_options
-    ///
-    /// # Arguments
-    ///
-    /// * `messages` - Conversation messages
-    /// * `tools` - Available tool definitions
-    /// * `callback` - Function called for each stream event
-    ///
-    /// # Returns
-    ///
-    /// The final accumulated response with all content and tool calls
-    pub async fn send_message_streaming<F>(
-        &self,
-        messages: &[ChatMessage],
-        tools: &[serde_json::Value],
-        callback: F,
-    ) -> Result<ApiResponse>
-    where
-        F: FnMut(crate::api::streaming::StreamEvent) + Send,
-    {
-        use crate::api::streaming::{build_streaming_request_full, process_stream};
-
-        // Check if this is Z.AI - both by provider type AND by endpoint URL
-        // This ensures proper handling even if provider detection failed
-        let is_zai =
-            matches!(self.provider, AIProvider::ZAiCoding) || self.endpoint.contains("api.z.ai");
-        let is_ollama = matches!(self.provider, AIProvider::Ollama);
-
-        // Convert ChatMessage to JSON format
-        // Z.AI has strict requirements - only include role and content
-        let json_messages: Vec<serde_json::Value> = messages
-            .iter()
-            .filter_map(|msg| {
-                // For Z.AI streaming, skip tool-related messages entirely
-                if is_zai {
-                    // Skip tool role messages for Z.AI streaming
-                    if msg.role == "tool" {
-                        return None;
-                    }
-                    // For assistant messages with only tool_calls (no content), skip
-                    if msg.role == "assistant" && msg.content.is_none() && msg.tool_calls.is_some()
-                    {
-                        return None;
-                    }
-                }
-
-                let mut obj = serde_json::json!({
-                    "role": msg.role,
-                });
-
-                if let Some(content) = &msg.content {
-                    obj["content"] = serde_json::json!(content);
-                } else if is_zai {
-                    // Z.AI requires content, use empty string if none
-                    obj["content"] = serde_json::json!("");
-                } else if msg.tool_calls.is_some() {
-                    // Assistant message with tool_calls can have null content (non-Z.AI)
-                    obj["content"] = serde_json::json!(null);
-                }
-
-                // Only include tool-related fields for non-Z.AI providers
-                if !is_zai {
-                    if let Some(tool_calls) = &msg.tool_calls {
-                        // For Ollama, convert arguments from string to object
-                        if is_ollama {
-                            let converted_calls: Vec<serde_json::Value> = tool_calls
-                                .iter()
-                                .map(|tc| {
-                                    // Parse arguments string to JSON object
-                                    let args_obj = serde_json::from_str::<serde_json::Value>(
-                                        &tc.function.arguments,
-                                    )
-                                    .unwrap_or_else(|_| serde_json::json!({}));
-                                    serde_json::json!({
-                                        "function": {
-                                            "name": tc.function.name,
-                                            "arguments": args_obj  // Object, not string
-                                        }
-                                    })
-                                })
-                                .collect();
-                            obj["tool_calls"] = serde_json::json!(converted_calls);
-                        } else {
-                            obj["tool_calls"] = serde_json::json!(tool_calls);
-                        }
-                    }
-
-                    if is_ollama {
-                        // Ollama uses tool_name instead of tool_call_id for tool responses
-                        if let Some(tool_name) = &msg.tool_name {
-                            obj["tool_name"] = serde_json::json!(tool_name);
-                        }
-                    } else {
-                        // OpenAI-compatible APIs use tool_call_id
-                        if let Some(tool_call_id) = &msg.tool_call_id {
-                            obj["tool_call_id"] = serde_json::json!(tool_call_id);
-                        }
-                    }
-                }
-
-                Some(obj)
-            })
-            .collect();
-
-        // Build streaming request
-        // Z.AI has specific requirements (from docs.z.ai):
-        // - Does NOT support stream_options parameter (returns error 1210)
-        // - Does NOT support tool_choice with streaming
-        // Ollama also doesn't support stream_options or tool_choice
-        let include_stream_options = !is_zai && !is_ollama;
-        let include_tool_choice = !is_zai && !is_ollama;
-
-        // For Z.AI, we need special handling for tools with streaming
-        // Based on Z.AI docs: all streaming + tool examples only use primitive types (string, number, boolean)
-        // Complex types (object, array) in tool parameters may cause error 1210
-        //
-        // For Z.AI, filter out tools with complex parameter types to avoid error 1210
-        let tools_ref = if is_zai {
-            // Filter to only tools with simple parameter types
-            let simple_tools: Vec<&serde_json::Value> = tools.iter()
-                .filter(|tool| {
-                    if let Some(params) = tool.get("function")
-                        .and_then(|f| f.get("parameters"))
-                        .and_then(|p| p.get("properties"))
-                        .and_then(|props| props.as_object())
-                    {
-                        // Check all parameters - reject if any has object/array type
-                        for (param_name, param) in params {
-                            if let Some(param_type) = param.get("type").and_then(|t| t.as_str()) {
-                                if param_type == "object" || param_type == "array" {
-                                    debug_print(&format!(
-                                        "DEBUG: Z.AI - filtering out tool '{}' due to param '{}' with type '{}'",
-                                        tool.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("unknown"),
-                                        param_name,
-                                        param_type
-                                    ));
-                                    return false;
-                                }
-                            }
-                        }
-                    }
-                    true
-                })
-                .collect();
-
-            debug_print(&format!(
-                "DEBUG: Z.AI - {} of {} tools have simple params",
-                simple_tools.len(),
-                tools.len()
-            ));
-
-            // For Z.AI, we don't include tools in streaming requests to avoid error 1210
-            // Tool calls will be handled via non-streaming fallback
-            if !simple_tools.is_empty() {
-                debug_print("DEBUG: Z.AI streaming - excluding tools to avoid error 1210");
-            }
-            None
-        } else if !tools.is_empty() {
-            Some(tools)
-        } else {
-            None
-        };
-
-        // Use model-specific parameters for streaming (matching non-streaming logic)
-        let max_tokens = match self.model.as_str() {
-            "GLM-4.6" => 65536, // Official default for GLM-4.6
-            "GLM-4.5" | "GLM-4.5-AIR" | "GLM-4.5-X" | "GLM-4.5-AIRX" | "GLM-4.5-FLASH"
-            | "GLM-4.5V" => 65536, // Official default for GLM-4.5 series
-            "GLM-4-32B-0414-128K" => 16384, // Official default for older model
-            _ => 2048,          // Fallback for other models
-        };
-
-        let mut request_body = build_streaming_request_full(
-            &self.model,
-            &json_messages,
-            tools_ref,
-            0.7, // Use default temperature for GLM models
-            max_tokens,
-            include_stream_options,
-            include_tool_choice,
-        );
-
-        // Ollama-specific request formatting
-        if is_ollama {
-            // Convert max_tokens to options.num_predict for Ollama
-            if let Some(obj) = request_body.as_object_mut() {
-                let max_tokens = obj
-                    .remove("max_tokens")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(2048);
-                let temperature = obj
-                    .remove("temperature")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.7);
-                obj.insert(
-                    "options".to_string(),
-                    serde_json::json!({
-                        "num_predict": max_tokens,
-                        "temperature": temperature
-                    }),
-                );
-            }
-        }
-
-        // Z.AI-specific request formatting
-        // Rebuild request with ONLY supported parameters to avoid error 1210
-        // Z.AI docs explicitly support: model, messages, stream, temperature, top_p, max_tokens, stop, user_id
-        // Note: Z.AI Coding API (api.z.ai/api/coding/...) may have different supported params
-        if is_zai {
-            let model = request_body
-                .get("model")
-                .cloned()
-                .unwrap_or(serde_json::json!(self.model.clone()));
-            let messages = request_body
-                .get("messages")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([]));
-            let temperature = request_body
-                .get("temperature")
-                .cloned()
-                .unwrap_or(serde_json::json!(0.7));
-            let max_tokens = request_body
-                .get("max_tokens")
-                .cloned()
-                .unwrap_or(serde_json::json!(2048));
-
-            // For Z.AI, we need to be very specific about which fields we include
-            // to avoid error 1210 (Invalid API parameter)
-            request_body = serde_json::json!({
-                "model": model,
-                "messages": messages,
-                "stream": true,
-                "temperature": temperature,
-                "max_tokens": max_tokens
-            });
-
-            // Note: We're not including tools in streaming requests for Z.AI
-            // to prevent error 1210
-            debug_print(&format!(
-                "DEBUG: Z.AI cleaned request body: {}",
-                serde_json::to_string_pretty(&request_body).unwrap_or_default()
-            ));
-        }
-
-        // Use provider-specific endpoint
-        let request_url = match self.provider {
-            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
-            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
-        };
-
-        debug_print(&format!("DEBUG: Streaming request to {}", request_url));
-        debug_print(&format!(
-            "DEBUG: Provider type: {:?}, is_zai: {}, is_ollama: {}",
-            self.provider, is_zai, is_ollama
-        ));
-        debug_print(&format!(
-            "DEBUG: include_stream_options: {}, include_tool_choice: {}",
-            include_stream_options, include_tool_choice
-        ));
-        debug_print(&format!(
-            "DEBUG: Streaming request body: {}",
-            serde_json::to_string_pretty(&request_body).unwrap_or_default()
-        ));
-
-        let mut request_builder = self.client.post(&request_url).json(&request_body);
-
-        // Add authorization
-        if !self.api_key.is_empty() {
-            request_builder =
-                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
-        }
-
-        // Add provider-specific headers
-        match self.provider {
-            AIProvider::OpenRouter => {
-                request_builder = request_builder
-                    .header("HTTP-Referer", "https://github.com/arula-cli/arula-cli")
-                    .header("X-Title", "ARULA CLI");
-            }
-            AIProvider::ZAiCoding => {
-                request_builder = request_builder.header("Accept-Language", "en-US,en");
-            }
-            _ => {}
-        }
-
-        // Send request
-        let response = request_builder.send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            // Truncate HTML error pages to show just the first meaningful part
-            let error_display = if error_text.contains("<!DOCTYPE") || error_text.contains("<html")
-            {
-                format!(
-                    "{} (HTML error page received - check if the endpoint URL is correct)",
-                    status
-                )
-            } else {
-                error_text
-            };
-            return Err(anyhow::anyhow!(
-                "API request to {} failed: {}",
-                request_url,
-                error_display
-            ));
-        }
-
-        // Process the streaming response
-        process_stream(response, callback).await
-    }
-
-    /// Send message with custom tools (used by modern agent client)
-    pub async fn send_message_with_tools(
-        &self,
-        messages: &[ChatMessage],
-        tools: &[serde_json::Value],
-    ) -> Result<mpsc::UnboundedReceiver<StreamingResponse>> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        let messages = messages.to_vec();
-        let tools = tools.to_vec();
-
-        let client = self.clone();
-        tokio::spawn(async move {
-            match client.provider {
-                AIProvider::OpenAI | AIProvider::OpenRouter => {
-                    // Use custom tool-aware OpenAI-compatible implementation
-                    match client.send_openai_request_with_tools(messages, tools).await {
-                        Ok(response) => {
-                            debug_print(&format!(
-                                "DEBUG: {:?} response with tools",
-                                client.provider
-                            ));
-                            let _ = tx.send(StreamingResponse::Start);
-                            let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
-                            let _ = tx.send(StreamingResponse::End(response));
-                        }
-                        Err(e) => {
-                            debug_print(&format!(
-                                "DEBUG: {:?} request error: {}",
-                                client.provider, e
-                            ));
-                            let _ =
-                                tx.send(StreamingResponse::Error(format!("Request error: {}", e)));
-                        }
-                    }
-                }
-                AIProvider::ZAiCoding | AIProvider::Custom => {
-                    // For Z.AI, use OpenAI-compatible format with tools
-                    match client.send_zai_request_with_tools(messages, tools).await {
-                        Ok(response) => {
-                            debug_print("DEBUG: Z.AI response with tools");
-                            let _ = tx.send(StreamingResponse::Start);
-                            let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
-                            let _ = tx.send(StreamingResponse::End(response));
-                        }
-                        Err(e) => {
-                            debug_print(&format!("DEBUG: Z.AI request error: {}", e));
-                            let _ = tx.send(StreamingResponse::Error(format!(
-                                "Z.AI request error: {}",
-                                e
-                            )));
-                        }
-                    }
-                }
-                _ => {
-                    // Fallback for other providers
-                    let result = match client.provider {
-                        AIProvider::Claude => client.send_claude_request(messages).await,
-                        AIProvider::Ollama => client.send_ollama_request(messages).await,
-                        AIProvider::ZAiCoding => client.send_zai_request(messages).await,
-                        _ => Err(anyhow::anyhow!("Unsupported provider for tools")),
-                    };
-
-                    match result {
-                        Ok(response) => {
-                            let _ = tx.send(StreamingResponse::Start);
-                            let _ = tx.send(StreamingResponse::Chunk(response.response.clone()));
-                            let _ = tx.send(StreamingResponse::End(response));
-                        }
-                        Err(e) => {
-                            let _ =
-                                tx.send(StreamingResponse::Error(format!("Request failed: {}", e)));
-                        }
-                    }
-                }
-            }
-        });
-
-        Ok(rx)
-    }
-
-    /// Send message with custom tools (synchronous version - waits for complete response)
-    ///
-    /// Unlike `send_message_with_tools`, this method directly returns the API response
-    /// instead of using a channel. Used for non-streaming mode.
-    pub async fn send_message_with_tools_sync(
-        &self,
-        messages: &[ChatMessage],
-        tools: &[serde_json::Value],
-    ) -> Result<ApiResponse> {
-        let messages = messages.to_vec();
-        let tools = tools.to_vec();
-
-        match self.provider {
-            AIProvider::OpenAI | AIProvider::OpenRouter => {
-                self.send_openai_request_with_tools(messages, tools).await
-            }
-            AIProvider::ZAiCoding | AIProvider::Custom => {
-                self.send_zai_request_with_tools(messages, tools).await
-            }
-            AIProvider::Claude => self.send_claude_request(messages).await,
-            AIProvider::Ollama => self.send_ollama_request(messages).await,
-        }
-    }
-
-    /// Send OpenAI request with custom tools (also used for OpenRouter)
-    async fn send_openai_request_with_tools(
-        &self,
-        messages: Vec<ChatMessage>,
-        tools: Vec<serde_json::Value>,
-    ) -> Result<ApiResponse> {
-        // Check if thinking/reasoning is enabled
-        let config = crate::utils::config::Config::load_or_default()?;
-        let thinking_enabled = config.get_thinking_enabled().unwrap_or(false);
-
-        // Create request with custom tools
-        let mut request_body = serde_json::json!({
-            "model": self.model,
-            "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 2048,
-            "tools": tools,
-            "tool_choice": "auto"
-        });
-
-        // Add reasoning effort when thinking is enabled
-        // Works with GPT-5.1 and reasoning models; ignored by unsupported models
-        if thinking_enabled {
-            request_body["reasoning_effort"] = serde_json::json!("medium");
-        }
-
-        // Use provider-specific endpoint
-        let request_url = match self.provider {
-            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
-            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
-        };
-        let mut request_builder = self.client.post(&request_url).json(&request_body);
-
-        if !self.api_key.is_empty() {
-            request_builder =
-                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
-        }
-
-        // Add OpenRouter-specific headers if using OpenRouter
-        if self.provider == AIProvider::OpenRouter {
-            request_builder = request_builder
-                .header("HTTP-Referer", "https://github.com/arula-cli/arula-cli")
-                .header("X-Title", "ARULA CLI");
-        }
-
-        // Log the outgoing request
-        let mut request_headers = reqwest::header::HeaderMap::new();
-        if !self.api_key.is_empty() {
-            request_headers.insert(
-                "Authorization",
-                format!("Bearer {}", self.api_key).parse().unwrap(),
-            );
-        }
-        if self.provider == AIProvider::OpenRouter {
-            request_headers.insert(
-                "HTTP-Referer",
-                "https://github.com/arula-cli/arula-cli".parse().unwrap(),
-            );
-            request_headers.insert("X-Title", "ARULA CLI".parse().unwrap());
-        }
-        let body_str = serde_json::to_string_pretty(&request_body).unwrap_or_default();
-        log_http_request("POST", &request_url, &request_headers, Some(&body_str));
-
-        let response = request_builder.send().await?;
-
-        // Log the incoming response
-        log_http_response(&response);
-
-        if response.status().is_success() {
-            let response_json: serde_json::Value = response.json().await?;
-
-            if let Some(choices) = response_json["choices"].as_array() {
-                if let Some(choice) = choices.first() {
-                    let content = choice["message"]["content"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string();
-
-                    let tool_calls = choice["message"]["tool_calls"].as_array().map(|calls| {
-                        calls
-                            .iter()
-                            .map(|tool_call| ToolCall {
-                                id: tool_call["id"].as_str().unwrap_or_default().to_string(),
-                                r#type: "function".to_string(),
-                                function: ToolCallFunction {
-                                    name: tool_call["function"]["name"]
-                                        .as_str()
-                                        .unwrap_or_default()
-                                        .to_string(),
-                                    arguments: tool_call["function"]["arguments"]
-                                        .as_str()
-                                        .unwrap_or_default()
-                                        .to_string(),
-                                },
-                            })
-                            .collect::<Vec<_>>()
-                    });
-
-                    Ok(ApiResponse {
-                        response: content,
-                        success: true,
-                        error: None,
-                        usage: None,
-                        tool_calls,
-                        model: Some(self.model.clone()),
-                        created: Some(
-                            SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs(),
-                        ),
-                        reasoning_content: None,
-                    })
-                } else {
-                    Ok(ApiResponse {
-                        response: "No response received".to_string(),
-                        success: false,
-                        error: Some("No choices in response".to_string()),
-                        usage: None,
-                        tool_calls: None,
-                        model: Some(self.model.clone()),
-                        created: Some(
-                            SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs(),
-                        ),
-                        reasoning_content: None,
-                    })
-                }
-            } else {
-                Ok(ApiResponse {
-                    response: "No response received".to_string(),
-                    success: false,
-                    error: Some("No choices in response".to_string()),
-                    usage: None,
-                    tool_calls: None,
-                    model: Some(self.model.clone()),
-                    created: Some(
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs(),
-                    ),
-                    reasoning_content: None,
-                })
-            }
-        } else {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(anyhow::anyhow!("OpenAI API request failed: {}", error_text))
-        }
-    }
-
-    /// Send Z.AI request with custom tools (with retry logic)
-    async fn send_zai_request_with_tools(
-        &self,
-        messages: Vec<ChatMessage>,
-        tools: Vec<serde_json::Value>,
-    ) -> Result<ApiResponse> {
-        debug_print(&format!(
-            "DEBUG: Z.AI Formatted Request with Tools - API key length: {}",
-            self.api_key.len()
-        ));
-
-        // Get Z.AI configuration from the config file
-        let config = crate::utils::config::Config::load_or_default()?;
-        let thinking_enabled = config.get_thinking_enabled().unwrap_or(false);
-
-        let max_retries = 3;
-        let mut retry_count = 0;
-
-        loop {
-            match self
-                .send_zai_request_with_tools_once(messages.clone(), tools.clone(), thinking_enabled)
-                .await
-            {
-                Ok(response) => return Ok(response),
-                Err(e) if retry_count < max_retries && self.should_retry(&e) => {
-                    retry_count += 1;
-                    debug_print(&format!(
-                        "DEBUG: Z.AI request failed (attempt {}), retrying in {} seconds: {}",
-                        retry_count,
-                        2 * retry_count,
-                        e
-                    ));
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2 * retry_count)).await;
-                    continue;
-                }
-                Err(e) => {
-                    debug_print(&format!(
-                        "DEBUG: Z.AI request failed permanently after {} attempts: {}",
-                        retry_count, e
-                    ));
-                    return Err(e);
-                }
-            }
-        }
-    }
-
-    /// Send Z.AI request with custom tools (single attempt)
-    async fn send_zai_request_with_tools_once(
-        &self,
-        messages: Vec<ChatMessage>,
-        tools: Vec<serde_json::Value>,
-        thinking_enabled: bool,
-    ) -> Result<ApiResponse> {
-        // Filter out tools with unsupported parameter types (object, array)
-        // Based on Z.AI docs: all function calling examples only use primitive types (string, number, boolean)
-        // Complex types (object, array) in tool parameters may cause error 1210
-        let filtered_tools: Vec<serde_json::Value> = tools.iter()
-            .filter(|tool| {
-                if let Some(params) = tool.get("function")
-                    .and_then(|f| f.get("parameters"))
-                    .and_then(|p| p.get("properties"))
-                    .and_then(|props| props.as_object())
-                {
-                    for (param_name, param) in params {
-                        if let Some(param_type) = param.get("type").and_then(|t| t.as_str()) {
-                            if param_type == "object" || param_type == "array" {
-                                debug_print(&format!(
-                                    "DEBUG: Z.AI non-streaming - filtering out tool '{}' due to param '{}' with type '{}'", 
-                                    tool.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("unknown"),
-                                    param_name,
-                                    param_type
-                                ));
-                                return false;
-                            }
-                        }
-                    }
-                }
-                true
-            })
-            .cloned()
-            .collect();
-
-        debug_print(&format!(
-            "DEBUG: Z.AI non-streaming - {} of {} tools have simple params",
-            filtered_tools.len(),
-            tools.len()
-        ));
-
-        // Track if we've already added a system message
-        let mut has_system_message = false;
-
-        // For tool-enabled requests, we need to include tool_calls and tool results properly
-        // But filter out problematic message patterns
-        let zai_messages: Vec<serde_json::Value> = messages
-            .into_iter()
-            .filter_map(|msg| {
-                // Handle system messages first
-                if msg.role == "system" {
-                    if has_system_message {
-                        // Skip duplicate system messages
-                        return None;
-                    }
-                    has_system_message = true;
-                    return Some(serde_json::json!({
-                        "role": "system",
-                        "content": msg.content.unwrap_or_default()
-                    }));
-                }
-
-                // Handle other message types
-                match msg.role.as_str() {
-                    "tool" => {
-                        // Tool result message - Z.AI expects this format
-                        Some(serde_json::json!({
-                            "role": "tool",
-                            "content": msg.content.unwrap_or_default(),
-                            "tool_call_id": msg.tool_call_id.unwrap_or_default()
-                        }))
-                    }
-                    "assistant" => {
-                        if let Some(tool_calls) = msg.tool_calls {
-                            // Assistant with tool calls
-                            Some(serde_json::json!({
-                                "role": "assistant",
-                                "content": msg.content.unwrap_or_default(), // Ensure content is not None
-                                "tool_calls": tool_calls
-                            }))
-                        } else {
-                            // Regular assistant message
-                            Some(serde_json::json!({
-                                "role": "assistant",
-                                "content": msg.content.unwrap_or_default()
-                            }))
-                        }
-                    }
-                    _ => {
-                        // User and other message types
-                        Some(serde_json::json!({
-                            "role": msg.role,
-                            "content": msg.content.unwrap_or_default()
-                        }))
-                    }
-                }
-            })
-            .collect();
-
-        let mut request = serde_json::json!({
-            "model": self.model,
-            "messages": zai_messages,
-            "temperature": 0.7f32,  // Use f32 to ensure consistent precision
-            "max_tokens": 2048,
-            "stream": false,
-            "tools": filtered_tools,
-            "tool_choice": "auto"
-        });
-
-        // Add thinking mode if enabled
-        if thinking_enabled {
-            request["thinking"] = serde_json::json!({
-                "type": "enabled"
-            });
-        }
-
-        // Debug: Log the Z.AI request when debug mode is enabled
-        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
-            println!(
-                "🔧 DEBUG: Z.AI Tools Request: {}",
-                serde_json::to_string_pretty(&request)
-                    .unwrap_or_else(|_| "Failed to serialize request".to_string())
-            );
-            println!("🔧 DEBUG: Thinking enabled: {}", thinking_enabled);
-        }
-
-        // Create a new client specifically for Z.AI to force HTTP/1.1 for better compatibility
-        let zai_client = Client::builder()
-            .timeout(Duration::from_secs(60))
-            .user_agent("arula-cli/1.0")
-            .http1_only() // Force HTTP/1.1 for Z.AI compatibility
-            .tcp_nodelay(true)
-            .connection_verbose(std::env::var("ARULA_DEBUG").unwrap_or_default() == "1")
-            .build()
-            .expect("Failed to create Z.AI HTTP client");
-
-        // Use provider-specific endpoint
-        let endpoint = match self.provider {
-            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
-            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
-        };
-        let mut request_builder = zai_client.post(endpoint).json(&request);
-
-        // Log the outgoing request
-        let request_headers = reqwest::header::HeaderMap::new();
-        let body_str = serde_json::to_string_pretty(&request).unwrap_or_default();
-        // Use provider-specific endpoint for logging
-        let log_url = match self.provider {
-            AIProvider::Ollama => format!("{}/api/chat", self.endpoint), // Ollama uses /api/chat
-            _ => format!("{}/chat/completions", self.endpoint), // OpenAI-compatible endpoints
-        };
-        log_http_request("POST", &log_url, &request_headers, Some(&body_str));
-
-        if !self.api_key.is_empty() {
-            request_builder =
-                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
-        }
-
-        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
-            debug_print(&format!(
-                "DEBUG: Sending Z.AI request to: {}/chat/completions",
-                self.endpoint
-            ));
-            debug_print(&format!(
-                "DEBUG: Request body size: {} bytes",
-                serde_json::to_string(&request).unwrap_or_default().len()
-            ));
-        }
-
-        let response = request_builder
-            .timeout(std::time::Duration::from_secs(45))
-            .send()
-            .await?;
-        let status = response.status();
-
-        // Log the incoming response
-        log_http_response(&response);
-
-        if status.is_success() {
-            let response_json: serde_json::Value = response.json().await?;
-
-            // Debug: Log the full Z.AI response when debug mode is enabled
-            if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
-                println!(
-                    "🔧 DEBUG: Z.AI Tools Response: {}",
-                    serde_json::to_string_pretty(&response_json)
-                        .unwrap_or_else(|_| "Failed to serialize response".to_string())
-                );
-            }
-
-            if let Some(choices) = response_json["choices"].as_array() {
-                if let Some(choice) = choices.first() {
-                    let content = choice["message"]["content"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string();
-
-                    // Extract reasoning content if available
-                    let reasoning_content = choice["message"]["reasoning_content"]
-                        .as_str()
-                        .map(|s| s.to_string());
-
-                    // Debug: Log reasoning content if present
-                    if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
-                        if let Some(ref reasoning) = reasoning_content {
-                            println!(
-                                "🧠 DEBUG: Z.AI Tools Reasoning Content Found: {}",
-                                reasoning
-                            );
-                        } else {
-                            println!("🔧 DEBUG: Z.AI Tools No Reasoning Content in response");
-                        }
-                    }
-
-                    let tool_calls = choice["message"]["tool_calls"].as_array().map(|calls| {
-                        calls
-                            .iter()
-                            .map(|tool_call| ToolCall {
-                                id: tool_call["id"].as_str().unwrap_or_default().to_string(),
-                                r#type: "function".to_string(),
-                                function: ToolCallFunction {
-                                    name: tool_call["function"]["name"]
-                                        .as_str()
-                                        .unwrap_or_default()
-                                        .to_string(),
-                                    arguments: tool_call["function"]["arguments"]
-                                        .as_str()
-                                        .unwrap_or_default()
-                                        .to_string(),
-                                },
-                            })
-                            .collect::<Vec<_>>()
-                    });
-
-                    let usage = response_json.get("usage").map(|usage_info| Usage {
-                        prompt_tokens: usage_info["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                        completion_tokens: usage_info["completion_tokens"].as_u64().unwrap_or(0)
-                            as u32,
-                        total_tokens: usage_info["total_tokens"].as_u64().unwrap_or(0) as u32,
-                    });
-
-                    Ok(ApiResponse {
-                        response: content,
-                        success: true,
-                        error: None,
-                        usage,
-                        tool_calls,
-                        model: Some(self.model.clone()),
-                        created: Some(
-                            SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs(),
-                        ),
-                        reasoning_content,
-                    })
-                } else {
-                    Ok(ApiResponse {
-                        response: "No response received".to_string(),
-                        success: false,
-                        error: Some("No choices in response".to_string()),
-                        usage: None,
-                        tool_calls: None,
-                        model: Some(self.model.clone()),
-                        created: Some(
-                            SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs(),
-                        ),
-                        reasoning_content: None,
-                    })
-                }
-            } else {
-                Err(anyhow::anyhow!("Invalid response format from Z.AI API"))
-            }
-        } else {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            Err(anyhow::anyhow!("Z.AI API request failed: {}", error_text))
-        }
-    }
-
-    /// Determine if an error should trigger a retry
-    fn should_retry(&self, error: &anyhow::Error) -> bool {
-        let error_str = error.to_string().to_lowercase();
-
-        // Retry on network-related errors
-        error_str.contains("bad gateway")
-            || error_str.contains("timeout")
-            || error_str.contains("connection refused")
-            || error_str.contains("connection reset")
-            || error_str.contains("connection aborted")
-            || error_str.contains("connection timed out")
-            || error_str.contains("connection failed")
-            || error_str.contains("error sending request")
-            || error_str.contains("dns resolution failed")
-            || error_str.contains("no route to host")
-            || error_str.contains("network is unreachable")
-            || error_str.contains("temporary failure")
-            || error_str.contains("broken pipe")
-            || error_str.contains("unexpected eof")
-            || error_str.contains("http error")
-            || error_str.contains("hyper error")
-            || error_str.contains("reqwest error")
     }
 }
 

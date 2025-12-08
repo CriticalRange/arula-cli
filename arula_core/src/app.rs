@@ -710,6 +710,10 @@ You have access to tools for file operations, shell commands, and more. Use them
                                                 let _ = tx.send(AiResponse::AgentStreamText(error_msg.clone()));
                                                 break;
                                             }
+                                            Some(ContentBlock::BashOutputLine { .. }) => {
+                                                // Ignore streaming bash output in this context (CLI/Legacy)
+                                                // Desktop uses SessionManager which handles this event
+                                            }
                                             None => {
                                                 // Stream ended
                                                 break;

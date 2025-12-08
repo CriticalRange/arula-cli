@@ -9,16 +9,17 @@
 //! - `agent_client` - High-level agent client
 //! - `models` - Unified model caching system
 //! - `http_client` - Optimized HTTP client with connection pooling
-//! - `streaming` - True SSE streaming with tool call accumulation
+//! - `stream` - Unified streaming logic with consolidated tool support
 
 pub mod agent;
 pub mod agent_client;
 pub mod api;
 pub mod http_client;
 pub mod models;
-pub mod streaming;
+pub mod stream;
+pub mod xml_toolcall;
 
 // Note: Types are available via their modules:
 // - models::{ModelCacheManager, ModelFetcher, CachedModels}
 // - http_client::{get_ai_client, get_general_client, create_streaming_client}
-// - streaming::{StreamEvent, process_stream, build_streaming_request}
+// - stream::{StreamEvent, stream_with_tools}

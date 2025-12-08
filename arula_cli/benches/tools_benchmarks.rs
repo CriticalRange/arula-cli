@@ -131,7 +131,7 @@ fn bench_path_operations(c: &mut Criterion) {
     let test_paths = vec![
         "/home/user/.arula/config.yaml",
         "/usr/local/bin/rustc",
-        "../../../target/debug/arula-cli",
+        "../../../target/debug/arula_cli",
         "C:\\Users\\Test\\AppData\\Local\\Programs",
         "/very/long/path/that/goes/many/deep/directories/down/to/some/file.txt",
     ];

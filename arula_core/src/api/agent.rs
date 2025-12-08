@@ -193,52 +193,56 @@ pub trait Tool: Send + Sync {
 }
 
 /// Tool registry for managing available tools
+#[derive(Clone)]
 pub struct ToolRegistry {
-    tools: HashMap<String, Box<dyn Tool<Params = serde_json::Value, Result = serde_json::Value>>>,
+    tools: std::sync::Arc<std::sync::RwLock<HashMap<String, std::sync::Arc<dyn Tool<Params = serde_json::Value, Result = serde_json::Value>>>>>,
 }
 
 impl std::fmt::Debug for ToolRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let count = self.tools.read().unwrap().len();
         f.debug_struct("ToolRegistry")
-            .field("tool_count", &self.tools.len())
+            .field("tool_count", &count)
             .finish()
     }
 }
 
-impl PartialEq for ToolRegistry {
-    fn eq(&self, other: &Self) -> bool {
-        self.tools.len() == other.tools.len()
-    }
-}
+// Removing PartialEq as it's difficult to implement correctly with RwLock and likely unnecessary
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
-            tools: HashMap::new(),
+            tools: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
         }
     }
 
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
         let name = tool.name().to_string();
         // Convert to trait object with generic type erasure
-        let boxed_tool: Box<dyn Tool<Params = serde_json::Value, Result = serde_json::Value>> =
-            Box::new(GenericToolWrapper::new(tool));
-        self.tools.insert(name, boxed_tool);
+        let arc_tool: std::sync::Arc<dyn Tool<Params = serde_json::Value, Result = serde_json::Value>> =
+            std::sync::Arc::new(GenericToolWrapper::new(tool));
+        self.tools.write().unwrap().insert(name, arc_tool);
     }
 
-    pub fn get_tools(&self) -> Vec<&str> {
-        self.tools.keys().map(|s| s.as_str()).collect()
+    pub fn get_tools(&self) -> Vec<String> {
+        self.tools.read().unwrap().keys().cloned().collect()
     }
 
     pub fn get_openai_tools(&self) -> Vec<Value> {
         self.tools
+            .read()
+            .unwrap()
             .values()
             .map(|tool| tool.schema().to_openai_tool())
             .collect()
     }
 
     pub async fn execute_tool(&self, name: &str, params: Value) -> Option<ToolResult> {
-        if let Some(tool) = self.tools.get(name) {
+        let tool = {
+            self.tools.read().unwrap().get(name).cloned()
+        };
+
+        if let Some(tool) = tool {
             Some(tool.execute_with_result(params).await)
         } else {
             None
@@ -293,10 +297,13 @@ where
         // Call the inner tool's execute method
         let result = self.inner.execute(typed_params).await;
 
-        // Convert the specific result to Value
-        match serde_json::to_value(result) {
-            Ok(v) => Ok(v),
-            Err(e) => Err(format!("Result conversion failed: {}", e)),
+        // Convert the specific result to Value - unwrap the Result first!
+        match result {
+            Ok(value) => {
+                serde_json::to_value(value)
+                    .map_err(|e| format!("Result conversion failed: {}", e))
+            }
+            Err(e) => Err(e),
         }
     }
 }
@@ -417,6 +424,11 @@ pub enum ContentBlock {
     ToolResult {
         tool_call_id: String,
         result: ToolResult,
+    },
+    BashOutputLine {
+        tool_call_id: String,
+        line: String,
+        is_stderr: bool,
     },
     Error {
         error: String,

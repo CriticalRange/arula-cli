@@ -2,6 +2,7 @@
 //! Matches modern menu pattern from provider_menu.rs and model_selector.rs
 
 use crate::app::App;
+use crate::ui::menus::common::{draw_modern_box, draw_selected_item};
 use crate::ui::output::OutputHandler;
 use anyhow::Result;
 use console::style;
@@ -191,8 +192,8 @@ impl ApiKeySelector {
             0
         };
 
-        // Draw modern box using original function
-        self.draw_modern_box(start_x, start_y, menu_width, menu_height as u16, "API KEY")?;
+        // Draw modern box using shared function
+        draw_modern_box(start_x, start_y, menu_width, menu_height as u16)?;
 
         // Draw title/header (like original)
         let title_y = start_y + 1;
@@ -235,7 +236,7 @@ impl ApiKeySelector {
             let y = items_start_y + idx as u16;
             if idx == selected_idx {
                 // Selected item with golden color (NO background)
-                self.draw_selected_item(start_x + 2, y, menu_width - 4, option)?;
+                draw_selected_item(start_x, y, menu_width, option)?;
             } else {
                 // Unselected item with normal color
                 stdout()
@@ -303,13 +304,11 @@ impl ApiKeySelector {
         let mut cursor_pos = 0;
 
         loop {
-            // Render input dialog
-            self.draw_modern_box(
+            draw_modern_box(
                 start_x,
                 start_y,
                 dialog_width,
                 dialog_height,
-                "API KEY INPUT",
             )?;
 
             // Draw prompt
@@ -400,87 +399,7 @@ impl ApiKeySelector {
         }
     }
 
-    /// Draw modern box (1:1 from overlay_menu.rs)
-    fn draw_modern_box(&self, x: u16, y: u16, width: u16, height: u16, _title: &str) -> Result<()> {
-        // Modern box with rounded corners using our color theme
-        let top_left = "╭";
-        let top_right = "╮";
-        let bottom_left = "╰";
-        let bottom_right = "╯";
-        let horizontal = "─";
-        let vertical = "│";
-
-        // Validate dimensions to prevent overflow
-        if width < 2 || height < 2 {
-            return Ok(());
-        }
-
-        // Draw borders using our AI highlight color (steel blue)
-        stdout().queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
-            crate::utils::colors::AI_HIGHLIGHT_ANSI,
-        )))?;
-
-        // Draw vertical borders
-        for i in 0..height {
-            stdout().queue(MoveTo(x, y + i))?.queue(Print(vertical))?;
-            stdout()
-                .queue(MoveTo(x + width.saturating_sub(1), y + i))?
-                .queue(Print(vertical))?;
-        }
-
-        // Top border
-        stdout().queue(MoveTo(x, y))?.queue(Print(top_left))?;
-        for _i in 1..width.saturating_sub(1) {
-            stdout().queue(Print(horizontal))?;
-        }
-        stdout().queue(Print(top_right))?;
-
-        // Bottom border
-        stdout()
-            .queue(MoveTo(x, y + height.saturating_sub(1)))?
-            .queue(Print(bottom_left))?;
-        for _i in 1..width.saturating_sub(1) {
-            stdout().queue(Print(horizontal))?;
-        }
-        stdout().queue(Print(bottom_right))?;
-
-        stdout().queue(ResetColor)?;
-        Ok(())
-    }
-
-    /// Draw selected item (1:1 from overlay_menu.rs) - NO BACKGROUND
-    fn draw_selected_item(&self, x: u16, y: u16, width: u16, text: &str) -> Result<()> {
-        // Validate dimensions
-        if width < 3 {
-            return Ok(());
-        }
-
-        // Draw text with proper spacing and primary color (NO background)
-        let display_text = format!("▶ {}", text);
-        let safe_text = if display_text.len() > width.saturating_sub(4) as usize {
-            // Truncate if too long - use character boundaries, not byte boundaries
-            let safe_len = width.saturating_sub(7) as usize;
-            // Use char_indices to get safe character boundaries
-            let char_end = text
-                .char_indices()
-                .nth(safe_len)
-                .map(|(idx, _)| idx)
-                .unwrap_or(text.len());
-            format!("▶ {}...", &text[..char_end])
-        } else {
-            display_text
-        };
-
-        stdout()
-            .queue(MoveTo(x + 2, y))?
-            .queue(SetForegroundColor(crossterm::style::Color::AnsiValue(
-                crate::utils::colors::PRIMARY_ANSI,
-            )))?
-            .queue(Print(safe_text))?
-            .queue(ResetColor)?;
-
-        Ok(())
-    }
+    // NOTE: draw_modern_box and draw_selected_item are now in common.rs
 }
 
 impl Default for ApiKeySelector {

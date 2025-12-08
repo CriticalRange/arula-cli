@@ -14,7 +14,7 @@ use std::io::{stdout, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::common::MenuResult;
+use super::common::{draw_modern_box, draw_selected_item, MenuResult};
 use crate::app::App;
 use crate::ui::output::OutputHandler;
 use crate::utils::conversation::{Conversation, ConversationSummary};
@@ -325,8 +325,8 @@ impl ConversationMenu {
 
         // Only draw box and title on full render
         if !partial_update {
-            // Draw box
-            self.draw_box(start_x, start_y, menu_width, menu_height_u16)?;
+            // Draw box using shared function
+            draw_modern_box(start_x, start_y, menu_width, menu_height_u16)?;
 
             // Draw title
             let title_y = start_y + 1;
@@ -449,8 +449,8 @@ impl ConversationMenu {
                 };
 
                 if is_selected {
-                    // Selected item with golden color
-                    self.draw_selected_item(start_x + 2, y, menu_width - 4, &display)?;
+                    // Selected item with golden color using shared function
+                    draw_selected_item(start_x, y, menu_width, &display)?;
                 } else {
                     // Unselected item
                     stdout()
@@ -508,51 +508,7 @@ impl ConversationMenu {
         Ok(())
     }
 
-    fn draw_box(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
-        let border_color = Color::AnsiValue(crate::utils::colors::MISC_ANSI);
-
-        // Top border
-        stdout()
-            .queue(MoveTo(x, y))?
-            .queue(SetForegroundColor(border_color))?
-            .queue(Print("╭"))?;
-        for _ in 0..(width - 2) {
-            stdout().queue(Print("─"))?;
-        }
-        stdout().queue(Print("╮"))?;
-
-        // Side borders
-        for i in 1..height - 1 {
-            stdout()
-                .queue(MoveTo(x, y + i))?
-                .queue(Print("│"))?
-                .queue(MoveTo(x + width - 1, y + i))?
-                .queue(Print("│"))?;
-        }
-
-        // Bottom border
-        stdout()
-            .queue(MoveTo(x, y + height - 1))?
-            .queue(Print("╰"))?;
-        for _ in 0..(width - 2) {
-            stdout().queue(Print("─"))?;
-        }
-        stdout().queue(Print("╯"))?.queue(ResetColor)?;
-
-        Ok(())
-    }
-
-    fn draw_selected_item(&self, x: u16, y: u16, _width: u16, text: &str) -> Result<()> {
-        stdout()
-            .queue(MoveTo(x, y))?
-            .queue(SetForegroundColor(Color::AnsiValue(
-                crate::utils::colors::PRIMARY_ANSI,
-            )))?
-            .queue(Print("▶ "))?
-            .queue(Print(text))?
-            .queue(ResetColor)?;
-        Ok(())
-    }
+    // NOTE: draw_box (now draw_modern_box) and draw_selected_item are now in common.rs
 
     fn delete_conversation(&mut self, conversation_id: &str) -> Result<()> {
         // Show confirmation at bottom of menu

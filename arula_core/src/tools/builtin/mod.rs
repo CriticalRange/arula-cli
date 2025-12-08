@@ -38,7 +38,7 @@ pub mod web_search;
 // Re-export all tools for public API
 // These are intentionally unused internally but exported for library users
 #[allow(unused_imports)]
-pub use bash::{BashParams, BashResult, BashTool};
+pub use bash::{execute_bash_streaming, BashParams, BashResult, BashTool};
 #[allow(unused_imports)]
 pub use file_edit::{FileEditParams, FileEditResult, FileEditTool};
 #[allow(unused_imports)]

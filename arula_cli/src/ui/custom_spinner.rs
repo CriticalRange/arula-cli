@@ -7,6 +7,7 @@
 //! - Random direction for organic movement
 //! - Smooth orbital rotation - very unique!
 
+use super::colors::hsv_to_rgb;
 use crossterm::{
     cursor, execute,
     style::{Color, ResetColor, SetForegroundColor},
@@ -425,32 +426,7 @@ fn draw_star_with_transition(
     Ok(())
 }
 
-/// Convert HSV to RGB for rainbow effects
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
-    let c = v * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = v - c;
-
-    let (r_prime, g_prime, b_prime) = if h < 60.0 {
-        (c, x, 0.0)
-    } else if h < 120.0 {
-        (x, c, 0.0)
-    } else if h < 180.0 {
-        (0.0, c, x)
-    } else if h < 240.0 {
-        (0.0, x, c)
-    } else if h < 300.0 {
-        (x, 0.0, c)
-    } else {
-        (c, 0.0, x)
-    };
-
-    let r = ((r_prime + m) * 255.0) as u8;
-    let g = ((g_prime + m) * 255.0) as u8;
-    let b = ((b_prime + m) * 255.0) as u8;
-
-    (r, g, b)
-}
+// NOTE: hsv_to_rgb is now in colors.rs
 
 /// Draw final status message with optional transition effect
 fn draw_final_with_transition(

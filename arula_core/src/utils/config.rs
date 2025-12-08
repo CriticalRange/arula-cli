@@ -19,6 +19,10 @@ pub struct Config {
     #[serde(rename = "mcpServers")]
     pub mcp_servers: HashMap<String, McpServerConfig>,
 
+    /// Enable/Disable the animated living background (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub living_background_enabled: Option<bool>,
+
     /// Legacy field for backward compatibility (deprecated)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ai: Option<AiConfig>,
@@ -333,6 +337,17 @@ impl Config {
         }
     }
 
+    /// Get living background enabled setting (default: true)
+    pub fn get_living_background_enabled(&self) -> bool {
+        self.living_background_enabled.unwrap_or(true)
+    }
+
+    /// Set living background enabled setting
+    pub fn set_living_background_enabled(&mut self, enabled: bool) -> Result<()> {
+        self.living_background_enabled = Some(enabled);
+        self.save()
+    }
+
     /// Set Z.AI web search enabled
     pub fn set_zai_web_search_enabled(&mut self, enabled: bool) -> Result<()> {
         if let Some(config) = self.get_active_provider_config_mut() {
@@ -414,7 +429,7 @@ impl Config {
             .unwrap_or_default();
 
         let endpoint = std::env::var("ZAI_BASE_URL")
-            .unwrap_or_else(|_| "https://api.z.ai/api/paas/v4/".to_string());
+            .unwrap_or_else(|_| "https://api.z.ai/api/coding/paas/v4".to_string());
 
         let model = std::env::var("ZAI_MODEL").unwrap_or_else(|_| "GLM-4.6".to_string());
 
@@ -456,6 +471,8 @@ impl Config {
 
         Ok(config)
     }
+
+
 
     /// Get the API URL for the current provider
     pub fn get_api_url(&self) -> String {
@@ -601,6 +618,7 @@ impl Config {
             active_provider: "openai".to_string(),
             providers,
             mcp_servers: HashMap::new(),
+            living_background_enabled: None,
             ai: None,
         }
     }
@@ -630,6 +648,7 @@ impl Config {
             active_provider: "z.ai coding plan".to_string(),
             providers,
             mcp_servers: HashMap::new(),
+            living_background_enabled: None,
             ai: None,
         }
     }
@@ -657,6 +676,7 @@ impl Config {
             active_provider: provider.to_string(),
             providers,
             mcp_servers: HashMap::new(),
+            living_background_enabled: None,
             ai: None,
         }
     }

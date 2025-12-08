@@ -30,7 +30,7 @@ cargo build --release
 cargo run
 
 # Release mode
-./target/release/arula-cli
+./target/release/arula_cli
 ```
 
 ## Usage
@@ -39,7 +39,7 @@ cargo run
 Simply run the CLI to enter chat mode:
 
 ```bash
-./arula-cli
+./arula_cli
 ```
 
 Then type commands like:

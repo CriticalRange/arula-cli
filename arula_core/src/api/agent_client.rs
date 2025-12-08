@@ -3,8 +3,9 @@
 //! This module provides a high-level agent interface that uses the modern tool calling
 //! patterns while integrating with the existing reqwest-based API client.
 
-use crate::api::agent::{AgentOptions, ContentBlock, ToolRegistry, ToolResult};
-use crate::api::api::{ApiClient, ChatMessage, StreamingResponse};
+use crate::api::agent::{AgentOptions, ContentBlock, ToolRegistry};
+use crate::utils::error_utils::{ErrorContext, api_error, stream_error};
+use crate::api::api::{ApiClient, ChatMessage};
 use crate::tools::tools::{create_basic_tool_registry, initialize_mcp_tools};
 use crate::utils::config::Config;
 use crate::utils::debug::debug_print;
@@ -97,50 +98,19 @@ impl AgentClient {
         Self::new(provider, endpoint, api_key, model, options, &config)
     }
 
+    /// Check if streaming is enabled in the configuration
+    pub fn is_streaming_enabled(&self) -> bool {
+        self.config.get_streaming_enabled()
+    }
+
     /// Send a message and get a streaming response
     pub async fn query(
         &self,
         message: &str,
         conversation_history: Option<Vec<ChatMessage>>,
     ) -> Result<Pin<Box<dyn Stream<Item = ContentBlock> + Send>>> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        let api_client = self.api_client.clone();
-        let auto_execute_tools = self.options.auto_execute_tools;
-        let max_tool_iterations = self.options.max_tool_iterations;
-        let debug = self.options.debug;
-        let config_clone = self.config.clone();
-        let tx_clone = tx.clone();
-
-        // Get the available tools with proper schemas from the registry
-        let tools = self.tool_registry.get_openai_tools();
-
-        // Build the messages with the system prompt
-        let messages = self.build_api_messages(message, conversation_history)?;
-
-        tokio::spawn(async move {
-            // Create a new tool registry for execution in the async task
-            let mut execution_registry = create_basic_tool_registry();
-            if let Err(e) = initialize_mcp_tools(&mut execution_registry, &config_clone).await {
-                eprintln!("⚠️ Failed to initialize MCP tools in async task: {}", e);
-            }
-
-            if let Err(e) = Self::handle_streaming_response(
-                api_client,
-                messages,
-                tools,
-                tx,
-                auto_execute_tools,
-                max_tool_iterations,
-                debug,
-                &execution_registry,
-            )
-            .await
-            {
-                let _ = tx_clone.send(ContentBlock::error(format!("Stream error: {}", e)));
-            }
-        });
-
-        Ok(Box::pin(UnboundedReceiverStream::new(rx)))
+        // Delegate to the unified streaming method
+        self.query_streaming(message, conversation_history).await
     }
 
     /// Send a message with true SSE streaming and automatic tool execution
@@ -166,10 +136,8 @@ impl AgentClient {
         let api_client = self.api_client.clone();
         let auto_execute_tools = self.options.auto_execute_tools;
         let max_tool_iterations = self.options.max_tool_iterations;
-        let debug = self.options.debug;
         let config_clone = self.config.clone();
-        let tx_clone = tx.clone();
-
+        
         // Get tools from registry
         let tools = self.tool_registry.get_openai_tools();
 
@@ -177,27 +145,81 @@ impl AgentClient {
         let messages = self.build_api_messages(message, conversation_history)?;
 
         tokio::spawn(async move {
-            // Create tool registry for execution
+            // Re-initialize MCP tools if needed (though get_openai_tools above implies they are loaded)
+            // But clone needs re-init if it creates a fresh registry? AgentClient::clone does basic registry.
+            // We should use the registry we have. 
+            // The previous code created a NEW registry and re-initialized. 
+            // But AgentClient::clone method creates a fresh registry with basic tools only.
+            
+            // Ideally we'd pass the full registry. 
+            // But `StreamWithTools` takes `&ToolRegistry`.
+            // We can reconstruct it:
             let mut execution_registry = create_basic_tool_registry();
             if let Err(e) = initialize_mcp_tools(&mut execution_registry, &config_clone).await {
-                if debug {
-                    debug_print(&format!("⚠️ Failed to initialize MCP tools: {}", e));
-                }
+                debug_print(&format!("⚠️ Failed to initialize MCP tools: {}", e));
             }
 
-            if let Err(e) = Self::handle_true_streaming(
-                api_client,
+            use crate::api::stream::{stream_with_tools, StreamEvent};
+
+            let tx_for_callback = tx.clone();
+            let callback = move |event: StreamEvent| {
+                match event {
+                    StreamEvent::Start { .. } => {
+                        let _ = tx_for_callback.send(ContentBlock::text(""));
+                    }
+                    StreamEvent::TextDelta(text) => {
+                        let _ = tx_for_callback.send(ContentBlock::text(text));
+                    }
+                    StreamEvent::ThinkingDelta(text) => {
+                        let _ = tx_for_callback.send(ContentBlock::reasoning(text));
+                    }
+                    StreamEvent::ToolCallStart { .. } => {
+                        // Tool calls are sent when complete, not at start
+                    }
+                    StreamEvent::ToolCallDelta { .. } => {}
+                    StreamEvent::ToolCallComplete(tc) => {
+                        // Send the tool call so the UI can track tool names
+                        let _ = tx_for_callback.send(ContentBlock::tool_call(
+                            tc.id.clone(),
+                            tc.function.name.clone(),
+                            tc.function.arguments.clone(),
+                        ));
+                    }
+                    StreamEvent::ToolResult { tool_call_id, result } => {
+                        let _ = tx_for_callback.send(ContentBlock::tool_result(tool_call_id, result));
+                    }
+                    StreamEvent::Error(e) => {
+                        let _ = tx_for_callback.send(ContentBlock::error(e));
+                    }
+                    StreamEvent::BashOutputLine { tool_call_id, line, is_stderr } => {
+                        let _ = tx_for_callback.send(ContentBlock::BashOutputLine {
+                            tool_call_id,
+                            line,
+                            is_stderr,
+                        });
+                    }
+                    _ => {}
+                }
+            };
+            
+            // We need to modify `stream_with_tools` to emit ToolResult events!
+            // But first sticking to `query_streaming` replacement.
+            
+            let result = stream_with_tools(
+                &api_client,
                 messages,
-                tools,
-                tx,
+                &tools,
+                &execution_registry,
                 auto_execute_tools,
                 max_tool_iterations,
-                debug,
-                &execution_registry,
-            )
-            .await
-            {
-                let _ = tx_clone.send(ContentBlock::error(format!("Stream error: {}", e)));
+                callback
+            ).await;
+            
+            if let Err(e) = result {
+                 let error_context = ErrorContext::new("Process streaming request")
+                     .with_anyhow_error(&e);
+                 let error_msg = stream_error(error_context);
+                 let _ = tx.send(ContentBlock::error(error_msg));
             }
         });
 
@@ -258,7 +280,10 @@ impl AgentClient {
             )
             .await
             {
-                let _ = tx_clone.send(ContentBlock::error(format!("API error: {}", e)));
+                let error_context = ErrorContext::new("Complete non-streaming request")
+                    .with_anyhow_error(&e);
+                let error_msg = api_error(error_context);
+                let _ = tx_clone.send(ContentBlock::error(error_msg));
             }
         });
 
@@ -294,11 +319,201 @@ impl AgentClient {
                 .send_message_with_tools_sync(&current_messages, &tools)
                 .await?;
 
+            // Send reasoning/thinking content if present
+            if let Some(ref reasoning) = response.reasoning_content {
+                if !reasoning.is_empty() {
+                    crate::utils::debug::debug_print(&format!(
+                        "🧠 Non-streaming: Sending reasoning content: {:?}",
+                        reasoning
+                    ));
+                    let _ = tx.send(ContentBlock::Reasoning {
+                        reasoning: reasoning.clone(),
+                    });
+                    
+                    // Check if reasoning content contains XML tool calls (GLM-4.6 style)
+                    // If the response has no regular tool_calls, check reasoning for XML format
+                    if response.tool_calls.is_none() {
+                        use crate::api::xml_toolcall::extract_tool_call_from_xml;
+                        if let Some(xml_tool_call) = extract_tool_call_from_xml(reasoning) {
+                            // Convert JSON value to ToolCall
+                            if let Ok(tool_call) = serde_json::from_value::<crate::api::api::ToolCall>(xml_tool_call) {
+                                crate::utils::debug::debug_print(&format!(
+                                    "🧠 Extracted XML tool call from reasoning: {:?}",
+                                    tool_call.function.name
+                                ));
+                                
+                                // Send tool call notification
+                                let _ = tx.send(ContentBlock::tool_call(
+                                    tool_call.id.clone(),
+                                    tool_call.function.name.clone(),
+                                    tool_call.function.arguments.clone(),
+                                ));
+                                
+                                // Add to current_messages as if it was a regular tool call
+                                current_messages.push(crate::api::api::ChatMessage {
+                                    role: "assistant".to_string(),
+                                    content: None,
+                                    tool_calls: Some(vec![tool_call.clone()]),
+                                    tool_call_id: None,
+                                    tool_name: None,
+                                });
+                                
+                                // Execute the tool
+                                let args: serde_json::Value =
+                                    serde_json::from_str(&tool_call.function.arguments)
+                                        .unwrap_or(serde_json::json!({}));
+                                
+                                let tool_result = tool_registry
+                                    .execute_tool(&tool_call.function.name, args.clone())
+                                    .await;
+                                
+                                let result_content = match tool_result {
+                                    Some(result) => {
+                                        // Send tool result
+                                        let _ = tx.send(ContentBlock::tool_result(
+                                            tool_call.id.clone(),
+                                            result.clone(),
+                                        ));
+                                        
+                                        // Format for message history
+                                        if result.success {
+                                            result.data.to_string()
+                                        } else {
+                                            format!("Error: {}", result.error.unwrap_or_default())
+                                        }
+                                    }
+                                    None => {
+                                        let error_msg =
+                                            format!("Tool not found: {}", tool_call.function.name);
+                                        let _ = tx.send(ContentBlock::tool_result(
+                                            tool_call.id.clone(),
+                                            crate::api::agent::ToolResult::error(error_msg.clone()),
+                                        ));
+                                        error_msg
+                                    }
+                                };
+                                
+                                // Add tool result to messages
+                                current_messages.push(crate::api::api::ChatMessage {
+                                    role: "tool".to_string(),
+                                    content: Some(result_content),
+                                    tool_calls: None,
+                                    tool_call_id: Some(tool_call.id.clone()),
+                                    tool_name: Some(tool_call.function.name.clone()),
+                                });
+                                
+                                // Continue the loop for another iteration
+                                iterations += 1;
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    crate::utils::debug::debug_print("🧠 Non-streaming: Reasoning content is empty");
+                }
+            } else {
+                crate::utils::debug::debug_print("🧠 Non-streaming: No reasoning content in response");
+            }
+
             // Send the complete text response
             if !response.response.is_empty() {
-                let _ = tx.send(ContentBlock::Text {
-                    text: response.response.clone(),
-                });
+                // Check if regular content contains XML tool calls (GLM-4.6 sometimes puts them here)
+                // Only check if there are no explicit tool_calls in the response
+                if response.tool_calls.is_none() && response.response.contains("<arg_key>") {
+                    use crate::api::xml_toolcall::extract_tool_call_from_xml;
+                    if let Some(xml_tool_call) = extract_tool_call_from_xml(&response.response) {
+                        if let Ok(tool_call) = serde_json::from_value::<crate::api::api::ToolCall>(xml_tool_call) {
+                            crate::utils::debug::debug_print(&format!(
+                                "🧠 Extracted XML tool call from regular content: {:?}",
+                                tool_call.function.name
+                            ));
+                            
+                            // Send tool call notification
+                            let _ = tx.send(ContentBlock::tool_call(
+                                tool_call.id.clone(),
+                                tool_call.function.name.clone(),
+                                tool_call.function.arguments.clone(),
+                            ));
+                            
+                            // Add to current_messages as if it was a regular tool call
+                            current_messages.push(crate::api::api::ChatMessage {
+                                role: "assistant".to_string(),
+                                content: None,
+                                tool_calls: Some(vec![tool_call.clone()]),
+                                tool_call_id: None,
+                                tool_name: None,
+                            });
+                            
+                            // Execute the tool
+                            let args: serde_json::Value =
+                                serde_json::from_str(&tool_call.function.arguments)
+                                    .unwrap_or(serde_json::json!({}));
+                            
+                            let tool_result = tool_registry
+                                .execute_tool(&tool_call.function.name, args.clone())
+                                .await;
+                            
+                            let result_content = match tool_result {
+                                Some(result) => {
+                                    // Send tool result
+                                    let _ = tx.send(ContentBlock::tool_result(
+                                        tool_call.id.clone(),
+                                        result.clone(),
+                                    ));
+                                    
+                                    // Format for message history
+                                    if result.success {
+                                        result.data.to_string()
+                                    } else {
+                                        format!("Error: {}", result.error.unwrap_or_default())
+                                    }
+                                }
+                                None => {
+                                    let error_msg =
+                                        format!("Tool not found: {}", tool_call.function.name);
+                                    let _ = tx.send(ContentBlock::tool_result(
+                                        tool_call.id.clone(),
+                                        crate::api::agent::ToolResult::error(error_msg.clone()),
+                                    ));
+                                    error_msg
+                                }
+                            };
+                            
+                            // Add tool result to messages
+                            current_messages.push(crate::api::api::ChatMessage {
+                                role: "tool".to_string(),
+                                content: Some(result_content),
+                                tool_calls: None,
+                                tool_call_id: Some(tool_call.id.clone()),
+                                tool_name: Some(tool_call.function.name.clone()),
+                            });
+                            
+                            // Continue the loop for another iteration
+                            iterations += 1;
+                            continue;
+                        }
+                    }
+                }
+                
+                // Filter out tool results that the AI outputs as text
+                // Pattern: "Tool <name> returned: {json}"
+                let filtered_content = if response.response.contains(" returned: {") {
+                    // Remove lines containing tool results
+                    response.response
+                        .lines()
+                        .filter(|line| !line.trim().starts_with("Tool ") || !line.contains(" returned: "))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    response.response.clone()
+                };
+                
+                // If no XML tool call was found, send the content as normal text (filtered)
+                if !filtered_content.trim().is_empty() {
+                    let _ = tx.send(ContentBlock::Text {
+                        text: filtered_content,
+                    });
+                }
             }
 
             // Check for tool calls
@@ -393,201 +608,6 @@ impl AgentClient {
         Ok(())
     }
 
-    /// Handle true SSE streaming with tool execution loop
-    async fn handle_true_streaming(
-        api_client: ApiClient,
-        messages: Vec<ChatMessage>,
-        tools: Vec<serde_json::Value>,
-        tx: mpsc::UnboundedSender<ContentBlock>,
-        auto_execute_tools: bool,
-        max_tool_iterations: u32,
-        debug: bool,
-        tool_registry: &crate::api::agent::ToolRegistry,
-    ) -> Result<()> {
-        use crate::api::streaming::StreamEvent;
-
-        let mut current_messages = messages;
-        let mut iterations = 0;
-
-        loop {
-            if iterations >= max_tool_iterations {
-                debug_print("Max tool iterations reached, stopping");
-                break;
-            }
-
-            // Collect stream events and the final response
-            let mut text_started = false;
-            let mut accumulated_text = String::new();
-            let mut tool_calls = Vec::new();
-
-            // Use the new streaming API
-            let response = api_client
-                .send_message_streaming(&current_messages, &tools, |event| {
-                    match event {
-                        StreamEvent::Start { id: _, model: _ } => {
-                            // Stream started
-                            let _ = tx.send(ContentBlock::text(""));
-                            text_started = true;
-                        }
-                        StreamEvent::TextDelta(text) => {
-                            accumulated_text.push_str(&text);
-                            let _ = tx.send(ContentBlock::text(text));
-                        }
-                        StreamEvent::ToolCallStart { index, id, name } => {
-                            if debug {
-                                debug_print(&format!("Tool call start: {} ({})", name, id));
-                            }
-                            // Initialize tool call tracking
-                            while tool_calls.len() <= index {
-                                tool_calls.push(crate::api::api::ToolCall {
-                                    id: String::new(),
-                                    r#type: "function".to_string(),
-                                    function: crate::api::api::ToolCallFunction {
-                                        name: String::new(),
-                                        arguments: String::new(),
-                                    },
-                                });
-                            }
-                            tool_calls[index].id = id;
-                            tool_calls[index].function.name = name;
-                        }
-                        StreamEvent::ToolCallDelta { index, arguments } => {
-                            if index < tool_calls.len() {
-                                tool_calls[index].function.arguments.push_str(&arguments);
-                            }
-                        }
-                        StreamEvent::ToolCallComplete(tc) => {
-                            // Ensure the tool call is in our list
-                            if debug {
-                                debug_print(&format!("Tool call complete: {:?}", tc));
-                            }
-                        }
-                        StreamEvent::Finish { reason, usage: _ } => {
-                            if debug {
-                                debug_print(&format!("Stream finished: {}", reason));
-                            }
-                        }
-                        StreamEvent::Error(err) => {
-                            let _ = tx.send(ContentBlock::error(err));
-                        }
-                        StreamEvent::ThinkingStart => {
-                            // Thinking started - can emit reasoning block
-                            if debug {
-                                debug_print("Thinking started");
-                            }
-                        }
-                        StreamEvent::ThinkingDelta(thinking) => {
-                            // Accumulate thinking content
-                            let _ = tx.send(ContentBlock::reasoning(thinking));
-                        }
-                        StreamEvent::ThinkingEnd => {
-                            // Thinking finished
-                            if debug {
-                                debug_print("Thinking ended");
-                            }
-                        }
-                    }
-                })
-                .await?;
-
-            // Use tool_calls from response if our tracking is empty
-            let final_tool_calls = if tool_calls.is_empty() {
-                response.tool_calls.clone()
-            } else {
-                Some(tool_calls)
-            };
-
-            // Check if we have tool calls to execute
-            if let Some(ref calls) = final_tool_calls {
-                if !calls.is_empty() && auto_execute_tools {
-                    // Add assistant message with tool calls
-                    current_messages.push(ChatMessage {
-                        role: "assistant".to_string(),
-                        content: if accumulated_text.is_empty() {
-                            None
-                        } else {
-                            Some(accumulated_text.clone())
-                        },
-                        tool_calls: Some(calls.clone()),
-                        tool_call_id: None,
-                        tool_name: None,
-                    });
-
-                    // Execute each tool call
-                    for tool_call in calls {
-                        // Send tool call notification
-                        let _ = tx.send(ContentBlock::tool_call(
-                            tool_call.id.clone(),
-                            tool_call.function.name.clone(),
-                            tool_call.function.arguments.clone(),
-                        ));
-
-                        // Parse arguments and execute
-                        let args: serde_json::Value =
-                            serde_json::from_str(&tool_call.function.arguments)
-                                .unwrap_or(json!({}));
-
-                        let tool_result = tool_registry
-                            .execute_tool(&tool_call.function.name, args.clone())
-                            .await;
-
-                        let result_content = match tool_result {
-                            Some(result) => {
-                                // Send tool result
-                                let _ = tx.send(ContentBlock::tool_result(
-                                    tool_call.id.clone(),
-                                    result.clone(),
-                                ));
-
-                                // Format for message history
-                                if result.success {
-                                    result.data.to_string()
-                                } else {
-                                    format!("Error: {}", result.error.unwrap_or_default())
-                                }
-                            }
-                            None => {
-                                let error_msg =
-                                    format!("Tool not found: {}", tool_call.function.name);
-                                let _ = tx.send(ContentBlock::tool_result(
-                                    tool_call.id.clone(),
-                                    ToolResult::error(error_msg.clone()),
-                                ));
-                                error_msg
-                            }
-                        };
-
-                        // Add tool result to messages
-                        current_messages.push(ChatMessage {
-                            role: "tool".to_string(),
-                            content: Some(result_content),
-                            tool_calls: None,
-                            tool_call_id: Some(tool_call.id.clone()),
-                            tool_name: Some(tool_call.function.name.clone()),
-                        });
-                    }
-
-                    // Continue the loop for another iteration
-                    iterations += 1;
-                    continue;
-                } else {
-                    // Tool calls present but auto-execute disabled
-                    for tool_call in calls {
-                        let _ = tx.send(ContentBlock::tool_call(
-                            tool_call.id.clone(),
-                            tool_call.function.name.clone(),
-                            tool_call.function.arguments.clone(),
-                        ));
-                    }
-                }
-            }
-
-            // No more tool calls, we're done
-            break;
-        }
-
-        Ok(())
-    }
 
     /// Register additional tools
     pub fn register_tool<T: crate::api::agent::Tool + 'static>(&mut self, tool: T) {
@@ -616,15 +636,11 @@ impl AgentClient {
     /// Get available tools (with lazy MCP initialization)
     pub async fn get_available_tools(&mut self) -> Vec<String> {
         self.ensure_mcp_tools_initialized().await;
-        self.tool_registry
-            .get_tools()
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect()
+        self.tool_registry.get_tools()
     }
 
     /// Get available tools (sync version without MCP initialization)
-    pub fn get_available_tools_sync(&self) -> Vec<&str> {
+    pub fn get_available_tools_sync(&self) -> Vec<String> {
         self.tool_registry.get_tools()
     }
 
@@ -696,237 +712,5 @@ impl AgentClient {
         Ok(messages)
     }
 
-    /// Handle streaming response with tool calling
-    async fn handle_streaming_response(
-        api_client: ApiClient,
-        messages: Vec<ChatMessage>,
-        _tools: Vec<serde_json::Value>,
-        tx: mpsc::UnboundedSender<ContentBlock>,
-        auto_execute_tools: bool,
-        _max_tool_iterations: u32,
-        debug: bool,
-        tool_registry: &crate::api::agent::ToolRegistry,
-    ) -> Result<()> {
-        // Use the tools passed in (already filtered in query method)
-        let tools = _tools;
 
-        let mut current_messages = messages;
-
-        loop {
-            // Send request with tools
-            let mut stream_rx = api_client
-                .send_message_with_tools(&current_messages, &tools)
-                .await?;
-
-            let mut accumulated_text = String::new();
-            let mut response_tools = Vec::new();
-
-            // Process streaming response
-            while let Some(response) = stream_rx.recv().await {
-                match response {
-                    StreamingResponse::Start => {
-                        let _ = tx.send(ContentBlock::text(""));
-                    }
-                    StreamingResponse::Chunk(chunk) => {
-                        accumulated_text.push_str(&chunk);
-                        let _ = tx.send(ContentBlock::text(chunk));
-                    }
-                    StreamingResponse::End(api_response) => {
-                        // Check for tool calls in the response
-                        if let Some(tool_calls) = api_response.tool_calls {
-                            response_tools.extend(tool_calls);
-                        }
-
-                        // Send reasoning content if available (for Z.AI thinking mode)
-                        if let Some(reasoning) = &api_response.reasoning_content {
-                            if !reasoning.is_empty() {
-                                let _ = tx.send(ContentBlock::reasoning(reasoning.clone()));
-                            }
-                        }
-                        break;
-                    }
-                    StreamingResponse::Error(err) => {
-                        let _ = tx.send(ContentBlock::error(err));
-                        return Ok(());
-                    }
-                }
-            }
-
-            // If no tools were called, we're done
-            if response_tools.is_empty() {
-                break;
-            }
-
-            // Add assistant message with tool calls
-            // Use None for content if it's empty or just whitespace (OpenAI spec: content can be null when tool_calls present)
-            let trimmed_text = accumulated_text.trim();
-            let assistant_content = if trimmed_text.is_empty() {
-                None
-            } else {
-                Some(accumulated_text)
-            };
-            current_messages.push(ChatMessage {
-                role: "assistant".to_string(),
-                content: assistant_content,
-                tool_calls: Some(response_tools.clone()),
-                tool_call_id: None,
-                tool_name: None,
-            });
-
-            // Execute tools if auto-execute is enabled
-            if auto_execute_tools {
-                for tool_call in response_tools {
-                    let tool_call_id = tool_call.id.clone();
-                    let tool_name = tool_call.function.name.clone();
-
-                    let _ = tx.send(ContentBlock::tool_call(
-                        tool_call.id.clone(),
-                        tool_name.clone(),
-                        tool_call.function.arguments.clone(),
-                    ));
-
-                    // Parse and execute the tool
-                    let raw_args = &tool_call.function.arguments;
-                    if debug {
-                        debug_print(&format!(
-                            "DEBUG: Raw tool args for '{}': {}",
-                            tool_name, raw_args
-                        ));
-                    }
-                    match serde_json::from_str::<serde_json::Value>(raw_args) {
-                        Ok(args) => {
-                            if debug {
-                                debug_print(&format!(
-                                    "DEBUG: Parsed tool args for '{}': {}",
-                                    tool_name,
-                                    serde_json::to_string_pretty(&args)
-                                        .unwrap_or_else(|_| "Invalid JSON".to_string())
-                                ));
-                            }
-                            if let Some(result) = tool_registry.execute_tool(&tool_name, args).await
-                            {
-                                if debug {
-                                    debug_print(&format!(
-                                        "DEBUG: Tool '{}' result: success={}, data={:?}",
-                                        tool_name, result.success, result.data
-                                    ));
-                                }
-                                let result_json = if result.success {
-                                    json!({
-                                        "success": true,
-                                        "data": result.data
-                                    })
-                                } else {
-                                    json!({
-                                        "success": false,
-                                        "error": result.error
-                                    })
-                                };
-
-                                if debug {
-                                    let json_str = serde_json::to_string_pretty(&result_json)
-                                        .unwrap_or_else(|_| "Invalid JSON".to_string());
-                                    debug_print(&format!(
-                                        "DEBUG: Tool result JSON size: {} bytes",
-                                        json_str.len()
-                                    ));
-                                    // Truncate for debug output
-                                    if json_str.len() > 500 {
-                                        debug_print(&format!(
-                                            "DEBUG: Tool result JSON (truncated): {}",
-                                            &json_str[..500]
-                                        ));
-                                    } else {
-                                        debug_print(&format!(
-                                            "DEBUG: Tool result JSON: {}",
-                                            json_str
-                                        ));
-                                    }
-                                }
-
-                                // Send tool result back
-                                let _ = tx.send(ContentBlock::tool_result(
-                                    tool_call_id.clone(),
-                                    result.clone(),
-                                ));
-
-                                // Add tool result to conversation
-                                current_messages.push(ChatMessage {
-                                    role: "tool".to_string(),
-                                    content: Some(result_json.to_string()),
-                                    tool_calls: None,
-                                    tool_call_id: Some(tool_call_id.clone()),
-                                    tool_name: Some(tool_name.clone()),
-                                });
-                            } else {
-                                let error_msg = format!("Tool '{}' not found", tool_name);
-                                let _ = tx.send(ContentBlock::tool_result(
-                                    tool_call_id.clone(),
-                                    ToolResult::error(error_msg.clone()),
-                                ));
-
-                                current_messages.push(ChatMessage {
-                                    role: "tool".to_string(),
-                                    content: Some(
-                                        json!({
-                                            "success": false,
-                                            "error": error_msg
-                                        })
-                                        .to_string(),
-                                    ),
-                                    tool_calls: None,
-                                    tool_call_id: Some(tool_call_id.clone()),
-                                    tool_name: Some(tool_name.clone()),
-                                });
-                            }
-                        }
-                        Err(err) => {
-                            let error_msg = format!("Failed to parse tool arguments: {}", err);
-                            let _ = tx.send(ContentBlock::tool_result(
-                                tool_call_id.clone(),
-                                ToolResult::error(error_msg.clone()),
-                            ));
-
-                            current_messages.push(ChatMessage {
-                                role: "tool".to_string(),
-                                content: Some(
-                                    json!({
-                                        "success": false,
-                                        "error": error_msg
-                                    })
-                                    .to_string(),
-                                ),
-                                tool_calls: None,
-                                tool_call_id: Some(tool_call_id.clone()),
-                                tool_name: Some(tool_name.clone()),
-                            });
-                        }
-                    }
-                }
-
-                // Continue conversation to get AI's response to tool results
-                if debug {
-                    debug_print(&format!(
-                        "DEBUG: About to make continuation API call with {} messages",
-                        current_messages.len()
-                    ));
-                    // Check total message size
-                    let total_size: usize = current_messages
-                        .iter()
-                        .map(|msg| serde_json::to_string(msg).unwrap_or_default().len())
-                        .sum();
-                    debug_print(&format!(
-                        "DEBUG: Total message payload size: {} bytes",
-                        total_size
-                    ));
-                }
-                continue;
-            } else {
-                // If not auto-executing, just return the tool calls
-                break;
-            }
-        }
-
-        Ok(())
-    }
 }

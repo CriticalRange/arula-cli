@@ -8,6 +8,9 @@ use async_trait::async_trait;
 use memmap2::MmapOptions;
 use serde::{Deserialize, Serialize};
 
+/// Maximum number of characters to return (to prevent context overflow)
+const MAX_CHARS: usize = 5000;
+
 /// Parameters for the file read tool
 #[derive(Debug, Deserialize)]
 pub struct FileReadParams {
@@ -28,6 +31,10 @@ pub struct FileReadResult {
     pub lines: usize,
     /// Whether the read was successful
     pub success: bool,
+    /// Whether the content was truncated due to size limit
+    pub truncated: bool,
+    /// Total content size in characters (may be larger than content.len() if truncated)
+    pub total_chars: usize,
 }
 
 /// File reading tool with memory-mapped file support
@@ -146,11 +153,20 @@ impl Tool for FileReadTool {
             };
 
             let line_count = content.lines().count();
+            let total_chars = content.len();
+            let truncated = total_chars > MAX_CHARS;
+            let final_content = if truncated {
+                content.chars().take(MAX_CHARS).collect::<String>()
+            } else {
+                content
+            };
 
             Ok(FileReadResult {
-                content,
+                content: final_content,
                 lines: line_count,
                 success: true,
+                truncated,
+                total_chars,
             })
         } else {
             // Fallback to buffered reading for small files or when memmap fails
@@ -179,11 +195,20 @@ impl Tool for FileReadTool {
 
             let content = lines.join("\n");
             let line_count = lines.len();
+            let total_chars = content.len();
+            let truncated = total_chars > MAX_CHARS;
+            let final_content = if truncated {
+                content.chars().take(MAX_CHARS).collect::<String>()
+            } else {
+                content
+            };
 
             Ok(FileReadResult {
-                content,
+                content: final_content,
                 lines: line_count,
                 success: true,
+                truncated,
+                total_chars,
             })
         }
     }

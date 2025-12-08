@@ -6,6 +6,7 @@
 //! - Smooth text transitions
 //! - Rainbow and pulse effects
 
+use super::colors::hsv_to_rgb;
 use crossterm::{
     cursor, execute,
     style::{Color, Print, ResetColor, SetForegroundColor},
@@ -246,32 +247,7 @@ impl TerminalEffects {
     }
 }
 
-/// Convert HSV color values to RGB
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
-    let c = v * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = v - c;
-
-    let (r_prime, g_prime, b_prime) = if h < 60.0 {
-        (c, x, 0.0)
-    } else if h < 120.0 {
-        (x, c, 0.0)
-    } else if h < 180.0 {
-        (0.0, c, x)
-    } else if h < 240.0 {
-        (0.0, x, c)
-    } else if h < 300.0 {
-        (x, 0.0, c)
-    } else {
-        (c, 0.0, x)
-    };
-
-    let r = ((r_prime + m) * 255.0) as u8;
-    let g = ((g_prime + m) * 255.0) as u8;
-    let b = ((b_prime + m) * 255.0) as u8;
-
-    (r, g, b)
-}
+// NOTE: hsv_to_rgb is now in colors.rs
 
 #[cfg(test)]
 mod tests {
@@ -279,6 +255,8 @@ mod tests {
 
     #[test]
     fn test_hsv_to_rgb() {
+        use super::super::colors::hsv_to_rgb;
+
         // Test pure red
         let (r, g, b) = hsv_to_rgb(0.0, 1.0, 1.0);
         assert_eq!(r, 255);
