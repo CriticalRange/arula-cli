@@ -79,6 +79,52 @@ pub struct AiConfig {
     pub api_key: String,
 }
 
+/// Predefined z.ai API endpoint configuration
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZaiEndpoint {
+    pub name: String,
+    pub url: String,
+    pub description: String,
+}
+
+impl ZaiEndpoint {
+    /// Get all available z.ai API endpoints
+    pub fn all() -> Vec<ZaiEndpoint> {
+        vec![
+            ZaiEndpoint {
+                name: "Coding Plan".to_string(),
+                url: "https://api.z.ai/api/coding/paas/v4".to_string(),
+                description: "Original Z.AI coding assistant API".to_string(),
+            },
+            ZaiEndpoint {
+                name: "Anthropic Compatible".to_string(),
+                url: "https://api.z.ai/api/anthropic/v1/messages".to_string(),
+                description: "Anthropic Messages API compatible endpoint".to_string(),
+            },
+        ]
+    }
+
+    /// Get endpoint names for dropdown display
+    pub fn names() -> Vec<String> {
+        Self::all().into_iter().map(|e| e.name).collect()
+    }
+
+    /// Get endpoint by name
+    pub fn by_name(name: &str) -> Option<ZaiEndpoint> {
+        Self::all().into_iter().find(|e| e.name == name)
+    }
+
+    /// Get endpoint by URL
+    pub fn by_url(url: &str) -> Option<ZaiEndpoint> {
+        Self::all().into_iter().find(|e| e.url == url)
+    }
+
+    /// Get the default endpoint
+    pub fn default_endpoint() -> ZaiEndpoint {
+        Self::all().into_iter().next().unwrap()
+    }
+}
+
 impl AiConfig {
     /// Get the default configuration for a specific provider
     pub fn get_provider_defaults(provider: &str) -> AiConfig {

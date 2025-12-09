@@ -84,6 +84,8 @@ enum Message {
     ConfigStreamingToggled(bool),
     ConfigLivingBackgroundToggled(bool),
     ConfigApiUrlChanged(String),
+    /// Handle z.ai endpoint selection change
+    ConfigEndpointChanged(String),
     ConfigApiKeyChanged(String),
     ConfigThinkingToggled(bool),
     ConfigWebSearchToggled(bool),
@@ -405,10 +407,17 @@ impl App {
                 self.config_form.model = model;
             }
             Message::ConfigApiUrlChanged(url) => {
-                if self.config_form.api_url_editable() {
-                    self.config_form.api_url = url;
-                    self.config_form.clear_status();
+                self.config_form.api_url = url;
+                self.config_form.clear_status();
+            }
+            Message::ConfigEndpointChanged(endpoint_name) => {
+                use arula_core::utils::config::ZaiEndpoint;
+                self.config_form.endpoint_name = endpoint_name.clone();
+                // Update api_url based on selected endpoint
+                if let Some(endpoint) = ZaiEndpoint::by_name(&endpoint_name) {
+                    self.config_form.api_url = endpoint.url;
                 }
+                self.config_form.clear_status();
             }
             Message::ConfigApiKeyChanged(key) => {
                 self.config_form.api_key = key;
@@ -718,8 +727,27 @@ impl App {
                     "{} {}{} {} {}",
                     icon, display_name, extra_info, status, result_summary
                 );
-                if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
-                    s.update_tool_message(content, Utc::now().to_rfc3339());
+                
+                // Find session index first, then update tool message
+                let session_idx = self.sessions.iter().position(|s| s.id == id);
+                
+                if let Some(idx) = session_idx {
+                    let session = &mut self.sessions[idx];
+                    session.update_tool_message(content, Utc::now().to_rfc3339());
+                    
+                    // Auto-collapse the tool bubble when it completes
+                    // Find the last tool message index
+                    if let Some(msg_idx) = session.messages.iter().rposition(|m| m.is_tool()) {
+                        let key = format!("{}:{}", idx, msg_idx);
+                        let spring = self.tool_animations.entry(key).or_insert_with(|| {
+                            let mut s = Spring::default();
+                            s.position = 1.0; // Start expanded
+                            s.target = 1.0;
+                            s
+                        });
+                        // Set target to collapsed
+                        spring.set_target(0.0);
+                    }
                 }
             }
             UiEvent::BashOutputLine(_session_id, tool_call_id, line, is_stderr) => {
@@ -744,9 +772,7 @@ impl App {
         }
 
         self.config.set_model(&self.config_form.model);
-        if self.config_form.api_url_editable() {
-            self.config.set_api_url(&self.config_form.api_url);
-        }
+        self.config.set_api_url(&self.config_form.api_url);
         self.config.set_api_key(&self.config_form.api_key);
 
         if let Some(active) = self.config.get_active_provider_config_mut() {
@@ -1407,24 +1433,27 @@ impl App {
             Vision,
             Other,
         }
-
-        let tool_type = if content.contains("Shell") || content.contains("execute_bash") {
+        // Detect tool type from content
+        // Content format: "{icon} {ToolName}{extra_info} {status} {result}"
+        // e.g.: "◇ List ✓ 24 items" or "○ Shell ✓ exit 0"
+        // Use starts_with after the icon to avoid false matches with file content
+        let tool_type = if content.starts_with("○ Shell") || content.starts_with("◆ Shell") || content.contains("execute_bash") {
             ToolType::Shell
-        } else if content.contains("Edit") || content.contains("edit_file") {
+        } else if content.starts_with("□ Edit") || content.starts_with("◆ Edit") || content.contains("edit_file") {
             ToolType::EditFile
-        } else if content.contains("Write") || content.contains("write_file") {
+        } else if content.starts_with("□ Write") || content.starts_with("◆ Write") || content.contains("write_file") {
             ToolType::WriteFile
-        } else if content.contains("Read") || content.contains("read_file") {
+        } else if content.starts_with("○ Read") || content.starts_with("◆ Read") || content.contains("read_file") {
             ToolType::ReadFile
-        } else if content.contains("List") || content.contains("list_directory") {
+        } else if content.starts_with("◇ List") || content.starts_with("◆ List") || content.contains("list_directory") {
             ToolType::ListDirectory
-        } else if content.contains("Search") && !content.contains("Web") {
+        } else if content.starts_with("○ Search") || content.starts_with("◆ Search") || (content.contains("Search") && !content.contains("Web")) {
             ToolType::Search
-        } else if content.contains("Web") || content.contains("web_search") {
+        } else if content.starts_with("⭕ Web") || content.starts_with("◆ Web") || content.contains("web_search") {
             ToolType::WebSearch
-        } else if content.contains("MCP") || content.contains("mcp_call") {
+        } else if content.starts_with("◊ MCP") || content.starts_with("◆ MCP") || content.contains("mcp_call") {
             ToolType::Mcp
-        } else if content.contains("Vision") || content.contains("visioneer") {
+        } else if content.starts_with("○ Vision") || content.starts_with("◆ Vision") || content.contains("visioneer") {
             ToolType::Vision
         } else {
             ToolType::Other
@@ -2475,7 +2504,7 @@ impl App {
                 color: Some(pal.text),
             });
 
-        let content = container(
+        let base_content =
             column![
                 text("Provider")
                     .size(12)
@@ -2549,10 +2578,69 @@ impl App {
                     .style(move |_| iced::widget::text::Style {
                         color: Some(pal.muted)
                     }),
-                text_input("https://api.example.com/v1", &form.api_url)
-                    .on_input(Message::ConfigApiUrlChanged)
-                    .padding(8)
-                    .style(input_style(pal)),
+            ]
+            .spacing(8)
+            .width(Length::Fill);
+
+        // Add endpoint UI - for z.ai show dropdown, for others show text input
+        let endpoint_content: Element<'a, Message> = if form.is_zai_provider() {
+            // Z.AI provider: show endpoint dropdown with predefined options
+            let mut endpoint_options = form.endpoint_options.clone();
+            // Add "Custom" option if not already present
+            if !endpoint_options.contains(&"Custom".to_string()) {
+                endpoint_options.push("Custom".to_string());
+            }
+            
+            let endpoint_selector = pick_list(
+                endpoint_options,
+                Some(form.endpoint_name.clone()),
+                Message::ConfigEndpointChanged
+            );
+
+            // Show text input only when Custom is selected
+            if form.endpoint_name == "Custom" {
+                column![
+                    endpoint_selector,
+                    Space::with_height(Length::Fixed(8.0)),
+                    text("Custom URL")
+                        .size(11)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(pal.muted)
+                        }),
+                    text_input("https://api.z.ai/custom/endpoint", &form.api_url)
+                        .on_input(Message::ConfigApiUrlChanged)
+                        .padding(8)
+                        .style(input_style(pal)),
+                ]
+                .spacing(4)
+                .into()
+            } else {
+                // Show selected endpoint URL as read-only info
+                column![
+                    endpoint_selector,
+                    Space::with_height(Length::Fixed(4.0)),
+                    text(&form.api_url)
+                        .size(11)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(Color { a: 0.6, ..pal.text })
+                        }),
+                ]
+                .spacing(4)
+                .into()
+            }
+        } else {
+            // Other providers: show regular text input
+            text_input("https://api.example.com/v1", &form.api_url)
+                .on_input(Message::ConfigApiUrlChanged)
+                .padding(8)
+                .style(input_style(pal))
+                .into()
+        };
+
+        let content = container(
+            column![
+                base_content,
+                endpoint_content,
                 Space::with_height(Length::Fill),
             ]
             .spacing(8)

@@ -1,4 +1,4 @@
-use arula_core::utils::config::{AiConfig, Config};
+use arula_core::utils::config::{AiConfig, Config, ZaiEndpoint};
 
 /// Form state for the settings configuration panel.
 #[derive(Debug, Clone)]
@@ -17,6 +17,10 @@ pub struct ConfigForm {
     pub max_tokens: usize,
     pub provider_options: Vec<String>,
     pub status: Option<String>,
+    /// Selected z.ai endpoint name (only used when provider is z.ai)
+    pub endpoint_name: String,
+    /// Available z.ai endpoint options
+    pub endpoint_options: Vec<String>,
 }
 
 impl ConfigForm {
@@ -34,7 +38,7 @@ impl ConfigForm {
             .unwrap_or(defaults.model);
         let api_url = provider_config
             .and_then(|p| p.api_url.clone())
-            .unwrap_or(defaults.api_url);
+            .unwrap_or(defaults.api_url.clone());
         let api_key = provider_config
             .map(|p| p.api_key.clone())
             .unwrap_or(defaults.api_key);
@@ -49,6 +53,17 @@ impl ConfigForm {
             .unwrap_or(false);
         let streaming_enabled = provider_config.and_then(|p| p.streaming).unwrap_or(true); // Default to true
         let living_background_enabled = config.get_living_background_enabled();
+
+        // Determine endpoint selection for z.ai provider
+        let endpoint_options = ZaiEndpoint::names();
+        let endpoint_name = if provider.to_lowercase().contains("z.ai") {
+            // Try to match current api_url to a known endpoint
+            ZaiEndpoint::by_url(&api_url)
+                .map(|e| e.name)
+                .unwrap_or_else(|| "Custom".to_string())
+        } else {
+            String::new()
+        };
 
         Self {
             provider,
@@ -65,6 +80,8 @@ impl ConfigForm {
             max_tokens: 2048,
             provider_options,
             status: None,
+            endpoint_name,
+            endpoint_options,
         }
     }
 
@@ -75,8 +92,9 @@ impl ConfigForm {
     }
 
     /// Returns true if the API URL field should be editable.
+    /// Now returns true for all providers to allow custom endpoint configuration.
     pub fn api_url_editable(&self) -> bool {
-        matches!(self.provider.to_lowercase().as_str(), "custom" | "ollama")
+        true
     }
 
     /// Sets a success status message.
@@ -92,6 +110,11 @@ impl ConfigForm {
     /// Clears the status message.
     pub fn clear_status(&mut self) {
         self.status = None;
+    }
+
+    /// Returns true if the current provider is z.ai
+    pub fn is_zai_provider(&self) -> bool {
+        self.provider.to_lowercase().contains("z.ai")
     }
 }
 

@@ -145,6 +145,134 @@ impl ToolCallAccumulator {
 //  Request Building
 // ============================================================================
 
+/// Check if the endpoint URL is an Anthropic-compatible z.ai endpoint
+pub fn is_anthropic_compatible_endpoint(endpoint: &str) -> bool {
+    endpoint.contains("/api/anthropic")
+}
+
+/// Convert OpenAI-format tools to Anthropic format
+fn convert_tools_to_anthropic(tools: &[Value]) -> Vec<Value> {
+    tools
+        .iter()
+        .filter_map(|tool| {
+            // OpenAI format: { "type": "function", "function": { "name", "description", "parameters" } }
+            // Anthropic format: { "name", "description", "input_schema" }
+            let func = tool.get("function")?;
+            let name = func.get("name")?.as_str()?;
+            let description = func.get("description")?.as_str().unwrap_or("");
+            let parameters = func.get("parameters").cloned().unwrap_or(json!({"type": "object", "properties": {}}));
+            
+            Some(json!({
+                "name": name,
+                "description": description,
+                "input_schema": parameters
+            }))
+        })
+        .collect()
+}
+
+/// Build an Anthropic Messages API compatible request body
+pub fn build_anthropic_request(
+    model: &str,
+    messages: &[ChatMessage],
+    tools: Option<&[Value]>,
+    max_tokens: u32,
+) -> Value {
+    // Extract system message (first message with role "system")
+    let system_content: Option<String> = messages
+        .iter()
+        .find(|m| m.role == "system")
+        .and_then(|m| m.content.clone());
+
+    // Build messages array, excluding system messages and converting tool messages
+    let anthropic_messages: Vec<Value> = messages
+        .iter()
+        .filter(|msg| msg.role != "system") // System goes in separate param
+        .filter_map(|msg| {
+            match msg.role.as_str() {
+                "user" => {
+                    Some(json!({
+                        "role": "user",
+                        "content": msg.content.clone().unwrap_or_default()
+                    }))
+                }
+                "assistant" => {
+                    let mut content_blocks: Vec<Value> = Vec::new();
+                    
+                    // Add text content if present
+                    if let Some(text) = &msg.content {
+                        if !text.is_empty() {
+                            content_blocks.push(json!({
+                                "type": "text",
+                                "text": text
+                            }));
+                        }
+                    }
+                    
+                    // Add tool_use blocks if present
+                    if let Some(tool_calls) = &msg.tool_calls {
+                        for tc in tool_calls {
+                            let input: Value = serde_json::from_str(&tc.function.arguments)
+                                .unwrap_or(json!({}));
+                            content_blocks.push(json!({
+                                "type": "tool_use",
+                                "id": tc.id,
+                                "name": tc.function.name,
+                                "input": input
+                            }));
+                        }
+                    }
+                    
+                    if content_blocks.is_empty() {
+                        None
+                    } else {
+                        Some(json!({
+                            "role": "assistant",
+                            "content": content_blocks
+                        }))
+                    }
+                }
+                "tool" => {
+                    // Convert tool results to Anthropic format
+                    Some(json!({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": msg.tool_call_id.clone().unwrap_or_default(),
+                            "content": msg.content.clone().unwrap_or_default()
+                        }]
+                    }))
+                }
+                _ => None
+            }
+        })
+        .collect();
+
+    let mut request = json!({
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": anthropic_messages,
+        "stream": true
+    });
+
+    // Add system prompt if present
+    if let Some(system) = system_content {
+        request["system"] = json!(system);
+    }
+
+    // Convert and add tools if present
+    if let Some(t) = tools {
+        if !t.is_empty() {
+            let anthropic_tools = convert_tools_to_anthropic(t);
+            if !anthropic_tools.is_empty() {
+                request["tools"] = json!(anthropic_tools);
+            }
+        }
+    }
+
+    request
+}
+
 /// Build a unified request body for streaming, handling provider specifics
 pub fn build_streaming_request(
     provider: &AIProvider,
@@ -433,7 +561,9 @@ where
     }
 
     // Before finalizing, check if reasoning_buffer contains XML tool calls
-    // This handles GLM-4.6 style XML tool calls in reasoning content
+    // This handles GLM-4.6 style XML tool calls in reasoning content (Coding Plan endpoint only)
+    // Note: Anthropic-compatible endpoint uses structured tool_use blocks, not XML
+    // The XML check only triggers when tool_acc is empty (no structured tool calls found)
     if !reasoning_buffer.is_empty() && tool_acc.is_empty() {
         if let Some(xml_tool_call) = extract_tool_call_from_xml(&reasoning_buffer) {
             // Convert JSON value to ToolCall
@@ -666,15 +796,26 @@ where
             break;
         }
 
-        // Build request (uses Z.AI fix internally)
-        let request_body = build_streaming_request(
-            &client.provider,
-            client.model(),
-            &current_messages,
-            Some(tools),
-            0.7,
-            4096,
-        );
+        // Build request - check if we're using Anthropic-compatible endpoint
+        let request_body = if is_anthropic_compatible_endpoint(&client.endpoint) {
+            // Use Anthropic Messages API format
+            build_anthropic_request(
+                client.model(),
+                &current_messages,
+                Some(tools),
+                4096,
+            )
+        } else {
+            // Use standard OpenAI-compatible format (for Coding Plan endpoint)
+            build_streaming_request(
+                &client.provider,
+                client.model(),
+                &current_messages,
+                Some(tools),
+                0.7,
+                4096,
+            )
+        };
 
         // Send request
         let response = client.make_streaming_request(request_body).await?;

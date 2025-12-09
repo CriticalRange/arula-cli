@@ -325,10 +325,18 @@ impl ApiClient {
                     request_builder.header("Authorization", format!("Bearer {}", self.api_key));
             }
             AIProvider::ZAiCoding => {
-                // Add Accept-Language header to encourage English responses from Chinese models
-                request_builder = request_builder
-                    .header("Authorization", format!("Bearer {}", self.api_key))
-                    .header("Accept-Language", "en-US,en");
+                // Check if using Anthropic-compatible endpoint
+                if self.endpoint.contains("/api/anthropic") {
+                    // Use Anthropic-style headers for the Anthropic-compatible endpoint
+                    request_builder = request_builder
+                        .header("x-api-key", &self.api_key)
+                        .header("anthropic-version", "2023-06-01");
+                } else {
+                    // Use Bearer token for Coding Plan endpoint
+                    request_builder = request_builder
+                        .header("Authorization", format!("Bearer {}", self.api_key))
+                        .header("Accept-Language", "en-US,en");
+                }
             }
             // Ollama usually doesn't need auth, but Custom might
             AIProvider::Custom => {
@@ -483,81 +491,186 @@ impl ApiClient {
                 request
             }
             AIProvider::ZAiCoding => {
-                // Z.AI-specific request format
-                let is_zai_endpoint = self.endpoint.contains("api.z.ai");
+                // Check if using Anthropic-compatible endpoint
+                let is_anthropic_endpoint = self.endpoint.contains("/api/anthropic");
+                
+                if is_anthropic_endpoint {
+                    // Use Anthropic Messages API format
+                    // Extract system message
+                    let system_content: Option<String> = messages
+                        .iter()
+                        .find(|m| m.role == "system")
+                        .and_then(|m| m.content.clone());
 
-                // Convert ChatMessage format to plain objects for Z.AI
-                let zai_messages: Vec<Value> = messages
-                    .into_iter()
-                    .filter_map(|msg| {
-                        // Skip assistant messages that only have tool_calls (no content)
-                        if msg.role == "assistant"
-                            && msg.content.is_none()
-                            && msg.tool_calls.is_some()
-                        {
-                            return None;
-                        }
+                    // Build messages array, excluding system messages
+                    let anthropic_messages: Vec<Value> = messages
+                        .into_iter()
+                        .filter(|msg| msg.role != "system")
+                        .filter_map(|msg| {
+                            match msg.role.as_str() {
+                                "user" => {
+                                    Some(json!({
+                                        "role": "user",
+                                        "content": msg.content.clone().unwrap_or_default()
+                                    }))
+                                }
+                                "assistant" => {
+                                    let mut content_blocks: Vec<Value> = Vec::new();
+                                    
+                                    if let Some(text) = &msg.content {
+                                        if !text.is_empty() {
+                                            content_blocks.push(json!({
+                                                "type": "text",
+                                                "text": text
+                                            }));
+                                        }
+                                    }
+                                    
+                                    if let Some(tool_calls) = &msg.tool_calls {
+                                        for tc in tool_calls {
+                                            let input: Value = serde_json::from_str(&tc.function.arguments)
+                                                .unwrap_or(json!({}));
+                                            content_blocks.push(json!({
+                                                "type": "tool_use",
+                                                "id": tc.id,
+                                                "name": tc.function.name,
+                                                "input": input
+                                            }));
+                                        }
+                                    }
+                                    
+                                    if content_blocks.is_empty() {
+                                        None
+                                    } else {
+                                        Some(json!({
+                                            "role": "assistant",
+                                            "content": content_blocks
+                                        }))
+                                    }
+                                }
+                                "tool" => {
+                                    Some(json!({
+                                        "role": "user",
+                                        "content": [{
+                                            "type": "tool_result",
+                                            "tool_use_id": msg.tool_call_id.clone().unwrap_or_default(),
+                                            "content": msg.content.clone().unwrap_or_default()
+                                        }]
+                                    }))
+                                }
+                                _ => None
+                            }
+                        })
+                        .collect();
 
-                        // Convert tool role messages to user messages (Z.AI doesn't support tool role)
-                        if msg.role == "tool" {
-                            // Format tool result as a user message
-                            let tool_name = msg.tool_name.as_deref().unwrap_or("unknown_tool");
-                            let content = msg.content.as_deref().unwrap_or("");
-                            return Some(json!({
-                                "role": "user",
-                                "content": format!("Tool {} returned: {}", tool_name, content)
-                            }));
-                        }
-
-                        // Regular messages
-                        Some(json!({
-                            "role": msg.role,
-                            "content": msg.content.unwrap_or_default()
-                        }))
-                    })
-                    .collect();
-
-                // Set up model-specific parameters based on official GLM specs
-                let max_tokens = match self.model.as_str() {
-                    "GLM-4.6" => 65536,
-                    "GLM-4.5" | "GLM-4.5-AIR" | "GLM-4.5-X" | "GLM-4.5-AIRX" | "GLM-4.5-FLASH"
-                    | "GLM-4.5V" => 65536,
-                    "GLM-4-32B-0414-128K" => 16384,
-                    _ => 2048,
-                };
-
-                let mut request = json!({
-                    "model": self.model,
-                    "messages": zai_messages,
-                    "max_tokens": max_tokens,
-                    "stream": false
-                });
-
-                // Add thinking mode if enabled
-                if thinking_enabled {
-                    request["thinking"] = serde_json::json!({
-                        "type": "enabled"
+                    let mut request = json!({
+                        "model": self.model,
+                        "max_tokens": 4096,
+                        "messages": anthropic_messages,
+                        "stream": false
                     });
-                }
 
-                // Only add tools for non-coding endpoints and if tools are provided
-                if !is_zai_endpoint {
+                    if let Some(system) = system_content {
+                        request["system"] = json!(system);
+                    }
+
+                    // Convert tools to Anthropic format
                     if let Some(t) = tools {
                         if !t.is_empty() {
-                            request["tools"] = json!(t);
-                            // Don't add tool_choice for Z.AI as it might not be supported
+                            let anthropic_tools: Vec<Value> = t.iter().filter_map(|tool| {
+                                let func = tool.get("function")?;
+                                let name = func.get("name")?.as_str()?;
+                                let description = func.get("description")?.as_str().unwrap_or("");
+                                let parameters = func.get("parameters").cloned()
+                                    .unwrap_or(json!({"type": "object", "properties": {}}));
+                                
+                                Some(json!({
+                                    "name": name,
+                                    "description": description,
+                                    "input_schema": parameters
+                                }))
+                            }).collect();
+                            
+                            if !anthropic_tools.is_empty() {
+                                request["tools"] = json!(anthropic_tools);
+                            }
                         }
                     }
-                } else if let Some(t) = tools {
-                    // For Z.AI coding endpoint, check if tools are provided
-                    if !t.is_empty() {
-                        // Z.AI coding endpoint might not support tools
-                        // We'll add them but without tool_choice to see if that helps
-                        request["tools"] = json!(t);
-                    }
-                }
 
-                request
+                    request
+                } else {
+                    // Original Z.AI Coding Plan format
+                    let is_zai_endpoint = self.endpoint.contains("api.z.ai");
+
+                    // Convert ChatMessage format to plain objects for Z.AI
+                    let zai_messages: Vec<Value> = messages
+                        .into_iter()
+                        .filter_map(|msg| {
+                            // Skip assistant messages that only have tool_calls (no content)
+                            if msg.role == "assistant"
+                                && msg.content.is_none()
+                                && msg.tool_calls.is_some()
+                            {
+                                return None;
+                            }
+
+                            // Convert tool role messages to user messages (Z.AI doesn't support tool role)
+                            if msg.role == "tool" {
+                                // Format tool result as a user message
+                                let tool_name = msg.tool_name.as_deref().unwrap_or("unknown_tool");
+                                let content = msg.content.as_deref().unwrap_or("");
+                                return Some(json!({
+                                    "role": "user",
+                                    "content": format!("Tool {} returned: {}", tool_name, content)
+                                }));
+                            }
+
+                            // Regular messages
+                            Some(json!({
+                                "role": msg.role,
+                                "content": msg.content.unwrap_or_default()
+                            }))
+                        })
+                        .collect();
+
+                    // Set up model-specific parameters based on official GLM specs
+                    let max_tokens = match self.model.as_str() {
+                        "GLM-4.6" => 65536,
+                        "GLM-4.5" | "GLM-4.5-AIR" | "GLM-4.5-X" | "GLM-4.5-AIRX" | "GLM-4.5-FLASH"
+                        | "GLM-4.5V" => 65536,
+                        "GLM-4-32B-0414-128K" => 16384,
+                        _ => 2048,
+                    };
+
+                    let mut request = json!({
+                        "model": self.model,
+                        "messages": zai_messages,
+                        "max_tokens": max_tokens,
+                        "stream": false
+                    });
+
+                    // Add thinking mode if enabled
+                    if thinking_enabled {
+                        request["thinking"] = serde_json::json!({
+                            "type": "enabled"
+                        });
+                    }
+
+                    // Only add tools for non-coding endpoints and if tools are provided
+                    if !is_zai_endpoint {
+                        if let Some(t) = tools {
+                            if !t.is_empty() {
+                                request["tools"] = json!(t);
+                            }
+                        }
+                    } else if let Some(t) = tools {
+                        if !t.is_empty() {
+                            request["tools"] = json!(t);
+                        }
+                    }
+
+                    request
+                }
             }
             AIProvider::OpenAI | AIProvider::OpenRouter | AIProvider::Custom => {
                 // OpenAI-compatible request format
@@ -611,8 +724,10 @@ impl ApiClient {
             AIProvider::Ollama => format!("{}/api/chat", self.endpoint),
             AIProvider::Claude => format!("{}/v1/messages", self.endpoint),
             AIProvider::ZAiCoding => {
-                // Z.AI uses the endpoint with /chat/completions appended
-                if self.endpoint.ends_with("/v4") {
+                // Check if Anthropic-compatible endpoint (already has full path)
+                if self.endpoint.contains("/api/anthropic") {
+                    self.endpoint.clone()
+                } else if self.endpoint.ends_with("/v4") {
                     format!("{}/chat/completions", self.endpoint)
                 } else {
                     self.endpoint.clone()
@@ -650,8 +765,19 @@ impl ApiClient {
                     .header("x-api-key", &self.api_key)
                     .header("anthropic-version", "2023-06-01");
             }
-            AIProvider::OpenAI | AIProvider::ZAiCoding | AIProvider::OpenRouter => {
+            AIProvider::OpenAI | AIProvider::OpenRouter => {
                 if !self.api_key.is_empty() {
+                    request_builder =
+                        request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+                }
+            }
+            AIProvider::ZAiCoding => {
+                // Check if using Anthropic-compatible endpoint
+                if self.endpoint.contains("/api/anthropic") {
+                    request_builder = request_builder
+                        .header("x-api-key", &self.api_key)
+                        .header("anthropic-version", "2023-06-01");
+                } else if !self.api_key.is_empty() {
                     request_builder =
                         request_builder.header("Authorization", format!("Bearer {}", self.api_key));
                 }
@@ -754,8 +880,107 @@ impl ApiClient {
                     reasoning_content: None,
                 })
             }
-            AIProvider::ZAiCoding
-            | AIProvider::OpenAI
+            AIProvider::ZAiCoding => {
+                let response_text = response.text().await?;
+
+                // Log the successful response if debug mode is enabled
+                if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+                    println!("🔧 DEBUG: API Response (200 OK): {}", response_text);
+                }
+
+                let response_json: serde_json::Value = serde_json::from_str(&response_text)?;
+
+                // Check if this is an Anthropic-format response
+                // Anthropic format has "content" array at top level, OpenAI has "choices"
+                if response_json.get("content").is_some() && response_json.get("type").map(|t| t.as_str()) == Some(Some("message")) {
+                    // Parse Anthropic Messages API response format
+                    let content_array = response_json.get("content").and_then(|c| c.as_array());
+                    
+                    let mut text_content = String::new();
+                    let mut tool_calls: Vec<ToolCall> = Vec::new();
+                    
+                    if let Some(blocks) = content_array {
+                        for block in blocks {
+                            let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                            
+                            match block_type {
+                                "text" => {
+                                    if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                                        text_content.push_str(text);
+                                    }
+                                }
+                                "tool_use" => {
+                                    // Convert Anthropic tool_use to OpenAI-style ToolCall
+                                    let id = block.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+                                    let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                                    let input = block.get("input").cloned().unwrap_or(json!({}));
+                                    
+                                    tool_calls.push(ToolCall {
+                                        id,
+                                        r#type: "function".to_string(),
+                                        function: ToolCallFunction {
+                                            name,
+                                            arguments: input.to_string(),
+                                        },
+                                    });
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    
+                    Ok(ApiResponse {
+                        response: text_content,
+                        success: true,
+                        error: None,
+                        usage: None,
+                        tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+                        model: Some(self.model.clone()),
+                        created: None,
+                        reasoning_content: None,
+                    })
+                } else {
+                    // Parse OpenAI-compatible format (for Coding Plan endpoint)
+                    let content = response_json
+                        .get("choices")
+                        .and_then(|c| c.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|c| c.get("message"))
+                        .and_then(|m| m.get("content"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    let tool_calls = response_json
+                        .get("choices")
+                        .and_then(|c| c.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|c| c.get("message"))
+                        .and_then(|m| m.get("tool_calls"))
+                        .and_then(|tc| serde_json::from_value(tc.clone()).ok());
+
+                    let reasoning_content = response_json
+                        .get("choices")
+                        .and_then(|c| c.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|c| c.get("message"))
+                        .and_then(|m| m.get("reasoning_content"))
+                        .and_then(|r| r.as_str())
+                        .map(|s| s.to_string());
+
+                    Ok(ApiResponse {
+                        response: content,
+                        success: true,
+                        error: None,
+                        usage: None,
+                        tool_calls,
+                        model: Some(self.model.clone()),
+                        created: None,
+                        reasoning_content,
+                    })
+                }
+            }
+            AIProvider::OpenAI
             | AIProvider::OpenRouter
             | AIProvider::Custom => {
                 // OpenAI-compatible response format
