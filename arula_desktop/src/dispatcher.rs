@@ -5,13 +5,13 @@
 
 use arula_core::api::api::ChatMessage;
 use arula_core::{SessionConfig, SessionManager, UiEvent};
+use futures::StreamExt;
 use iced::Subscription;
 use tokio_stream::wrappers::BroadcastStream;
 use uuid::Uuid;
-use futures::StreamExt;
 
 /// UI-facing dispatcher - thin wrapper around core's SessionManager.
-/// 
+///
 /// All backend logic lives in arula_core. This just provides Iced subscriptions.
 pub struct Dispatcher {
     manager: SessionManager,
@@ -26,7 +26,10 @@ impl Dispatcher {
     }
 
     /// Updates the backend with new configuration.
-    pub fn update_backend(&mut self, config: &arula_core::utils::config::Config) -> anyhow::Result<()> {
+    pub fn update_backend(
+        &mut self,
+        config: &arula_core::utils::config::Config,
+    ) -> anyhow::Result<()> {
         self.manager.update_backend(config)
     }
 
@@ -43,7 +46,8 @@ impl Dispatcher {
         history: Option<Vec<ChatMessage>>,
         session_config: SessionConfig,
     ) -> anyhow::Result<()> {
-        self.manager.start_stream(session_id, prompt, history, session_config)
+        self.manager
+            .start_stream(session_id, prompt, history, session_config)
     }
 
     /// Creates an Iced subscription to receive UI events.

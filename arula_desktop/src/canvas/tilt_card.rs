@@ -1,11 +1,11 @@
-use std::f32::consts::PI;
-use std::marker::PhantomData;
+use crate::animation::TiltCardState;
+use crate::theme::PaletteColors;
 use iced::advanced::graphics::gradient;
 use iced::mouse;
 use iced::widget::canvas::{self, Geometry, Path, Stroke};
 use iced::{Color, Point, Rectangle, Theme};
-use crate::animation::TiltCardState;
-use crate::theme::PaletteColors;
+use std::f32::consts::PI;
+use std::marker::PhantomData;
 
 /// Canvas program for tilt-responsive cards with glare effect.
 pub struct TiltCardCanvas<'a, Message> {
@@ -17,7 +17,12 @@ pub struct TiltCardCanvas<'a, Message> {
 
 impl<'a, Message> TiltCardCanvas<'a, Message> {
     pub fn new(state: &'a TiltCardState, base_color: Color, palette: PaletteColors) -> Self {
-        Self { state, base_color, palette, _marker: PhantomData }
+        Self {
+            state,
+            base_color,
+            palette,
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -64,7 +69,10 @@ impl<'a, Message> canvas::Program<Message> for TiltCardCanvas<'a, Message> {
             frame.stroke(
                 &card_path,
                 Stroke::default()
-                    .with_color(Color { a: border_alpha, ..border_color })
+                    .with_color(Color {
+                        a: border_alpha,
+                        ..border_color
+                    })
                     .with_width(stroke_width),
             );
 
@@ -86,7 +94,13 @@ impl<'a, Message> canvas::Program<Message> for TiltCardCanvas<'a, Message> {
 
                 let glare = gradient::Linear::new(start, end)
                     .add_stop(0.0, Color::TRANSPARENT)
-                    .add_stop(0.5, Color { a: 0.1, ..Color::WHITE })
+                    .add_stop(
+                        0.5,
+                        Color {
+                            a: 0.1,
+                            ..Color::WHITE
+                        },
+                    )
                     .add_stop(1.0, Color::TRANSPARENT);
 
                 frame.fill(&card_path, glare);

@@ -21,7 +21,11 @@ pub struct ConfigForm {
 
 impl ConfigForm {
     /// Creates a form pre-filled with provider-specific settings.
-    pub fn with_provider_options(config: &Config, provider: String, provider_options: Vec<String>) -> Self {
+    pub fn with_provider_options(
+        config: &Config,
+        provider: String,
+        provider_options: Vec<String>,
+    ) -> Self {
         let defaults = AiConfig::get_provider_defaults(&provider);
         let provider_config = config.providers.get(&provider);
 
@@ -43,9 +47,7 @@ impl ConfigForm {
         let ollama_tools_enabled = provider_config
             .and_then(|p| p.tools_enabled)
             .unwrap_or(false);
-        let streaming_enabled = provider_config
-            .and_then(|p| p.streaming)
-            .unwrap_or(true); // Default to true
+        let streaming_enabled = provider_config.and_then(|p| p.streaming).unwrap_or(true); // Default to true
         let living_background_enabled = config.get_living_background_enabled();
 
         Self {
@@ -74,10 +76,7 @@ impl ConfigForm {
 
     /// Returns true if the API URL field should be editable.
     pub fn api_url_editable(&self) -> bool {
-        matches!(
-            self.provider.to_lowercase().as_str(),
-            "custom" | "ollama"
-        )
+        matches!(self.provider.to_lowercase().as_str(), "custom" | "ollama")
     }
 
     /// Sets a success status message.

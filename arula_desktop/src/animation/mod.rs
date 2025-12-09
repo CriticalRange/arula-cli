@@ -2,4 +2,7 @@ mod spring;
 mod states;
 
 pub use spring::Spring;
-pub use states::{LivingBackgroundState, LiquidMenuState, TiltCardState, SettingsMenuState, SettingsPage, TransitionDirection};
+pub use states::{
+    LiquidMenuState, LivingBackgroundState, SettingsMenuState, SettingsPage, TiltCardState,
+    TransitionDirection,
+};

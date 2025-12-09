@@ -1,5 +1,5 @@
-use std::time::Instant;
 use chrono::{DateTime, Utc};
+use std::time::Instant;
 use uuid::Uuid;
 
 /// A single message in a conversation.
@@ -20,7 +20,7 @@ impl MessageEntry {
         let parsed_timestamp = DateTime::parse_from_rfc3339(&timestamp)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
-            
+
         Self {
             role: "User".to_string(),
             content,
@@ -153,17 +153,18 @@ impl Session {
                 return;
             }
         }
-        
+
         // Add content to the buffer
         self.ai_buffer.push_str(&content);
-        
+
         // Trim leading whitespace from start of buffer
         let trimmed = self.ai_buffer.trim_start();
-        
+
         // Only create a message when we have substantial content (prevents "I" before tools)
         // 15 chars is enough to have a meaningful start like "I'll read the"
         if trimmed.len() >= 15 {
-            self.messages.push(MessageEntry::ai(trimmed.to_string(), timestamp));
+            self.messages
+                .push(MessageEntry::ai(trimmed.to_string(), timestamp));
             self.ai_buffer.clear();
         }
     }
@@ -181,20 +182,27 @@ impl Session {
                     return;
                 }
             }
-            self.messages.push(MessageEntry::ai(trimmed.to_string(), timestamp));
+            self.messages
+                .push(MessageEntry::ai(trimmed.to_string(), timestamp));
         }
         self.ai_buffer.clear();
     }
 
     /// Adds a Tool message, discarding any incomplete AI buffer content.
-    pub fn add_tool_message(&mut self, content: String, timestamp: String, tool_call_id: Option<String>) {
+    pub fn add_tool_message(
+        &mut self,
+        content: String,
+        timestamp: String,
+        tool_call_id: Option<String>,
+    ) {
         // Discard any incomplete AI content in the buffer (prevents "I" before tools)
         self.ai_buffer.clear();
-        
+
         // Always create a new tool message bubble for each tool interaction
-        self.messages.push(MessageEntry::tool(content, timestamp, tool_call_id));
+        self.messages
+            .push(MessageEntry::tool(content, timestamp, tool_call_id));
     }
-    
+
     /// Updates the last tool message with completion status.
     /// If the last message is not a tool message, creates a new one.
     pub fn update_tool_message(&mut self, content: String, timestamp: String) {
@@ -206,11 +214,10 @@ impl Session {
                 return;
             }
         }
-        
+
         // If no tool message exists or last message isn't a tool, create new one
         self.add_tool_message(content, timestamp, None);
     }
-
 
     /// Adds or appends to a Thinking message.
     pub fn append_thinking_message(&mut self, content: String, timestamp: String) {
@@ -223,7 +230,8 @@ impl Session {
         // Trim leading whitespace for the first chunk
         let trimmed = content.trim_start();
         if !trimmed.is_empty() {
-            self.messages.push(MessageEntry::thinking(trimmed.to_string(), timestamp));
+            self.messages
+                .push(MessageEntry::thinking(trimmed.to_string(), timestamp));
         }
     }
 
@@ -247,7 +255,11 @@ impl Session {
                     }
                 } else {
                     arula_core::api::api::ChatMessage {
-                        role: if msg.is_user() { "user".to_string() } else { "assistant".to_string() },
+                        role: if msg.is_user() {
+                            "user".to_string()
+                        } else {
+                            "assistant".to_string()
+                        },
                         content: Some(msg.content.clone()),
                         tool_calls: None,
                         tool_call_id: None,

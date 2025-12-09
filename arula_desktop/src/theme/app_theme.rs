@@ -1,5 +1,5 @@
-use iced::{theme, Theme};
 use super::palette::palette;
+use iced::{theme, Theme};
 
 /// Creates the custom Arula Neon theme.
 pub fn app_theme() -> Theme {

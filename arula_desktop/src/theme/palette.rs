@@ -25,11 +25,11 @@ impl Default for PaletteColors {
             border: Color::from_rgb8(50, 40, 70),
             text: Color::from_rgb8(240, 235, 255),
             muted: Color::from_rgb8(150, 140, 180),
-            accent: Color::from_rgb8(180, 50, 255),      // Vibrant Purple
+            accent: Color::from_rgb8(180, 50, 255), // Vibrant Purple
             accent_soft: Color::from_rgb8(140, 40, 200), // Soft Purple
             success: Color::from_rgb8(100, 255, 140),
             danger: Color::from_rgb8(255, 100, 100),
-            glow: Color::from_rgb8(200, 100, 255),       // Bright Glow
+            glow: Color::from_rgb8(200, 100, 255), // Bright Glow
         }
     }
 }

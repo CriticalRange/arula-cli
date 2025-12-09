@@ -1,8 +1,8 @@
+use crate::animation::LiquidMenuState;
+use crate::theme::PaletteColors;
 use iced::mouse;
 use iced::widget::canvas::{self, Geometry, Path};
 use iced::{Color, Point, Rectangle, Theme};
-use crate::animation::LiquidMenuState;
-use crate::theme::PaletteColors;
 use std::marker::PhantomData;
 
 /// Canvas program for the liquid expanding menu background.
@@ -14,7 +14,11 @@ pub struct LiquidMenuBackground<'a, Message> {
 
 impl<'a, Message> LiquidMenuBackground<'a, Message> {
     pub fn new(state: &'a LiquidMenuState, palette: PaletteColors) -> Self {
-        Self { state, palette, _marker: PhantomData }
+        Self {
+            state,
+            palette,
+            _marker: PhantomData,
+        }
     }
 }
 

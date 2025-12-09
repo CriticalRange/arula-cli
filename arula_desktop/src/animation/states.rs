@@ -1,13 +1,13 @@
+use super::Spring;
+use crate::constants::{PAGE_TRANSITION_DAMPING, PAGE_TRANSITION_STIFFNESS, TICK_INCREMENT};
 use iced::widget::canvas;
 use iced::Point;
-use super::Spring;
-use crate::constants::{TICK_INCREMENT, PAGE_TRANSITION_STIFFNESS, PAGE_TRANSITION_DAMPING};
 
 /// Page enum for settings submenu navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SettingsPage {
     #[default]
-    Main,          // Category selection
+    Main, // Category selection
     Provider,      // Provider + Model
     Api,           // API Key + URL (legacy - redirects to Provider)
     Behavior,      // System prompt, temp, tokens, toggles
@@ -151,14 +151,14 @@ impl LivingBackgroundState {
     /// Updates the background animation state.
     pub fn update(&mut self) {
         self.tick += TICK_INCREMENT;
-        
+
         // Gentle sway based on sine wave
         // Provides a floating sensation
-        self.sway_angle = (self.tick * 0.5).sin() * 0.05; 
-        
+        self.sway_angle = (self.tick * 0.5).sin() * 0.05;
+
         // Move forward through 3D space
         self.travel += 0.8; // Faster travel for exploration feel
-        
+
         self.cache.clear();
     }
 }

@@ -9,12 +9,15 @@ pub mod session;
 pub mod styles;
 pub mod theme;
 
-pub use animation::{LivingBackgroundState, LiquidMenuState, TiltCardState, SettingsMenuState, SettingsPage, TransitionDirection};
-pub use config::{ConfigForm, collect_provider_options};
+pub use animation::{
+    LiquidMenuState, LivingBackgroundState, SettingsMenuState, SettingsPage, TiltCardState,
+    TransitionDirection,
+};
+pub use config::{collect_provider_options, ConfigForm};
 pub use constants::*;
 pub use dispatcher::Dispatcher;
 // Re-export UiEvent from core for convenience
 pub use arula_core::UiEvent;
 pub use session::{MessageEntry, Session};
 pub use styles::*;
-pub use theme::{PaletteColors, app_theme, palette};
+pub use theme::{app_theme, palette, PaletteColors};

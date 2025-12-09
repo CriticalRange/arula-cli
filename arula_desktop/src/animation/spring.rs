@@ -1,4 +1,4 @@
-use crate::constants::{SPRING_STIFFNESS, SPRING_DAMPING, SPRING_THRESHOLD};
+use crate::constants::{SPRING_DAMPING, SPRING_STIFFNESS, SPRING_THRESHOLD};
 
 /// A spring-based animation value for smooth transitions.
 #[derive(Debug, Clone, Copy)]
@@ -37,10 +37,10 @@ impl Spring {
         let force = (self.target - self.position) * self.stiffness;
         self.velocity = (self.velocity + force) * self.damping;
         self.position += self.velocity;
-        
+
         // Clamp position to valid range to prevent oscillation overshoot
         self.position = self.position.clamp(0.0, 1.0);
-        
+
         // If very close to target and velocity is low, snap to target
         let distance = (self.target - self.position).abs();
         if distance < SPRING_THRESHOLD && self.velocity.abs() < SPRING_THRESHOLD {
@@ -48,7 +48,7 @@ impl Spring {
             self.velocity = 0.0;
             return false;
         }
-        
+
         self.velocity.abs() > SPRING_THRESHOLD || distance > SPRING_THRESHOLD
     }
 
