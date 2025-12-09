@@ -18,8 +18,8 @@ use serde_json::json;
 #[derive(Debug)]
 enum ParseState {
     Idle,
-    InsideToolCall(String),       // name
-    InsideArguments(String),       // name
+    InsideToolCall(String),             // name
+    InsideArguments(String),            // name
     ArgumentsCollected(String, String), // name, arguments_text
 }
 
@@ -47,7 +47,7 @@ pub fn extract_tool_call_from_xml(xml_text: &str) -> Option<serde_json::Value> {
     if let Some(result) = extract_glm46_format(xml_text) {
         return Some(result);
     }
-    
+
     // Fall back to standard format
     extract_standard_format(xml_text)
 }
@@ -56,23 +56,24 @@ pub fn extract_tool_call_from_xml(xml_text: &str) -> Option<serde_json::Value> {
 fn extract_standard_format(xml_text: &str) -> Option<serde_json::Value> {
     let mut reader = Reader::from_str(xml_text);
     reader.trim_text(true);
-    
+
     let mut state = ParseState::Idle;
     let mut current_name = String::new();
     let mut current_args = String::new();
     let mut last_valid_call: Option<(String, String)> = None;
-    
+
     let mut buf = Vec::new();
-    
+
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                
+
                 match tag_name.as_str() {
                     "tool_call" => {
                         // Extract name attribute
-                        if let Some(name_attr) = e.attributes()
+                        if let Some(name_attr) = e
+                            .attributes()
                             .filter_map(|a| a.ok())
                             .find(|attr| attr.key.as_ref() == b"name")
                         {
@@ -101,13 +102,13 @@ fn extract_standard_format(xml_text: &str) -> Option<serde_json::Value> {
             }
             Ok(Event::End(e)) => {
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                
+
                 match tag_name.as_str() {
                     "arguments" => {
                         if matches!(state, ParseState::InsideArguments(_)) {
                             state = ParseState::ArgumentsCollected(
                                 current_name.clone(),
-                                current_args.trim().to_string()
+                                current_args.trim().to_string(),
                             );
                         }
                     }
@@ -132,14 +133,14 @@ fn extract_standard_format(xml_text: &str) -> Option<serde_json::Value> {
             }
             _ => {}
         }
-        
+
         buf.clear();
     }
-    
+
     // Convert the last valid call to OpenAI format
     last_valid_call.map(|(name, args)| {
         let normalized_args = normalize_arguments(&args);
-        
+
         json!({
             "id": "call_xml_1",
             "type": "function",
@@ -159,12 +160,12 @@ fn extract_standard_format(xml_text: &str) -> Option<serde_json::Value> {
 /// 3. If invalid, wrap as a JSON object with the raw text
 fn normalize_arguments(args_text: &str) -> String {
     let trimmed = args_text.trim();
-    
+
     // Empty args → empty object
     if trimmed.is_empty() {
         return "{}".to_string();
     }
-    
+
     // Try to parse as JSON
     match serde_json::from_str::<serde_json::Value>(trimmed) {
         Ok(json_value) => {
@@ -182,7 +183,7 @@ fn normalize_arguments(args_text: &str) -> String {
 fn extract_glm46_format(xml_text: &str) -> Option<serde_json::Value> {
     let mut reader = Reader::from_str(xml_text);
     reader.trim_text(true);
-    
+
     let mut in_tool_call = false;
     let mut tool_name = String::new();
     let mut current_key = String::new();
@@ -190,14 +191,14 @@ fn extract_glm46_format(xml_text: &str) -> Option<serde_json::Value> {
     let mut in_arg_key = false;
     let mut in_arg_value = false;
     let mut args_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    
+
     let mut buf = Vec::new();
-    
+
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                
+
                 match tag_name.as_str() {
                     "tool_call" => {
                         in_tool_call = true;
@@ -230,7 +231,7 @@ fn extract_glm46_format(xml_text: &str) -> Option<serde_json::Value> {
             }
             Ok(Event::End(e)) => {
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                
+
                 match tag_name.as_str() {
                     "arg_key" => {
                         in_arg_key = false;
@@ -245,8 +246,9 @@ fn extract_glm46_format(xml_text: &str) -> Option<serde_json::Value> {
                     "tool_call" => {
                         if in_tool_call && !tool_name.is_empty() {
                             // Convert args_map to JSON
-                            let args_json = serde_json::to_string(&args_map).unwrap_or_else(|_| "{}".to_string());
-                            
+                            let args_json = serde_json::to_string(&args_map)
+                                .unwrap_or_else(|_| "{}".to_string());
+
                             return Some(json!({
                                 "id": "call_xml_glm46_1",
                                 "type": "function",
@@ -268,10 +270,10 @@ fn extract_glm46_format(xml_text: &str) -> Option<serde_json::Value> {
             }
             _ => {}
         }
-        
+
         buf.clear();
     }
-    
+
     None
 }
 
@@ -284,14 +286,17 @@ mod tests {
         let xml = r#"<tool_call name="list_directory">
 <arguments>{"path": "."}</arguments>
 </tool_call>"#;
-        
+
         let result = extract_tool_call_from_xml(xml);
         assert!(result.is_some());
-        
+
         let call = result.unwrap();
         assert_eq!(call["type"], "function");
         assert_eq!(call["function"]["name"], "list_directory");
-        assert!(call["function"]["arguments"].as_str().unwrap().contains("path"));
+        assert!(call["function"]["arguments"]
+            .as_str()
+            .unwrap()
+            .contains("path"));
     }
 
     #[test]
@@ -303,10 +308,10 @@ Let me analyze this...
 <arguments>{"file": "test.txt"}</arguments>
 </tool_call>
 <conclusion>Done</conclusion>"#;
-        
+
         let result = extract_tool_call_from_xml(xml);
         assert!(result.is_some());
-        
+
         let call = result.unwrap();
         assert_eq!(call["function"]["name"], "read_file");
     }
@@ -319,10 +324,10 @@ Let me analyze this...
 <tool_call name="second">
 <arguments>{"b": 2}</arguments>
 </tool_call>"#;
-        
+
         let result = extract_tool_call_from_xml(xml);
         assert!(result.is_some());
-        
+
         let call = result.unwrap();
         assert_eq!(call["function"]["name"], "second");
     }
@@ -332,10 +337,10 @@ Let me analyze this...
         let xml = r#"<tool_call name="test">
 <arguments>not valid json</arguments>
 </tool_call>"#;
-        
+
         let result = extract_tool_call_from_xml(xml);
         assert!(result.is_some());
-        
+
         let call = result.unwrap();
         let args_str = call["function"]["arguments"].as_str().unwrap();
         assert!(args_str.contains("raw"));
@@ -346,10 +351,10 @@ Let me analyze this...
         let xml = r#"<tool_call name="test">
 <arguments></arguments>
 </tool_call>"#;
-        
+
         let result = extract_tool_call_from_xml(xml);
         assert!(result.is_some());
-        
+
         let call = result.unwrap();
         assert_eq!(call["function"]["arguments"], "{}");
     }
@@ -357,7 +362,7 @@ Let me analyze this...
     #[test]
     fn test_no_tool_call() {
         let xml = "<thinking>Just thinking, no tools</thinking>";
-        
+
         let result = extract_tool_call_from_xml(xml);
         assert!(result.is_none());
     }

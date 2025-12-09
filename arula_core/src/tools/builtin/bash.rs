@@ -120,14 +120,14 @@ impl Tool for BashTool {
         cmd.stderr(Stdio::piped());
 
         // Spawn the process
-        let child = cmd.spawn().map_err(|e| format!("Failed to spawn command '{}': {}", command, e))?;
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn command '{}': {}", command, e))?;
 
         // Get timeout from params (default: 30, max: 300 seconds)
-        let timeout_secs = params.timeout_seconds
-            .unwrap_or(30)
-            .min(300); // Cap at 5 minutes max
+        let timeout_secs = params.timeout_seconds.unwrap_or(30).min(300); // Cap at 5 minutes max
         let timeout_duration = Duration::from_secs(timeout_secs);
-        
+
         // Use select! to race between command completion and timeout
         tokio::select! {
             result = child.wait_with_output() => {
@@ -159,7 +159,7 @@ impl Tool for BashTool {
 }
 
 /// Execute a bash command with streaming output line-by-line
-/// 
+///
 /// This function spawns the command and streams stdout/stderr lines as they arrive,
 /// calling the provided callback for each line. This enables real-time display
 /// in the UI rather than waiting for command completion.
@@ -196,13 +196,18 @@ where
     cmd.stderr(Stdio::piped());
 
     // Spawn the process
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| format!("Failed to spawn command '{}': {}", command, e))?;
 
     // Take ownership of stdout and stderr
-    let stdout = child.stdout.take()
+    let stdout = child
+        .stdout
+        .take()
         .ok_or_else(|| "Failed to capture stdout".to_string())?;
-    let stderr = child.stderr.take()
+    let stderr = child
+        .stderr
+        .take()
         .ok_or_else(|| "Failed to capture stderr".to_string())?;
 
     // Create buffered readers
@@ -268,7 +273,7 @@ where
                                 on_line(line.clone(), true);
                                 stderr_lines.push(line);
                             }
-                            
+
                             let exit_code = status.code().unwrap_or(-1);
                             return Ok(BashResult {
                                 stdout: stdout_lines.join("\n"),
@@ -284,14 +289,18 @@ where
                 }
             }
         }
-    }).await;
+    })
+    .await;
 
     match read_result {
         Ok(result) => result,
         Err(_) => {
             // Timeout - try to kill the child
             let _ = child.kill().await;
-            Err(format!("Command '{}' timed out after {} seconds", command, timeout_secs))
+            Err(format!(
+                "Command '{}' timed out after {} seconds",
+                command, timeout_secs
+            ))
         }
     }
 }

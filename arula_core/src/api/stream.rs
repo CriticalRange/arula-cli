@@ -7,10 +7,12 @@
 //! - Provider-specific request formatting (Z.AI, OpenAI, Ollama)
 
 use crate::api::agent::ToolResult;
-use crate::api::api::{AIProvider, ApiClient, ApiResponse, ChatMessage, ToolCall, ToolCallFunction, Usage};
+use crate::api::api::{
+    AIProvider, ApiClient, ApiResponse, ChatMessage, ToolCall, ToolCallFunction, Usage,
+};
 use crate::api::xml_toolcall::extract_tool_call_from_xml;
 use crate::tools::builtin::execute_bash_streaming;
-use crate::utils::error_utils::{ErrorContext, stream_error};
+use crate::utils::error_utils::{stream_error, ErrorContext};
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use reqwest::Response;
@@ -18,7 +20,6 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-
 
 // ============================================================================
 //  Types
@@ -162,7 +163,7 @@ pub fn build_streaming_request(
         .filter_map(|msg| {
             // Z.AI Bug Fix: We DO NOT filter out tool messages anymore!
             // Z.AI supports tool calling and needs history to continue.
-            
+
             let mut obj = json!({
                 "role": msg.role,
             });
@@ -181,16 +182,19 @@ pub fn build_streaming_request(
             if let Some(tool_calls) = &msg.tool_calls {
                 if is_ollama {
                     // Ollama specific tool format
-                    let converted: Vec<Value> = tool_calls.iter().map(|tc| {
-                        let args = serde_json::from_str::<Value>(&tc.function.arguments)
-                            .unwrap_or_else(|_| json!({}));
-                        json!({
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": args
-                            }
+                    let converted: Vec<Value> = tool_calls
+                        .iter()
+                        .map(|tc| {
+                            let args = serde_json::from_str::<Value>(&tc.function.arguments)
+                                .unwrap_or_else(|_| json!({}));
+                            json!({
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": args
+                                }
+                            })
                         })
-                    }).collect();
+                        .collect();
                     obj["tool_calls"] = json!(converted);
                 } else {
                     // Standard OpenAI / Z.AI format
@@ -203,7 +207,7 @@ pub fn build_streaming_request(
                     obj["tool_call_id"] = json!(tool_call_id);
                 }
             }
-            
+
             if is_ollama {
                 if let Some(tool_name) = &msg.tool_name {
                     obj["tool_name"] = json!(tool_name);
@@ -218,19 +222,27 @@ pub fn build_streaming_request(
     let tools_to_send = if is_zai {
         // Z.AI now supports tools in streaming mode
         if let Some(t) = tools {
-            if !t.is_empty() { Some(t.to_vec()) } else { None }
+            if !t.is_empty() {
+                Some(t.to_vec())
+            } else {
+                None
+            }
         } else {
             None
         }
     } else {
         // Convert tools for other providers if needed
         if let Some(t) = tools {
-            if !t.is_empty() { Some(t.to_vec()) } else { None }
+            if !t.is_empty() {
+                Some(t.to_vec())
+            } else {
+                None
+            }
         } else {
             None
         }
     };
-    
+
     // 3. Construct Body
     let mut request = json!({
         "model": model,
@@ -238,7 +250,7 @@ pub fn build_streaming_request(
         "max_tokens": max_tokens,
         "stream": true
     });
-    
+
     // Add temperature separately to avoid type issues
     if is_zai {
         request["temperature"] = json!("0.7");
@@ -247,15 +259,15 @@ pub fn build_streaming_request(
     } else {
         request["temperature"] = json!(temperature);
     }
-    
+
     // Option flags
     let include_stream_options = !is_zai && !is_ollama;
     let include_tool_choice = !is_zai && !is_ollama;
-    
+
     if include_stream_options {
         request["stream_options"] = json!({ "include_usage": true });
     }
-    
+
     if let Some(t) = tools_to_send {
         request["tools"] = json!(t);
         if include_tool_choice {
@@ -268,10 +280,13 @@ pub fn build_streaming_request(
         if let Some(obj) = request.as_object_mut() {
             let _ = obj.remove("max_tokens");
             let _ = obj.remove("temperature");
-            obj.insert("options".to_string(), json!({
-                "num_predict": max_tokens,
-                "temperature": temperature
-            }));
+            obj.insert(
+                "options".to_string(),
+                json!({
+                    "num_predict": max_tokens,
+                    "temperature": temperature
+                }),
+            );
         }
     }
 
@@ -283,8 +298,9 @@ pub fn build_streaming_request(
 // ============================================================================
 
 /// Process a raw HTTP response into a stream of events
-pub async fn process_response<F>(response: Response, callback: F) -> Result<ApiResponse> 
-where F: FnMut(StreamEvent)
+pub async fn process_response<F>(response: Response, callback: F) -> Result<ApiResponse>
+where
+    F: FnMut(StreamEvent),
 {
     let content_type = response
         .headers()
@@ -300,10 +316,11 @@ where F: FnMut(StreamEvent)
 }
 
 async fn process_sse_stream<F>(response: Response, mut callback: F) -> Result<ApiResponse>
-where F: FnMut(StreamEvent)
+where
+    F: FnMut(StreamEvent),
 {
     use eventsource_stream::Eventsource;
-    
+
     let mut stream = response.bytes_stream().eventsource();
     let mut accumulated = String::new();
     let mut tool_acc: HashMap<usize, ToolCallAccumulator> = HashMap::new();
@@ -317,33 +334,42 @@ where F: FnMut(StreamEvent)
         match res {
             Ok(event) => {
                 let data = event.data;
-                if data == "[DONE]" { break; }
-                
+                if data == "[DONE]" {
+                    break;
+                }
+
                 // Log streaming chunk if debug mode is enabled
                 if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
                     crate::utils::debug::debug_print(&format!("Stream Chunk: {}", data));
                 }
-                
+
                 if let Ok(chunk) = serde_json::from_str::<StreamChunk>(&data) {
                     if let Some(id) = &chunk.id {
-                         if stream_id.is_empty() { stream_id = id.clone(); }
+                        if stream_id.is_empty() {
+                            stream_id = id.clone();
+                        }
                     }
                     if let Some(m) = &chunk.model {
-                         if model.is_empty() { 
-                             model = m.clone();
-                             callback(StreamEvent::Start { id: stream_id.clone(), model: model.clone() });
-                         }
+                        if model.is_empty() {
+                            model = m.clone();
+                            callback(StreamEvent::Start {
+                                id: stream_id.clone(),
+                                model: model.clone(),
+                            });
+                        }
                     }
                     if let Some(u) = chunk.usage {
-                        usage = Some(Usage { 
-                            prompt_tokens: u.prompt_tokens, 
+                        usage = Some(Usage {
+                            prompt_tokens: u.prompt_tokens,
                             completion_tokens: u.completion_tokens,
-                            total_tokens: u.total_tokens 
+                            total_tokens: u.total_tokens,
                         });
                     }
 
                     for choice in chunk.choices {
-                        if let Some(r) = choice.finish_reason { finish_reason = r; }
+                        if let Some(r) = choice.finish_reason {
+                            finish_reason = r;
+                        }
                         let delta = choice.delta;
 
                         if let Some(c) = delta.content {
@@ -352,7 +378,7 @@ where F: FnMut(StreamEvent)
                                 callback(StreamEvent::TextDelta(c));
                             }
                         }
-                        
+
                         if let Some(think) = delta.reasoning_content.or(delta.thinking) {
                             if !think.is_empty() {
                                 // Buffer reasoning content for XML tool call detection
@@ -365,22 +391,24 @@ where F: FnMut(StreamEvent)
                             for tc in tcs {
                                 let idx = tc.index; // Use explicit index
                                 let acc = tool_acc.entry(idx).or_default();
-                                
-                                if let Some(id) = tc.id { acc.id = id; }
+
+                                if let Some(id) = tc.id {
+                                    acc.id = id;
+                                }
                                 if let Some(func) = tc.function {
                                     if let Some(n) = func.name {
                                         acc.name = n.clone();
-                                        callback(StreamEvent::ToolCallStart { 
-                                            index: idx, 
-                                            id: acc.id.clone(), 
-                                            name: n 
+                                        callback(StreamEvent::ToolCallStart {
+                                            index: idx,
+                                            id: acc.id.clone(),
+                                            name: n,
                                         });
                                     }
                                     if let Some(a) = func.arguments {
                                         acc.arguments.push_str(&a);
-                                        callback(StreamEvent::ToolCallDelta { 
-                                            index: idx, 
-                                            arguments: a 
+                                        callback(StreamEvent::ToolCallDelta {
+                                            index: idx,
+                                            arguments: a,
                                         });
                                     }
                                 }
@@ -390,15 +418,20 @@ where F: FnMut(StreamEvent)
                 }
             }
             Err(e) => {
-                let error_context = ErrorContext::new("Process SSE stream")
-                    .with_underlying_error(&e);
+                let error_context =
+                    ErrorContext::new("Process SSE stream").with_underlying_error(&e);
                 let msg = stream_error(error_context);
                 callback(StreamEvent::Error(msg.clone()));
-                return Ok(ApiResponse { response: accumulated, success: false, error: Some(msg), ..Default::default() });
+                return Ok(ApiResponse {
+                    response: accumulated,
+                    success: false,
+                    error: Some(msg),
+                    ..Default::default()
+                });
             }
         }
     }
-    
+
     // Before finalizing, check if reasoning_buffer contains XML tool calls
     // This handles GLM-4.6 style XML tool calls in reasoning content
     if !reasoning_buffer.is_empty() && tool_acc.is_empty() {
@@ -407,11 +440,14 @@ where F: FnMut(StreamEvent)
             if let Ok(tool_call) = serde_json::from_value::<ToolCall>(xml_tool_call) {
                 // Add to tool_acc as if it came from standard tool_calls
                 let idx = 0;
-                tool_acc.insert(idx, ToolCallAccumulator {
-                    id: tool_call.id.clone(),
-                    name: tool_call.function.name.clone(),
-                    arguments: tool_call.function.arguments.clone(),
-                });
+                tool_acc.insert(
+                    idx,
+                    ToolCallAccumulator {
+                        id: tool_call.id.clone(),
+                        name: tool_call.function.name.clone(),
+                        arguments: tool_call.function.arguments.clone(),
+                    },
+                );
                 // Emit the tool call event
                 callback(StreamEvent::ToolCallStart {
                     index: idx,
@@ -425,12 +461,20 @@ where F: FnMut(StreamEvent)
             }
         }
     }
-    
-    finalize(accumulated, tool_acc, finish_reason, usage, model, &mut callback)
+
+    finalize(
+        accumulated,
+        tool_acc,
+        finish_reason,
+        usage,
+        model,
+        &mut callback,
+    )
 }
 
 async fn process_ndjson_stream<F>(response: Response, mut callback: F) -> Result<ApiResponse>
-where F: FnMut(StreamEvent)
+where
+    F: FnMut(StreamEvent),
 {
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
@@ -442,18 +486,19 @@ where F: FnMut(StreamEvent)
 
     while let Some(item) = stream.next().await {
         let bytes = item.map_err(|e| {
-            let error_context = ErrorContext::new("Read stream chunk")
-                .with_underlying_error(&e);
+            let error_context = ErrorContext::new("Read stream chunk").with_underlying_error(&e);
             anyhow!("{}", stream_error(error_context))
         })?;
         if let Ok(s) = std::str::from_utf8(&bytes) {
-             buffer.push_str(s);
+            buffer.push_str(s);
         }
 
         while let Some(pos) = buffer.find('\n') {
             let line = buffer[..pos].trim().to_string();
-            buffer.drain(..pos+1);
-            if line.is_empty() { continue; }
+            buffer.drain(..pos + 1);
+            if line.is_empty() {
+                continue;
+            }
 
             // Log streaming chunk if debug mode is enabled
             if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
@@ -461,56 +506,89 @@ where F: FnMut(StreamEvent)
             }
 
             if let Ok(json) = serde_json::from_str::<Value>(&line) {
-                 // Ollama 'done' check
-                 if json.get("done").and_then(|v| v.as_bool()) == Some(true) {
-                     if let Some(c) = json.get("eval_count").and_then(|v| v.as_u64()) {
-                         usage = Some(Usage { total_tokens: c as u32, ..Default::default() });
-                     }
-                     finish_reason = "stop".to_string();
-                 }
+                // Ollama 'done' check
+                if json.get("done").and_then(|v| v.as_bool()) == Some(true) {
+                    if let Some(c) = json.get("eval_count").and_then(|v| v.as_u64()) {
+                        usage = Some(Usage {
+                            total_tokens: c as u32,
+                            ..Default::default()
+                        });
+                    }
+                    finish_reason = "stop".to_string();
+                }
 
-                 // Content
-                 let content = json.get("message").and_then(|m| m.get("content"))
+                // Content
+                let content = json
+                    .get("message")
+                    .and_then(|m| m.get("content"))
                     .or_else(|| json.get("response"))
                     .and_then(|v| v.as_str());
-                
-                 if let Some(c) = content {
-                     if !c.is_empty() {
-                         accumulated.push_str(c);
-                         callback(StreamEvent::TextDelta(c.to_string()));
-                     }
-                 }
 
-                 // Tools
-                 if let Some(tcs) = json.get("message").and_then(|m| m.get("tool_calls")).and_then(|v| v.as_array()) {
-                     for (i, tc) in tcs.iter().enumerate() {
-                         if let Some(func) = tc.get("function") {
-                             let name = func.get("name").and_then(|s| s.as_str()).unwrap_or_default().to_string();
-                             let args = func.get("arguments").map(|v| v.to_string()).unwrap_or_default();
-                             
-                             let acc = tool_acc.entry(i).or_default();
-                             acc.name = name.clone();
-                             acc.arguments = args.clone();
-                             acc.id = format!("call_{}", i);
-                             
-                             callback(StreamEvent::ToolCallStart { index: i, id: acc.id.clone(), name: acc.name.clone() });
-                             callback(StreamEvent::ToolCallDelta { index: i, arguments: acc.arguments.clone() });
-                             finish_reason = "tool_calls".to_string();
-                         }
-                     }
-                 }
-                 
-                 if model.is_empty() {
-                     if let Some(m) = json.get("model").and_then(|s| s.as_str()) {
-                         model = m.to_string();
-                         callback(StreamEvent::Start { id: "ndjson".into(), model: model.clone() });
-                     }
-                 }
+                if let Some(c) = content {
+                    if !c.is_empty() {
+                        accumulated.push_str(c);
+                        callback(StreamEvent::TextDelta(c.to_string()));
+                    }
+                }
+
+                // Tools
+                if let Some(tcs) = json
+                    .get("message")
+                    .and_then(|m| m.get("tool_calls"))
+                    .and_then(|v| v.as_array())
+                {
+                    for (i, tc) in tcs.iter().enumerate() {
+                        if let Some(func) = tc.get("function") {
+                            let name = func
+                                .get("name")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            let args = func
+                                .get("arguments")
+                                .map(|v| v.to_string())
+                                .unwrap_or_default();
+
+                            let acc = tool_acc.entry(i).or_default();
+                            acc.name = name.clone();
+                            acc.arguments = args.clone();
+                            acc.id = format!("call_{}", i);
+
+                            callback(StreamEvent::ToolCallStart {
+                                index: i,
+                                id: acc.id.clone(),
+                                name: acc.name.clone(),
+                            });
+                            callback(StreamEvent::ToolCallDelta {
+                                index: i,
+                                arguments: acc.arguments.clone(),
+                            });
+                            finish_reason = "tool_calls".to_string();
+                        }
+                    }
+                }
+
+                if model.is_empty() {
+                    if let Some(m) = json.get("model").and_then(|s| s.as_str()) {
+                        model = m.to_string();
+                        callback(StreamEvent::Start {
+                            id: "ndjson".into(),
+                            model: model.clone(),
+                        });
+                    }
+                }
             }
         }
     }
 
-    finalize(accumulated, tool_acc, finish_reason, usage, model, &mut callback)
+    finalize(
+        accumulated,
+        tool_acc,
+        finish_reason,
+        usage,
+        model,
+        &mut callback,
+    )
 }
 
 fn finalize<F>(
@@ -519,28 +597,36 @@ fn finalize<F>(
     reason: String,
     usage: Option<Usage>,
     model: String,
-    callback: &mut F
+    callback: &mut F,
 ) -> Result<ApiResponse>
-where F: FnMut(StreamEvent)
+where
+    F: FnMut(StreamEvent),
 {
     let tool_calls = if acc.is_empty() {
         None
     } else {
-        let mut calls: Vec<(usize, ToolCall)> = acc.into_iter()
+        let mut calls: Vec<(usize, ToolCall)> = acc
+            .into_iter()
             .map(|(i, a)| (i, a.to_tool_call()))
             .collect();
         calls.sort_by_key(|(i, _)| *i);
         // Clean arguments (sometimes they are double-encoded)
-        let cleaned: Vec<ToolCall> = calls.into_iter().map(|(_, tc)| {
-             // Basic check if args are a string containing json or just json
-             // For now assume standard behavior, maybe add cleanup later if needed
-             callback(StreamEvent::ToolCallComplete(tc.clone()));
-             tc
-        }).collect();
+        let cleaned: Vec<ToolCall> = calls
+            .into_iter()
+            .map(|(_, tc)| {
+                // Basic check if args are a string containing json or just json
+                // For now assume standard behavior, maybe add cleanup later if needed
+                callback(StreamEvent::ToolCallComplete(tc.clone()));
+                tc
+            })
+            .collect();
         Some(cleaned)
     };
 
-    callback(StreamEvent::Finish { reason: reason.clone(), usage: usage.clone() });
+    callback(StreamEvent::Finish {
+        reason: reason.clone(),
+        usage: usage.clone(),
+    });
 
     Ok(ApiResponse {
         response: content,
@@ -583,11 +669,11 @@ where
         // Build request (uses Z.AI fix internally)
         let request_body = build_streaming_request(
             &client.provider,
-            client.model(), 
+            client.model(),
             &current_messages,
             Some(tools),
             0.7,
-            4096, 
+            4096,
         );
 
         // Send request
@@ -602,7 +688,11 @@ where
                 // Add assistant response with tool calls to history
                 current_messages.push(ChatMessage {
                     role: "assistant".to_string(),
-                    content: if api_response.response.is_empty() { None } else { Some(api_response.response.clone()) },
+                    content: if api_response.response.is_empty() {
+                        None
+                    } else {
+                        Some(api_response.response.clone())
+                    },
                     tool_calls: Some(calls.clone()),
                     tool_call_id: None,
                     tool_name: None,
@@ -610,22 +700,19 @@ where
 
                 // Execute tools
                 for call in calls {
-                    let args: Value = serde_json::from_str(&call.function.arguments)
-                        .unwrap_or(json!({}));
-                    
+                    let args: Value =
+                        serde_json::from_str(&call.function.arguments).unwrap_or(json!({}));
+
                     // Check if this is a bash command - use streaming execution
                     let (result, content) = if call.function.name == "execute_bash" {
                         // Extract command from args
-                        let command = args.get("command")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let timeout = args.get("timeout_seconds")
-                            .and_then(|v| v.as_u64());
-                        
+                        let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
+                        let timeout = args.get("timeout_seconds").and_then(|v| v.as_u64());
+
                         // Use Arc<Mutex> to share callback across async boundary
                         let call_id = call.id.clone();
                         let callback_ref = Arc::new(Mutex::new(&mut callback));
-                        
+
                         // Execute with streaming
                         let streaming_result = {
                             let callback_clone = callback_ref.clone();
@@ -638,9 +725,10 @@ where
                                         is_stderr,
                                     });
                                 }
-                            }).await
+                            })
+                            .await
                         };
-                        
+
                         match streaming_result {
                             Ok(bash_result) => {
                                 let result_data = json!({
@@ -667,10 +755,14 @@ where
                         let result = tool_registry.execute_tool(&call.function.name, args).await;
                         let (content, _success) = match &result {
                             Some(res) => (
-                                if res.success { res.data.to_string() } else { format!("Error: {}", res.error.clone().unwrap_or_default()) },
-                                res.success
+                                if res.success {
+                                    res.data.to_string()
+                                } else {
+                                    format!("Error: {}", res.error.clone().unwrap_or_default())
+                                },
+                                res.success,
                             ),
-                            None => (format!("Tool not found: {}", call.function.name), false)
+                            None => (format!("Tool not found: {}", call.function.name), false),
                         };
                         (result, content)
                     };
@@ -678,7 +770,7 @@ where
                     // Emit tool result event
                     match &result {
                         Some(res) => {
-                             callback(StreamEvent::ToolResult {
+                            callback(StreamEvent::ToolResult {
                                 tool_call_id: call.id.clone(),
                                 result: res.clone(),
                             });
@@ -686,7 +778,10 @@ where
                         None => {
                             callback(StreamEvent::ToolResult {
                                 tool_call_id: call.id.clone(),
-                                result: ToolResult::error(format!("Tool not found: {}", call.function.name)),
+                                result: ToolResult::error(format!(
+                                    "Tool not found: {}",
+                                    call.function.name
+                                )),
                             });
                         }
                     }
@@ -700,7 +795,7 @@ where
                         tool_name: Some(call.function.name.clone()),
                     });
                 }
-                
+
                 iterations += 1;
                 continue; // Loop again with new history
             }

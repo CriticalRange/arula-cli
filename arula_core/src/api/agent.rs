@@ -195,7 +195,14 @@ pub trait Tool: Send + Sync {
 /// Tool registry for managing available tools
 #[derive(Clone)]
 pub struct ToolRegistry {
-    tools: std::sync::Arc<std::sync::RwLock<HashMap<String, std::sync::Arc<dyn Tool<Params = serde_json::Value, Result = serde_json::Value>>>>>,
+    tools: std::sync::Arc<
+        std::sync::RwLock<
+            HashMap<
+                String,
+                std::sync::Arc<dyn Tool<Params = serde_json::Value, Result = serde_json::Value>>,
+            >,
+        >,
+    >,
 }
 
 impl std::fmt::Debug for ToolRegistry {
@@ -219,8 +226,9 @@ impl ToolRegistry {
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
         let name = tool.name().to_string();
         // Convert to trait object with generic type erasure
-        let arc_tool: std::sync::Arc<dyn Tool<Params = serde_json::Value, Result = serde_json::Value>> =
-            std::sync::Arc::new(GenericToolWrapper::new(tool));
+        let arc_tool: std::sync::Arc<
+            dyn Tool<Params = serde_json::Value, Result = serde_json::Value>,
+        > = std::sync::Arc::new(GenericToolWrapper::new(tool));
         self.tools.write().unwrap().insert(name, arc_tool);
     }
 
@@ -238,9 +246,7 @@ impl ToolRegistry {
     }
 
     pub async fn execute_tool(&self, name: &str, params: Value) -> Option<ToolResult> {
-        let tool = {
-            self.tools.read().unwrap().get(name).cloned()
-        };
+        let tool = { self.tools.read().unwrap().get(name).cloned() };
 
         if let Some(tool) = tool {
             Some(tool.execute_with_result(params).await)
@@ -300,8 +306,7 @@ where
         // Convert the specific result to Value - unwrap the Result first!
         match result {
             Ok(value) => {
-                serde_json::to_value(value)
-                    .map_err(|e| format!("Result conversion failed: {}", e))
+                serde_json::to_value(value).map_err(|e| format!("Result conversion failed: {}", e))
             }
             Err(e) => Err(e),
         }

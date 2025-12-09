@@ -112,7 +112,7 @@ impl ListDirectoryTool {
             let entry_path = entry.path().to_string_lossy().to_string();
 
             *total_count += 1;
-            
+
             // Check if we've hit the limit
             if entries.len() >= MAX_ENTRIES {
                 // Stop adding entries but continue counting
@@ -132,7 +132,7 @@ impl ListDirectoryTool {
                 size,
             });
 
-            // Recursively scan subdirectories if requested  
+            // Recursively scan subdirectories if requested
             if recursive && metadata.file_type().is_dir() {
                 let dir_path = entry.path().to_string_lossy().to_string();
                 if self.scan_directory(&dir_path, show_hidden, true, entries, total_count)? {
@@ -194,7 +194,13 @@ impl Tool for ListDirectoryTool {
 
         let mut entries = Vec::new();
         let mut total_count = 0;
-        let limit_reached = self.scan_directory(&path, show_hidden, recursive, &mut entries, &mut total_count)?;
+        let limit_reached = self.scan_directory(
+            &path,
+            show_hidden,
+            recursive,
+            &mut entries,
+            &mut total_count,
+        )?;
 
         Ok(ListDirResult {
             entries,

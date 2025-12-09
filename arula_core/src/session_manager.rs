@@ -22,7 +22,7 @@ use uuid::Uuid;
 fn read_global_arula_md() -> Option<String> {
     let home_dir = dirs::home_dir()?;
     let global_arula_path = home_dir.join(".arula").join("ARULA.md");
-    
+
     if global_arula_path.exists() {
         std::fs::read_to_string(&global_arula_path).ok()
     } else {
@@ -33,7 +33,7 @@ fn read_global_arula_md() -> Option<String> {
 /// Read ARULA.md from current directory
 fn read_local_arula_md() -> Option<String> {
     let local_arula_path = std::path::Path::new("ARULA.md");
-    
+
     if local_arula_path.exists() {
         std::fs::read_to_string(local_arula_path).ok()
     } else {
@@ -44,20 +44,23 @@ fn read_local_arula_md() -> Option<String> {
 /// Build system prompt with ARULA.md content
 fn build_system_prompt_with_arula() -> String {
     let mut prompt_parts = Vec::new();
-    
+
     // Base ARULA prompt
     prompt_parts.push("You are ARULA, an Autonomous AI Interface assistant. You help users with coding, shell commands, and general software development tasks. Be concise, helpful, and provide practical solutions.".to_string());
-    
+
     // Add global ARULA.md from ~/.arula/
     if let Some(global_arula) = read_global_arula_md() {
-        prompt_parts.push(format!("\n## Global Project Instructions\n{}", global_arula));
+        prompt_parts.push(format!(
+            "\n## Global Project Instructions\n{}",
+            global_arula
+        ));
     }
-    
+
     // Add local ARULA.md from current directory
     if let Some(local_arula) = read_local_arula_md() {
         prompt_parts.push(format!("\n## Current Project Context\n{}", local_arula));
     }
-    
+
     prompt_parts.join("\n")
 }
 
@@ -76,7 +79,7 @@ pub enum UiEvent {
 }
 
 /// Manages AI streaming sessions and communication with UI layers.
-/// 
+///
 /// This is the main backend orchestrator - frontend code should use this
 /// instead of directly interacting with API clients or stream handlers.
 pub struct SessionManager {
@@ -164,16 +167,19 @@ impl SessionManager {
     fn summarize_tool_result(result: &serde_json::Value, success: bool) -> String {
         // Debug: log the actual result structure
         if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
-            eprintln!("🔧 TOOL RESULT DEBUG: {}", serde_json::to_string(&result).unwrap_or_default());
+            eprintln!(
+                "🔧 TOOL RESULT DEBUG: {}",
+                serde_json::to_string(&result).unwrap_or_default()
+            );
         }
-        
+
         // Helper to extract first meaningful line
         fn first_line(s: &str, max_chars: usize) -> String {
             let trimmed = s.trim();
             let first = trimmed.lines().next().unwrap_or(trimmed);
             first.chars().take(max_chars).collect()
         }
-        
+
         // The result can be in two formats:
         // 1. Wrapped: {"Ok": {...}} or {"Err": ...}
         // 2. Direct: {...} (the actual result)
@@ -186,7 +192,7 @@ impl SessionManager {
             // Direct result (not wrapped)
             result
         };
-        
+
         // Check for bash/shell command results with exit_code structure
         // Check for exit_code field (bash command result)
         if let Some(exit_code) = data.get("exit_code").and_then(|c| c.as_i64()) {
@@ -210,7 +216,7 @@ impl SessionManager {
                 return "Done".to_string();
             }
         }
-        
+
         // Check for stdout/stderr without exit_code
         if let Some(stdout) = data.get("stdout").and_then(|s| s.as_str()) {
             let trimmed = stdout.trim();
@@ -218,14 +224,14 @@ impl SessionManager {
                 return first_line(trimmed, 80);
             }
         }
-        
+
         if let Some(stderr) = data.get("stderr").and_then(|s| s.as_str()) {
             let trimmed = stderr.trim();
             if !trimmed.is_empty() {
                 return first_line(trimmed, 80);
             }
         }
-        
+
         // Check for output field
         if let Some(output) = data.get("output").and_then(|s| s.as_str()) {
             let trimmed = output.trim();
@@ -233,24 +239,23 @@ impl SessionManager {
                 return first_line(trimmed, 80);
             }
         }
-        
+
         // Check for directory listing entries
         if let Some(entries) = data.get("entries").and_then(|e| e.as_array()) {
             return format!("{} items found", entries.len());
         }
-        
+
         // Check for file content
         if let Some(content) = data.get("content").and_then(|c| c.as_str()) {
             return format!("{} chars", content.len());
         }
-        
+
         // If data is a string directly
         if data.is_string() {
             let s = data.as_str().unwrap_or("Done");
             return first_line(s, 80);
         }
-        
-        
+
         // Handle error case
         if !success {
             if let Some(err) = result.get("Err") {
@@ -263,12 +268,12 @@ impl SessionManager {
             }
             return "Error".to_string();
         }
-        
+
         // Fallback: try to show something useful
         if result.is_string() {
             return first_line(result.as_str().unwrap_or("Done"), 80);
         }
-        
+
         "Done".to_string()
     }
 

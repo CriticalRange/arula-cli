@@ -472,8 +472,6 @@ impl Config {
         Ok(config)
     }
 
-
-
     /// Get the API URL for the current provider
     pub fn get_api_url(&self) -> String {
         if let Some(config) = self.get_active_provider_config() {

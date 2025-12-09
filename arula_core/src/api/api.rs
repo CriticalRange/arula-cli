@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-
 // Z.AI specific error types
 #[derive(Debug, thiserror::Error)]
 pub enum ZAIApiError {
@@ -322,14 +321,14 @@ impl ApiClient {
                     .header("anthropic-version", "2023-06-01");
             }
             AIProvider::OpenAI | AIProvider::ZAiCoding | AIProvider::OpenRouter => {
-                request_builder = request_builder
-                    .header("Authorization", format!("Bearer {}", self.api_key));
+                request_builder =
+                    request_builder.header("Authorization", format!("Bearer {}", self.api_key));
             }
             // Ollama usually doesn't need auth, but Custom might
             AIProvider::Custom => {
                 if !self.api_key.is_empty() {
-                    request_builder = request_builder
-                        .header("Authorization", format!("Bearer {}", self.api_key));
+                    request_builder =
+                        request_builder.header("Authorization", format!("Bearer {}", self.api_key));
                 }
             }
             _ => {}
@@ -338,23 +337,23 @@ impl ApiClient {
         // Log the request if debug mode is enabled
         if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
             let body_str = serde_json::to_string_pretty(&request_body).unwrap_or_default();
-            println!("🔧 DEBUG: Streaming request to {}: {}", request_url, body_str);
+            println!(
+                "🔧 DEBUG: Streaming request to {}: {}",
+                request_url, body_str
+            );
         }
 
-        let response = request_builder
-            .json(&request_body)
-            .send()
-            .await?;
+        let response = request_builder.json(&request_body).send().await?;
 
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            
+
             // Check for specific Z.AI errors
             if self.provider == AIProvider::ZAiCoding {
                 return Err(ZAIApiError::from_status_code(status.as_u16(), &text).into());
             }
-            
+
             return Err(anyhow!("API Error {}: {}", status, text));
         }
 
@@ -408,7 +407,7 @@ impl ApiClient {
         // Load configuration
         let config = crate::utils::config::Config::load_or_default()?;
         let thinking_enabled = config.get_thinking_enabled().unwrap_or(false);
-        
+
         // Build request body based on provider
         let request_body = match self.provider {
             AIProvider::Claude => {
@@ -426,11 +425,11 @@ impl ApiClient {
                         msg_obj
                     }).collect::<Vec<_>>()
                 });
-                
+
                 if let Some(tools) = tools {
                     request["tools"] = json!(tools);
                 }
-                
+
                 request
             }
             AIProvider::Ollama => {
@@ -444,7 +443,7 @@ impl ApiClient {
                         if let Some(content) = &msg.content {
                             msg_obj["content"] = json!(content);
                         }
-                        
+
                         // Add tool-related fields for Ollama
                         if let Some(tool_calls) = &msg.tool_calls {
                             let converted: Vec<Value> = tool_calls.iter().map(|tc| {
@@ -459,37 +458,40 @@ impl ApiClient {
                             }).collect();
                             msg_obj["tool_calls"] = json!(converted);
                         }
-                        
+
                         msg_obj
                     }).collect::<Vec<_>>(),
                     "stream": false
                 });
-                
+
                 if let Some(tools) = tools {
                     request["tools"] = json!(tools);
                 }
-                
+
                 // Add Ollama-specific options
                 request["options"] = json!({
                     "temperature": 0.7,
                     "num_predict": 4096
                 });
-                
+
                 request
             }
             AIProvider::ZAiCoding => {
                 // Z.AI-specific request format
                 let is_zai_endpoint = self.endpoint.contains("api.z.ai");
-                
+
                 // Convert ChatMessage format to plain objects for Z.AI
                 let zai_messages: Vec<Value> = messages
                     .into_iter()
                     .filter_map(|msg| {
                         // Skip assistant messages that only have tool_calls (no content)
-                        if msg.role == "assistant" && msg.content.is_none() && msg.tool_calls.is_some() {
+                        if msg.role == "assistant"
+                            && msg.content.is_none()
+                            && msg.tool_calls.is_some()
+                        {
                             return None;
                         }
-                        
+
                         // Convert tool role messages to user messages (Z.AI doesn't support tool role)
                         if msg.role == "tool" {
                             // Format tool result as a user message
@@ -500,7 +502,7 @@ impl ApiClient {
                                 "content": format!("Tool {} returned: {}", tool_name, content)
                             }));
                         }
-                        
+
                         // Regular messages
                         Some(json!({
                             "role": msg.role,
@@ -508,7 +510,7 @@ impl ApiClient {
                         }))
                     })
                     .collect();
-                
+
                 // Set up model-specific parameters based on official GLM specs
                 let max_tokens = match self.model.as_str() {
                     "GLM-4.6" => 65536,
@@ -517,21 +519,21 @@ impl ApiClient {
                     "GLM-4-32B-0414-128K" => 16384,
                     _ => 2048,
                 };
-                
+
                 let mut request = json!({
                     "model": self.model,
                     "messages": zai_messages,
                     "max_tokens": max_tokens,
                     "stream": false
                 });
-                
+
                 // Add thinking mode if enabled
                 if thinking_enabled {
                     request["thinking"] = serde_json::json!({
                         "type": "enabled"
                     });
                 }
-                
+
                 // Only add tools for non-coding endpoints and if tools are provided
                 if !is_zai_endpoint {
                     if let Some(t) = tools {
@@ -548,7 +550,7 @@ impl ApiClient {
                         request["tools"] = json!(t);
                     }
                 }
-                
+
                 request
             }
             AIProvider::OpenAI | AIProvider::OpenRouter | AIProvider::Custom => {
@@ -564,23 +566,23 @@ impl ApiClient {
                         } else if msg.tool_calls.is_some() {
                             msg_obj["content"] = json!(null);
                         }
-                        
+
                         // Add tool-related fields
                         if let Some(tool_calls) = &msg.tool_calls {
                             msg_obj["tool_calls"] = json!(tool_calls);
                         }
-                        
+
                         if let Some(tool_call_id) = &msg.tool_call_id {
                             msg_obj["tool_call_id"] = json!(tool_call_id);
                         }
-                        
+
                         msg_obj
                     }).collect::<Vec<_>>(),
                     "temperature": 0.7,
                     "max_tokens": 4096,
                     "stream": false
                 });
-                
+
                 // Add tools if provided
                 if let Some(t) = tools {
                     if !t.is_empty() {
@@ -588,16 +590,16 @@ impl ApiClient {
                         request["tool_choice"] = json!("auto");
                     }
                 }
-                
+
                 // Add reasoning effort when thinking is enabled
                 if thinking_enabled {
                     request["reasoning_effort"] = serde_json::json!("medium");
                 }
-                
+
                 request
             }
         };
-        
+
         // Determine the endpoint URL
         let endpoint_url = match self.provider {
             AIProvider::Ollama => format!("{}/api/chat", self.endpoint),
@@ -614,7 +616,7 @@ impl ApiClient {
                 format!("{}/chat/completions", self.endpoint)
             }
         };
-        
+
         // Create HTTP client
         let client = if matches!(self.provider, AIProvider::ZAiCoding) {
             // Create a new client specifically for Z.AI to force HTTP/1.1
@@ -629,12 +631,12 @@ impl ApiClient {
         } else {
             self.client.clone()
         };
-        
+
         // Build request with appropriate headers
         let mut request_builder = client
             .post(&endpoint_url)
             .header("Content-Type", "application/json");
-            
+
         // Add authorization headers based on provider
         match self.provider {
             AIProvider::Claude => {
@@ -644,60 +646,60 @@ impl ApiClient {
             }
             AIProvider::OpenAI | AIProvider::ZAiCoding | AIProvider::OpenRouter => {
                 if !self.api_key.is_empty() {
-                    request_builder = request_builder
-                        .header("Authorization", format!("Bearer {}", self.api_key));
+                    request_builder =
+                        request_builder.header("Authorization", format!("Bearer {}", self.api_key));
                 }
             }
             AIProvider::Custom => {
                 if !self.api_key.is_empty() {
-                    request_builder = request_builder
-                        .header("Authorization", format!("Bearer {}", self.api_key));
+                    request_builder =
+                        request_builder.header("Authorization", format!("Bearer {}", self.api_key));
                 }
             }
             _ => {} // Ollama usually doesn't need auth
         }
-        
+
         // Log the request if debug mode is enabled
         if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
             let body_str = serde_json::to_string_pretty(&request_body).unwrap_or_default();
-            println!("🔧 DEBUG: Sending request to {}: {}", endpoint_url, body_str);
+            println!(
+                "🔧 DEBUG: Sending request to {}: {}",
+                endpoint_url, body_str
+            );
         }
-        
+
         // Send the request
-        let response = request_builder
-            .json(&request_body)
-            .send()
-            .await?;
-            
+        let response = request_builder.json(&request_body).send().await?;
+
         // Handle the response
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            
+
             // Log the response for debugging
             if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
                 println!("🔧 DEBUG: API Response ({}): {}", status, text);
             }
-            
+
             return Err(anyhow::anyhow!(
                 "API request failed with status {}: {}",
                 status,
                 text
             ));
         }
-        
+
         // Parse response based on provider
         match self.provider {
             AIProvider::Claude => {
                 let response_text = response.text().await?;
-                
+
                 // Log the successful response if debug mode is enabled
                 if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
                     println!("🔧 DEBUG: API Response (200 OK): {}", response_text);
                 }
-                
+
                 let response_json: serde_json::Value = serde_json::from_str(&response_text)?;
-                
+
                 let content = response_json
                     .get("content")
                     .and_then(|c| c.as_array())
@@ -706,7 +708,7 @@ impl ApiClient {
                     .and_then(|t| t.as_str())
                     .unwrap_or("")
                     .to_string();
-                
+
                 Ok(ApiResponse {
                     response: content,
                     success: true,
@@ -720,21 +722,21 @@ impl ApiClient {
             }
             AIProvider::Ollama => {
                 let response_text = response.text().await?;
-                
+
                 // Log the successful response if debug mode is enabled
                 if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
                     println!("🔧 DEBUG: API Response (200 OK): {}", response_text);
                 }
-                
+
                 let response_json: serde_json::Value = serde_json::from_str(&response_text)?;
-                
+
                 let content = response_json
                     .get("message")
                     .and_then(|m| m.get("content"))
                     .and_then(|c| c.as_str())
                     .unwrap_or("")
                     .to_string();
-                
+
                 Ok(ApiResponse {
                     response: content,
                     success: true,
@@ -746,17 +748,20 @@ impl ApiClient {
                     reasoning_content: None,
                 })
             }
-            AIProvider::ZAiCoding | AIProvider::OpenAI | AIProvider::OpenRouter | AIProvider::Custom => {
+            AIProvider::ZAiCoding
+            | AIProvider::OpenAI
+            | AIProvider::OpenRouter
+            | AIProvider::Custom => {
                 // OpenAI-compatible response format
                 let response_text = response.text().await?;
-                
+
                 // Log the successful response if debug mode is enabled
                 if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
                     println!("🔧 DEBUG: API Response (200 OK): {}", response_text);
                 }
-                
+
                 let response_json: serde_json::Value = serde_json::from_str(&response_text)?;
-                
+
                 let content = response_json
                     .get("choices")
                     .and_then(|c| c.as_array())
@@ -766,7 +771,7 @@ impl ApiClient {
                     .and_then(|t| t.as_str())
                     .unwrap_or("")
                     .to_string();
-                
+
                 // Extract tool calls if present
                 let tool_calls = response_json
                     .get("choices")
@@ -775,7 +780,7 @@ impl ApiClient {
                     .and_then(|c| c.get("message"))
                     .and_then(|m| m.get("tool_calls"))
                     .and_then(|tc| serde_json::from_value(tc.clone()).ok());
-                
+
                 // Extract reasoning_content if present (for Z.AI and other reasoning models)
                 let reasoning_content = response_json
                     .get("choices")
@@ -785,7 +790,7 @@ impl ApiClient {
                     .and_then(|m| m.get("reasoning_content"))
                     .and_then(|r| r.as_str())
                     .map(|s| s.to_string());
-                
+
                 Ok(ApiResponse {
                     response: content,
                     success: true,
@@ -806,7 +811,11 @@ impl ApiClient {
         tools: &[serde_json::Value],
     ) -> Result<ApiResponse> {
         let messages = messages.to_vec();
-        let tools = if tools.is_empty() { None } else { Some(tools.to_vec()) };
+        let tools = if tools.is_empty() {
+            None
+        } else {
+            Some(tools.to_vec())
+        };
 
         // Use the unified send_request method with tools
         self.send_request(messages, tools).await
@@ -1783,7 +1792,11 @@ impl ApiClient {
 
         // Debug logging
         debug_print(&format!("DEBUG: Final endpoint URL: {}", final_endpoint));
-        debug_print(&format!("DEBUG: Request payload: {}", serde_json::to_string_pretty(&request).unwrap_or_else(|_| "Failed to serialize".to_string())));
+        debug_print(&format!(
+            "DEBUG: Request payload: {}",
+            serde_json::to_string_pretty(&request)
+                .unwrap_or_else(|_| "Failed to serialize".to_string())
+        ));
 
         // Send the request
         let mut request_builder = self.client.post(final_endpoint).json(&request);
