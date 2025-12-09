@@ -2,7 +2,9 @@
 
 use crate::app::App;
 use crate::ui::menus::api_key_selector::ApiKeySelector;
-use crate::ui::menus::common::{draw_modern_box, draw_selected_item, MenuAction, MenuResult, MenuState, MenuUtils};
+use crate::ui::menus::common::{
+    draw_modern_box, draw_selected_item, MenuAction, MenuResult, MenuState, MenuUtils,
+};
 use crate::ui::menus::dialogs::Dialogs;
 use crate::ui::menus::model_selector::ModelSelector;
 use crate::ui::menus::provider_menu::ProviderMenu;

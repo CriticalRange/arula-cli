@@ -60,7 +60,7 @@ impl MenuUtils {
         Ok(cols >= min_cols && rows >= min_rows)
     }
 
-    /// Setup terminal for menu display (uses alternate screen to prevent scrollback pollution)
+    /// Setup terminal for menu display (uses alternate screen to isolate from scrollback)
     pub fn setup_terminal() -> Result<()> {
         terminal::enable_raw_mode()?;
         stdout().execute(terminal::EnterAlternateScreen)?;
@@ -71,7 +71,7 @@ impl MenuUtils {
         Ok(())
     }
 
-    /// Restore terminal state after menu (leaves alternate screen to return to conversation)
+    /// Restore terminal state after menu (leave alternate screen)
     pub fn restore_terminal() -> Result<()> {
         terminal::disable_raw_mode()?;
         stdout().execute(terminal::LeaveAlternateScreen)?;
@@ -364,9 +364,7 @@ pub fn draw_menu_item(x: u16, y: u16, width: u16, text: &str, selected: bool) ->
 pub fn clear_menu_area(x: u16, y: u16, width: u16, height: u16) -> Result<()> {
     let blank = " ".repeat(width as usize);
     for i in 0..height {
-        stdout()
-            .queue(MoveTo(x, y + i))?
-            .queue(Print(&blank))?;
+        stdout().queue(MoveTo(x, y + i))?.queue(Print(&blank))?;
     }
     Ok(())
 }

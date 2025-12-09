@@ -547,12 +547,7 @@ impl ModelSelector {
 
         // Only draw box on full render
         if !partial_update {
-            draw_modern_box(
-                start_x,
-                start_y,
-                menu_width,
-                final_menu_height as u16,
-            )?;
+            draw_modern_box(start_x, start_y, menu_width, final_menu_height as u16)?;
         }
 
         // Show search input with error state detection

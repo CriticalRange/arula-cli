@@ -42,8 +42,9 @@ impl ProviderMenu {
             .position(|p| p == &current_config.active_provider)
             .unwrap_or(0);
 
-        // Clear screen once when entering submenu to avoid artifacts (like original overlay_menu.rs)
-        stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+        // Clear visible screen once when entering submenu to avoid artifacts
+        stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
+        stdout().execute(terminal::Clear(terminal::ClearType::FromCursorDown))?;
 
         // Comprehensive event clearing before provider selector (like original)
         std::thread::sleep(Duration::from_millis(20));
@@ -97,17 +98,16 @@ impl ProviderMenu {
                                 let _ = app.config.save();
                                 let _ = app.initialize_agent_client();
 
-                                // Don't print messages here - we're in alternate screen mode
-                                // The messages would be lost when we exit
+                                // Don't print messages here - menu overlays the main UI
                                 // Just exit the menu and return to config menu
                                 break; // Selection made
                             }
                             KeyCode::Esc => {
-                                // Exit without clearing - alternate screen handles it
+                                // Exit without clearing; main loop will redraw
                                 break; // Cancel selection
                             }
                             KeyCode::Char('c') if key_event.modifiers == KeyModifiers::CONTROL => {
-                                // Exit without clearing - alternate screen handles it
+                                // Exit without clearing; main loop will redraw
                                 break;
                             }
                             _ => {}
@@ -156,12 +156,7 @@ impl ProviderMenu {
         };
 
         // Draw modern box using shared function
-        draw_modern_box(
-            start_x,
-            start_y,
-            menu_width,
-            menu_height as u16,
-        )?;
+        draw_modern_box(start_x, start_y, menu_width, menu_height as u16)?;
 
         // Draw title/header (like original)
         let title_y = start_y + 1;

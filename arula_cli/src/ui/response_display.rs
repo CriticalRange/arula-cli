@@ -1,26 +1,26 @@
-use arula_core::app::AiResponse;
-use arula_core::api::agent::ToolResult;
 use crate::ui::tui::InlineRenderer;
-use crate::ui::widgets::{thinking::ThinkingWidget, status::{ToolStatusWidget, ToolStatus}};
-use anyhow::Result;
-use ratatui::{
-    layout::{Constraint, Direction, Layout},
-
+use crate::ui::widgets::{
+    status::{ToolStatus, ToolStatusWidget},
+    thinking::ThinkingWidget,
 };
+use anyhow::Result;
+use arula_core::api::agent::ToolResult;
+use arula_core::app::AiResponse;
+use ratatui::layout::{Constraint, Direction, Layout};
 use std::io::{self, Write};
 use std::time::Instant;
 
 /// Enhanced response display using Ratatui for TUI widgets
 pub struct ResponseDisplay {
     renderer: InlineRenderer,
-    
+
     // State
     is_thinking: bool,
     thinking_content: String,
     thinking_frame: usize,
-    
+
     current_tools: Vec<ToolState>,
-    
+
     // Animation timing
     last_update: Instant,
 }
@@ -38,7 +38,7 @@ impl ResponseDisplay {
     pub fn new() -> Result<Self> {
         // Start with a small height, will grow as needed
         let renderer = InlineRenderer::new(1)?;
-        
+
         Ok(Self {
             renderer,
             is_thinking: false,
@@ -61,7 +61,7 @@ impl ResponseDisplay {
                 // For text, we clear the TUI, print the text, then let the next draw restore the TUI
                 // This ensures text ends up in scrollback
                 self.renderer.clear()?;
-                
+
                 print!("{}", text);
                 io::stdout().flush()?;
             }
@@ -72,13 +72,17 @@ impl ResponseDisplay {
                 }
             }
             AiResponse::AgentThinkingContent(text) => {
-                 self.thinking_content.push_str(text);
+                self.thinking_content.push_str(text);
             }
             AiResponse::AgentThinkingEnd => {
                 // thinking finished
             }
 
-            AiResponse::AgentToolCall { id, name, arguments } => {
+            AiResponse::AgentToolCall {
+                id,
+                name,
+                arguments,
+            } => {
                 if !self.current_tools.iter().any(|t| t.id == *id) {
                     self.current_tools.push(ToolState {
                         id: id.clone(),
@@ -90,38 +94,58 @@ impl ResponseDisplay {
                     });
                 }
             }
-            AiResponse::AgentToolResult { tool_call_id, success, result } => {
+            AiResponse::AgentToolResult {
+                tool_call_id,
+                success,
+                result,
+            } => {
                 // Handle result logic if needed or just wait for `handle_tool_result` call
                 // Actually `update` receives `response`.
                 // If I handle it here, I don't need `handle_tool_result`.
                 // Let's implement logic here.
-                
+
                 let summary = self.summarize_result(result);
                 // Look for tool by ID first
-                if let Some(tool) = self.current_tools.iter_mut().find(|t| t.id == *tool_call_id) {
-                     tool.status = if *success { ToolStatus::Success } else { ToolStatus::Error };
-                     tool.result_summary = Some(summary);
-                } 
+                if let Some(tool) = self
+                    .current_tools
+                    .iter_mut()
+                    .find(|t| t.id == *tool_call_id)
+                {
+                    tool.status = if *success {
+                        ToolStatus::Success
+                    } else {
+                        ToolStatus::Error
+                    };
+                    tool.result_summary = Some(summary);
+                }
                 // Fallback to name match for legacy/openrouter if ID is missing?
             }
             AiResponse::AgentStreamEnd => {
-                 self.is_thinking = false;
-                 // Maybe we keep tools visible? Or clear them?
-                 // Usually for a chat CLI, once turn is done, we clear status bars.
-                 self.clear()?;
-                 self.current_tools.clear();
+                self.is_thinking = false;
+                // Maybe we keep tools visible? Or clear them?
+                // Usually for a chat CLI, once turn is done, we clear status bars.
+                self.clear()?;
+                self.current_tools.clear();
             }
             _ => {}
         }
         Ok(())
     }
-    
+
     // Explicit handler for tool results since they might come from a different channel
     pub fn handle_tool_result(&mut self, _id: &str, name: &str, result: &ToolResult) -> Result<()> {
         let summary = self.summarize_result(&result.data);
-        if let Some(tool) = self.current_tools.iter_mut().find(|t| t.name == name && t.status == ToolStatus::Running) {
-             tool.status = if result.success { ToolStatus::Success } else { ToolStatus::Error };
-             tool.result_summary = Some(summary);
+        if let Some(tool) = self
+            .current_tools
+            .iter_mut()
+            .find(|t| t.name == name && t.status == ToolStatus::Running)
+        {
+            tool.status = if result.success {
+                ToolStatus::Success
+            } else {
+                ToolStatus::Error
+            };
+            tool.result_summary = Some(summary);
         }
         Ok(())
     }
@@ -130,9 +154,13 @@ impl ResponseDisplay {
     fn summarize_result(&self, data: &serde_json::Value) -> String {
         // Simplified logic from old code
         if let Some(s) = data.as_str() {
-             if s.len() > 40 { format!("{}...", &s[..37]) } else { s.to_string() }
+            if s.len() > 40 {
+                format!("{}...", &s[..37])
+            } else {
+                s.to_string()
+            }
         } else {
-             "Done".to_string()
+            "Done".to_string()
         }
     }
 
@@ -147,7 +175,7 @@ impl ResponseDisplay {
         // Calculate functionality needed
         let show_thinking = self.is_thinking && !self.thinking_content.is_empty();
         let show_tools = !self.current_tools.is_empty();
-        
+
         if !show_thinking && !show_tools {
             // Nothing to draw, maybe just finish?
             // If we cleared, we are good.
@@ -157,20 +185,22 @@ impl ResponseDisplay {
         // We need 1 line per tool + few for thinking?
         // Thinking widget height: borders + content.
         // Let's dynamic size.
-        
-        let thinking_height = if show_thinking { 
-             // Minimal height 3 (top, content, bottom)
-             // Clamping content to max 5 lines
-             let lines = self.thinking_content.lines().count().min(5).max(1);
-             (lines + 2) as u16 
-        } else { 0 };
-        
+
+        let thinking_height = if show_thinking {
+            // Minimal height 3 (top, content, bottom)
+            // Clamping content to max 5 lines
+            let lines = self.thinking_content.lines().count().min(5).max(1);
+            (lines + 2) as u16
+        } else {
+            0
+        };
+
         let tools_height = self.current_tools.len() as u16;
-        
+
         let total_height = thinking_height + tools_height;
-        
+
         if total_height == 0 {
-             return Ok(());
+            return Ok(());
         }
 
         self.renderer.resize(total_height)?;
@@ -193,31 +223,31 @@ impl ResponseDisplay {
                 let widget = ThinkingWidget::new(thinking_content, thinking_frame, is_thinking);
                 f.render_widget(widget, chunks[0]);
             }
-            
+
             if show_tools {
                 let area = if show_thinking { chunks[1] } else { chunks[0] };
                 let tool_chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints(vec![Constraint::Length(1); tools.len()])
                     .split(area);
-                    
+
                 for (i, tool) in tools.iter().enumerate() {
                     let widget = ToolStatusWidget::new(&tool.name, &tool.args, tool.status.clone())
                         .with_frame(thinking_frame); // Reuse frame counter
-                        
+
                     let widget = if let Some(summary) = &tool.result_summary {
                         widget.with_result(summary)
                     } else {
                         widget
                     };
-                    
+
                     if i < tool_chunks.len() {
                         f.render_widget(widget, tool_chunks[i]);
                     }
                 }
             }
         })?;
-        
+
         Ok(())
     }
 }

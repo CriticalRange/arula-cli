@@ -84,7 +84,11 @@ impl Widget for ToolStatusWidget<'_> {
             ToolStatus::Running => {
                 // Pulse effect
                 let is_bright = (self.frame / 2) % 2 == 0;
-                let color = if is_bright { Color::Cyan } else { Color::DarkGray };
+                let color = if is_bright {
+                    Color::Cyan
+                } else {
+                    Color::DarkGray
+                };
                 (Style::default().fg(color), Style::default().fg(color))
             }
             ToolStatus::Success => (
@@ -110,7 +114,10 @@ impl Widget for ToolStatusWidget<'_> {
                 if let Some(summary) = self.result_summary {
                     spans.push(Span::styled(summary, Style::default().fg(Color::DarkGray)));
                 } else {
-                    spans.push(Span::styled("Completed", Style::default().fg(Color::DarkGray)));
+                    spans.push(Span::styled(
+                        "Completed",
+                        Style::default().fg(Color::DarkGray),
+                    ));
                 }
             }
             ToolStatus::Error => {

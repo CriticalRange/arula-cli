@@ -1,7 +1,9 @@
 //! Main menu functionality for ARULA CLI
 
 use crate::app::App;
-use crate::ui::menus::common::{draw_modern_box, draw_selected_item, MenuResult, MenuState, MenuUtils};
+use crate::ui::menus::common::{
+    draw_modern_box, draw_selected_item, MenuResult, MenuState, MenuUtils,
+};
 use crate::ui::output::OutputHandler;
 use crate::utils::colors::ColorTheme;
 use anyhow::Result;
@@ -140,16 +142,20 @@ impl MainMenu {
                                 return self.handle_selection(app, output);
                             }
                             crossterm::event::KeyCode::Esc => {
-                                // Clear screen before exiting
-                                stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                                // Clear menu overlay before exiting
+                                stdout().execute(terminal::Clear(
+                                    terminal::ClearType::FromCursorDown,
+                                ))?;
                                 stdout().flush()?;
                                 return Ok(MenuResult::Continue);
                             }
                             crossterm::event::KeyCode::Char('c')
                                 if key_event.modifiers == KeyModifiers::CONTROL =>
                             {
-                                // Clear screen before exiting
-                                stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                                // Clear menu overlay before exiting
+                                stdout().execute(terminal::Clear(
+                                    terminal::ClearType::FromCursorDown,
+                                ))?;
                                 stdout().flush()?;
                                 // Ctrl+C - close menu
                                 return Ok(MenuResult::Continue);
@@ -186,8 +192,7 @@ impl MainMenu {
             0
         };
 
-        // Don't clear screen on every render - we're in alternate screen mode
-        // Only position cursor at top
+        // Don't clear screen on every render; keep buffer intact and simply move to top.
         stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
 
         // Draw modern box using shared function
@@ -285,8 +290,9 @@ impl MainMenu {
         if let Some(selected_item) = self.items.get(self.state.selected_index) {
             match selected_item {
                 MainMenuItem::ContinueChat => {
-                    // Clear screen before exiting
-                    stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                    // Clear menu overlay before exiting
+                    stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
+                    stdout().execute(terminal::Clear(terminal::ClearType::FromCursorDown))?;
                     stdout().flush()?;
                     Ok(MenuResult::Continue)
                 }
@@ -310,21 +316,24 @@ impl MainMenu {
                 }
                 MainMenuItem::InfoHelp => {
                     self.show_info_and_help(app, output)?;
-                    // Clear screen before exiting
-                    stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                    // Clear menu overlay before exiting
+                    stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
+                    stdout().execute(terminal::Clear(terminal::ClearType::FromCursorDown))?;
                     stdout().flush()?;
                     Ok(MenuResult::Continue)
                 }
                 MainMenuItem::ClearChat => {
-                    // Clear screen before exiting
-                    stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+                    // Clear menu overlay before exiting
+                    stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
+                    stdout().execute(terminal::Clear(terminal::ClearType::FromCursorDown))?;
                     stdout().flush()?;
                     Ok(MenuResult::ClearChat)
                 }
             }
         } else {
-            // Clear screen before exiting
-            stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+            // Clear menu overlay before exiting
+            stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
+            stdout().execute(terminal::Clear(terminal::ClearType::FromCursorDown))?;
             stdout().flush()?;
             Ok(MenuResult::Continue)
         }
@@ -332,8 +341,9 @@ impl MainMenu {
 
     /// Show information and help dialog (original implementation)
     fn show_info_and_help(&self, _app: &App, _output: &mut OutputHandler) -> Result<()> {
-        // Clear screen once when entering submenu to avoid artifacts
-        stdout().execute(terminal::Clear(terminal::ClearType::All))?;
+        // Clear visible area once when entering submenu to avoid artifacts
+        stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
+        stdout().execute(terminal::Clear(terminal::ClearType::FromCursorDown))?;
 
         // Clear any pending events in the buffer
         while crossterm::event::poll(Duration::from_millis(0))? {
@@ -454,8 +464,7 @@ impl MainMenu {
     fn render_help(&self, scroll_offset: usize) -> Result<()> {
         let (cols, rows) = crossterm::terminal::size()?;
 
-        // Don't clear entire screen - causes flicker
-        // We're in alternate screen mode, so just draw over existing content
+        // Don't clear entire screen - causes flicker. Draw over existing content on the main buffer.
 
         let menu_width = 70.min(cols.saturating_sub(4));
         let menu_height = 22u16; // Increased for header and footer

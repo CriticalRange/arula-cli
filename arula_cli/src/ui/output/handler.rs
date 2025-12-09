@@ -272,7 +272,7 @@ impl OutputHandler {
         let stdout = io::stdout();
         let mut handle = stdout.lock();
 
-        writeln!(handle, "\n{} {}", style("AI:").bold().cyan(), message)?;
+        writeln!(handle, "\n{}", message)?;
         handle.flush()
     }
 

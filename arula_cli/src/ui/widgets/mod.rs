@@ -1,2 +1,2 @@
-pub mod thinking;
 pub mod status;
+pub mod thinking;

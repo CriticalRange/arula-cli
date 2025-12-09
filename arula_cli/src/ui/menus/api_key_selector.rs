@@ -304,12 +304,7 @@ impl ApiKeySelector {
         let mut cursor_pos = 0;
 
         loop {
-            draw_modern_box(
-                start_x,
-                start_y,
-                dialog_width,
-                dialog_height,
-            )?;
+            draw_modern_box(start_x, start_y, dialog_width, dialog_height)?;
 
             // Draw prompt
             let prompt_y = start_y + 2;
