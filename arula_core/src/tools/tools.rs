@@ -26,6 +26,12 @@ pub use crate::tools::builtin::{
     WriteFileParams, WriteFileResult, WriteFileTool,
 };
 
+// Re-export analyze_context tool
+#[allow(unused_imports)]
+pub use crate::tools::analyze_context::{
+    AnalyzeContextParams, AnalyzeContextResult, AnalyzeContextTool,
+};
+
 // Re-export Visioneer tool from its own module
 #[allow(unused_imports)]
 pub use crate::tools::visioneer::{VisioneerParams, VisioneerResult, VisioneerTool};
@@ -47,6 +53,7 @@ pub fn create_basic_tool_registry() -> crate::api::agent::ToolRegistry {
     registry.register(WebSearchTool::new());
     registry.register(VisioneerTool::new());
     registry.register(QuestionTool::new());
+    registry.register(AnalyzeContextTool::new());
 
     registry
 }
@@ -105,5 +112,6 @@ mod tests {
         assert!(tools.contains(&"web_search"));
         assert!(tools.contains(&"visioneer"));
         assert!(tools.contains(&"ask_question"));
+        assert!(tools.contains(&"analyze_context"));
     }
 }

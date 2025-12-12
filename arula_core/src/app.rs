@@ -1839,43 +1839,57 @@ You have access to tools for file operations, shell commands, and more. Use them
 
         info.push_str("\n## Built-in Tools\n");
         info.push_str(
-            "You have access to the following built-in tools that you can call directly:\n\n",
+            "You can call these tools directly; they will run without asking for extra approval unless noted:\n\n",
         );
 
-        info.push_str("### 1. execute_bash - Execute shell commands\n");
-        info.push_str("**Usage:** Call this function directly to run shell commands\n");
-        info.push_str("**Parameters:**\n");
-        info.push_str("- `command` (string, required): The shell command to execute\n");
-        info.push_str("**Example:** Call `execute_bash(command=\"echo hello world\")`\n\n");
+        info.push_str("1) execute_bash — run shell commands\n");
+        info.push_str("- `command` (string, required) — shell to execute\n");
+        info.push_str("  Example: `execute_bash(command=\"echo hello && ls\")`\n\n");
 
-        info.push_str("### 2. list_directory - List files and directories\n");
-        info.push_str("**Usage:** Call this function directly to list directory contents\n");
-        info.push_str("**Parameters:**\n");
-        info.push_str("- `path` (string, required): The directory path to list\n");
-        info.push_str("**Example:** Call `list_directory(path=\".\")`\n\n");
+        info.push_str("2) list_directory — list files/directories\n");
+        info.push_str("- `path` (string, required) — directory to list\n");
+        info.push_str("  Example: `list_directory(path=\".\")`\n\n");
 
-        info.push_str("### 3. read_file - Read file contents\n");
-        info.push_str("**Usage:** Call this function directly to read a file\n");
-        info.push_str("**Parameters:**\n");
-        info.push_str("- `path` (string, required): The file path to read\n");
-        info.push_str("**Example:** Call `read_file(path=\"README.md\")`\n\n");
+        info.push_str("3) read_file — read a file\n");
+        info.push_str("- `path` (string, required) — file to read\n");
+        info.push_str("  Example: `read_file(path=\"README.md\")`\n\n");
 
-        info.push_str("### 4. write_file - Write or create files\n");
-        info.push_str("**Usage:** Call this function directly to write file contents\n");
-        info.push_str("**Parameters:**\n");
-        info.push_str("- `path` (string, required): The file path to write to\n");
-        info.push_str("- `content` (string, required): The content to write\n");
-        info.push_str(
-            "**Example:** Call `write_file(path=\"hello.txt\", content=\"Hello World!\")`\n\n",
-        );
+        info.push_str("4) write_file — create/overwrite a file\n");
+        info.push_str("- `path` (string, required) — file to write\n");
+        info.push_str("- `content` (string, required) — data to write\n");
+        info.push_str("  Example: `write_file(path=\"hello.txt\", content=\"Hello World\")`\n\n");
 
-        info.push_str("### 5. edit_file - Edit existing files\n");
-        info.push_str("**Usage:** Call this function directly to edit files with find/replace\n");
-        info.push_str("**Parameters:**\n");
-        info.push_str("- `path` (string, required): The file path to edit\n");
-        info.push_str("- `old_string` (string, required): The text to replace\n");
-        info.push_str("- `new_string` (string, required): The replacement text\n");
-        info.push_str("**Example:** Call `edit_file(path=\"file.txt\", old_string=\"old\", new_string=\"new\")`\n\n");
+        info.push_str("5) edit_file — find/replace text in a file\n");
+        info.push_str("- `path` (string, required)\n");
+        info.push_str("- `old_text` (string, required)\n");
+        info.push_str("- `new_text` (string, required)\n");
+        info.push_str("  Example: `edit_file(path=\"file.txt\", old_text=\"old\", new_text=\"new\")`\n\n");
+
+        info.push_str("6) search_files — regex search in files\n");
+        info.push_str("- `path` (string, required) — root directory\n");
+        info.push_str("- `pattern` (string, required) — regex to search\n");
+        info.push_str("- `extensions` (string list, optional) — limit to extensions\n");
+        info.push_str("- `max_results` (number, optional) — cap results\n");
+        info.push_str("  Example: `search_files(path=\".\", pattern=\"TODO\", extensions=[\"rs\"], max_results=20)`\n\n");
+
+        info.push_str("7) web_search — search the web\n");
+        info.push_str("- `query` (string, required)\n");
+        info.push_str("- `limit` (number, optional)\n");
+        info.push_str("  Example: `web_search(query=\"latest rust release\", limit=3)`\n\n");
+
+        info.push_str("8) visioneer — vision/automation helper\n");
+        info.push_str("- `task` (string, required) — describe what to inspect or automate\n");
+        info.push_str("- optional: `model`, `endpoint`, `region` depending on provider\n\n");
+
+        info.push_str("9) analyze_context — summarize repo structure\n");
+        info.push_str("- `root_path` (string, optional) — directory to scan (default: \".\")\n");
+        info.push_str("- `max_files` (number, optional) — file scan cap (default: 500)\n");
+        info.push_str("- `include_hidden` (boolean, optional) — scan hidden/build outputs\n");
+        info.push_str("  Example: `analyze_context(root_path=\".\", max_files=400)`\n\n");
+
+        info.push_str("10) ask_question — ask a short clarifying question\n");
+        info.push_str("- `question` (string, required)\n");
+        info.push_str("  Example: `ask_question(question=\"Which file should I edit?\")`\n\n");
 
         info
     }

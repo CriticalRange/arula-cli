@@ -11,6 +11,7 @@
 //! - `mcp_dynamic` - Dynamic MCP tool loading
 
 pub mod builtin;
+pub mod analyze_context;
 pub mod mcp;
 pub mod mcp_dynamic;
 pub mod tools;

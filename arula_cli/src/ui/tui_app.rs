@@ -50,8 +50,8 @@ pub enum ToolState {
     Error,
 }
 
-/// The TUI viewport height (status + input area only)
-const VIEWPORT_HEIGHT: u16 = 3;
+/// The TUI viewport height (input + info line)
+const VIEWPORT_HEIGHT: u16 = 2;
 
 /// Application state (separate from terminal for borrow checker)
 struct AppState {
@@ -68,7 +68,15 @@ struct AppState {
     screen_height: u16,
     screen_width: u16,
     last_ai_message: Option<String>,
+    last_history_kind: Option<HistoryKind>,
     app: App,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoryKind {
+    User,
+    Ai,
+    Tool,
 }
 
 impl AppState {
@@ -87,16 +95,20 @@ impl AppState {
             screen_height: height,
             screen_width: width,
             last_ai_message: None,
+            last_history_kind: None,
             app,
         }
     }
 
     fn add_user_message(&mut self, message: &str) {
         let clean = clean_text(message);
-        self.pending_history.push(HistoryLine::new(vec![
-            HistorySpan::new("▶ You: ").fg(Color::Cyan).bold(),
-            HistorySpan::new(clean),
-        ]));
+        self.push_history(
+            HistoryKind::User,
+            HistoryLine::new(vec![
+                HistorySpan::new("▶ You: ").fg(Color::Cyan).bold(),
+                HistorySpan::new(clean),
+            ]),
+        );
         self.last_ai_message = None;
     }
 
@@ -116,15 +128,20 @@ impl AppState {
         let mut lines = text.lines();
 
         if let Some(first) = lines.next() {
-            self.pending_history
-                .push(HistoryLine::new(vec![HistorySpan::new(first.to_string())]));
+            self.push_history(
+                HistoryKind::Ai,
+                HistoryLine::new(vec![HistorySpan::new(first.to_string())]),
+            );
         }
 
         for line in lines {
-            self.pending_history.push(HistoryLine::new(vec![
-                HistorySpan::new("      "), // Indentation to align with text
-                HistorySpan::new(line.to_string()),
-            ]));
+            self.push_history(
+                HistoryKind::Ai,
+                HistoryLine::new(vec![
+                    HistorySpan::new("      "), // Indentation to align with text
+                    HistorySpan::new(line.to_string()),
+                ]),
+            );
         }
 
         self.last_ai_message = Some(message);
@@ -132,11 +149,24 @@ impl AppState {
 
     fn add_tool_message(&mut self, name: &str, args: &str) {
         let clean_args = clean_text(args);
-        self.pending_history.push(HistoryLine::new(vec![
-            HistorySpan::new("🔧 Tool: ").fg(Color::Magenta).bold(),
-            HistorySpan::new(name).bold(),
-            HistorySpan::new(format!(" {}", clean_args)).dim(),
-        ]));
+        self.push_history(
+            HistoryKind::Tool,
+            HistoryLine::new(vec![
+                HistorySpan::new("🔧 Tool: ").fg(Color::Magenta).bold(),
+                HistorySpan::new(name).bold(),
+                HistorySpan::new(format!(" {}", clean_args)).dim(),
+            ]),
+        );
+    }
+
+    fn push_history(&mut self, kind: HistoryKind, line: HistoryLine) {
+        if let Some(last) = self.last_history_kind {
+            if last != kind {
+                self.pending_history.push(HistoryLine::plain(""));
+            }
+        }
+        self.pending_history.push(line);
+        self.last_history_kind = Some(kind);
     }
 
     fn tick(&mut self) -> bool {
@@ -150,141 +180,33 @@ impl AppState {
 
     fn render_viewport(&self, f: &mut Frame) {
         let area = f.area();
-        // Reserve 1 line for input, rest for status
-        let input_height = 1;
-        let max_status_height = area.height.saturating_sub(input_height);
-
-        // Calculate needed status height but clamp to available space
-        let mut status_height = self.calculate_status_height();
-        if status_height > max_status_height {
-            status_height = max_status_height;
+        let status_height = self.status_height();
+        let has_info_row = area.height > 1;
+        let mut constraints = Vec::new();
+        if status_height > 0 {
+            constraints.push(Constraint::Length(status_height));
         }
-
+        constraints.push(Constraint::Length(1)); // input row
+        if has_info_row {
+            constraints.push(Constraint::Length(1)); // info row
+        }
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(status_height),
-                Constraint::Length(input_height),
-            ])
+            .constraints(constraints)
             .split(area);
 
-        self.render_status(f, chunks[0]);
-        self.render_input(f, chunks[1]);
-    }
-
-    fn calculate_status_height(&self) -> u16 {
-        let mut height = 0u16;
-        if self.is_waiting && self.current_response.is_empty() && self.active_tools.is_empty() {
-            height += 1;
-        }
-        if !self.thinking_content.is_empty() {
-            height += 1;
-        }
-        height += self.active_tools.len() as u16;
-        if !self.current_response.is_empty() {
-            height += 1;
-        }
-        // Min 1 (at least a blank line or status), Max infinite (clamped by viewport)
-        height.max(1)
-    }
-
-    fn render_status(&self, f: &mut Frame, area: Rect) {
-        let mut lines: Vec<Line> = Vec::new();
-
-        if self.is_waiting
-            && self.thinking_content.is_empty()
-            && self.current_response.is_empty()
-            && self.active_tools.is_empty()
-        {
-            let spinner = ["◐", "◓", "◑", "◒"][self.frame % 4];
-            lines.push(Line::from(vec![
-                Span::styled(format!("{} ", spinner), Style::default().fg(RColor::Cyan)),
-                Span::styled("Processing...", Style::default().fg(RColor::Cyan)),
-            ]));
+        let mut idx = 0;
+        if status_height > 0 {
+            self.render_status_box(f, chunks[idx]);
+            idx += 1;
         }
 
-        if !self.thinking_content.is_empty() {
-            let spinner = ["◐", "◓", "◑", "◒"][self.frame % 4];
-            // Only show last line of thinking to save space
-            let preview: String = self
-                .thinking_content
-                .lines()
-                .last()
-                .unwrap_or("")
-                .chars()
-                .take(50)
-                .collect();
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{} ", spinner),
-                    Style::default().fg(RColor::Magenta),
-                ),
-                Span::styled(preview, Style::default().fg(RColor::DarkGray)),
-            ]));
+        self.render_input(f, chunks[idx]);
+        idx += 1;
+
+        if has_info_row && idx < chunks.len() {
+            self.render_info(f, chunks[idx]);
         }
-
-        for tool in &self.active_tools {
-            let (icon, color) = match &tool.status {
-                ToolState::Running => {
-                    let s = ["◐", "◓", "◑", "◒"][self.frame % 4];
-                    (s.to_string(), RColor::Yellow)
-                }
-                ToolState::Success => ("✓".to_string(), RColor::Green),
-                ToolState::Error => ("✗".to_string(), RColor::Red),
-            };
-
-            let mut spans = Vec::new();
-            spans.push(Span::styled(
-                format!("{} ", icon),
-                Style::default().fg(color),
-            ));
-            spans.push(Span::styled(
-                TuiApp::display_tool_name(&tool.name),
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ));
-
-            let args_preview = TuiApp::format_args_preview(&tool.args);
-            if !args_preview.is_empty() {
-                spans.push(Span::styled(
-                    format!(" • {}", args_preview),
-                    Style::default().fg(RColor::Gray),
-                ));
-            }
-
-            lines.push(Line::from(spans));
-        }
-
-        if !self.current_response.is_empty() {
-            // ... preview current response ...
-            let preview: String = self
-                .current_response
-                .lines()
-                .last()
-                .unwrap_or("")
-                .chars()
-                .take(60)
-                .collect();
-            lines.push(Line::from(vec![
-                Span::styled("◆ ", Style::default().fg(RColor::Yellow)),
-                Span::styled(preview, Style::default().fg(RColor::White)),
-            ]));
-        }
-
-        // If we have more lines than area, take the LAST N lines (most recent status)
-        let total_lines = lines.len();
-        let display_lines = if total_lines > area.height as usize {
-            lines
-                .into_iter()
-                .rev()
-                .take(area.height as usize)
-                .rev()
-                .collect()
-        } else {
-            lines
-        };
-
-        let status = Paragraph::new(display_lines);
-        f.render_widget(status, area);
     }
 
     fn render_input(&self, f: &mut Frame, area: Rect) {
@@ -298,6 +220,170 @@ impl AppState {
         let cursor_x = area.x + 2 + self.input.chars().take(self.input_cursor).count() as u16;
         // Cursor Y is just area.y because no border
         f.set_cursor_position((cursor_x, area.y));
+    }
+
+    fn render_info(&self, f: &mut Frame, area: Rect) {
+        let info = Paragraph::new(self.info_line());
+        f.render_widget(info, area);
+    }
+
+    fn info_line(&self) -> Line<'static> {
+        let spinner = ["◐", "◓", "◑", "◒"][self.frame % 4];
+        let mut spans = Vec::new();
+
+        if self.is_waiting {
+            // Active tools take priority so users see progress.
+            if let Some(tool) = self.active_tools.first() {
+                let name = TuiApp::display_tool_name(&tool.name);
+                let label = if self.active_tools.len() > 1 {
+                    format!("{name} (+{})", self.active_tools.len() - 1)
+                } else {
+                    name.to_string()
+                };
+                spans.push(Span::styled(
+                    format!("{spinner} Tools "),
+                    Style::default().fg(RColor::Yellow),
+                ));
+                spans.push(Span::styled(label, Style::default().fg(RColor::Yellow)));
+            } else if !self.thinking_content.is_empty() {
+                let preview = TuiApp::thinking_preview(&self.thinking_content, 32)
+                    .unwrap_or_else(|| "Thinking...".to_string());
+                spans.push(Span::styled(
+                    format!("{spinner} Thinking "),
+                    Style::default().fg(RColor::Magenta),
+                ));
+                spans.push(Span::styled(
+                    preview,
+                    Style::default().fg(RColor::DarkGray),
+                ));
+            } else if !self.current_response.is_empty() {
+                spans.push(Span::styled(
+                    format!("{spinner} Responding "),
+                    Style::default().fg(RColor::Cyan),
+                ));
+                let preview = self
+                    .current_response
+                    .lines()
+                    .last()
+                    .unwrap_or("")
+                    .to_string();
+                if !preview.is_empty() {
+                    spans.push(Span::styled(preview, Style::default().fg(RColor::Gray)));
+                }
+            } else {
+                spans.push(Span::styled(
+                    format!("{spinner} Working"),
+                    Style::default().fg(RColor::Cyan),
+                ));
+            }
+        } else {
+            spans.push(Span::styled("✓ API ready", Style::default().fg(RColor::Green)));
+        }
+
+        spans.push(Span::raw("  "));
+
+        // Model badge (provider omitted for brevity)
+        let model = self.app.config.get_model();
+        spans.push(Span::styled(
+            model,
+            Style::default().fg(RColor::DarkGray).add_modifier(Modifier::ITALIC),
+        ));
+        spans.push(Span::raw("  "));
+
+        spans.push(Span::styled(
+            "Shift+Tab menu",
+            Style::default().fg(RColor::Gray),
+        ));
+
+        Line::from(spans)
+    }
+
+    fn status_height(&self) -> u16 {
+        let mut height = 0;
+        if self.is_waiting && !self.thinking_content.is_empty() {
+            height += 1;
+        }
+        if self.is_waiting && !self.active_tools.is_empty() {
+            height += 1;
+        }
+        height
+    }
+
+    fn status_lines(&self) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        let border = Style::default().fg(RColor::DarkGray);
+
+        if self.is_waiting && !self.active_tools.is_empty() {
+            let spinner = ["◐", "◓", "◑", "◒"][self.frame % 4];
+            let first = &self.active_tools[0];
+            let label = TuiApp::display_tool_name(&first.name);
+            let active_count = self.active_tools.len();
+            let elapsed_ms = first
+                .finished_at
+                .unwrap_or_else(Instant::now)
+                .saturating_duration_since(first.started_at)
+                .as_millis();
+            let args_preview = TuiApp::format_args_preview(&first.args);
+            let mut spans = Vec::new();
+            spans.push(Span::styled("┌", border));
+            spans.push(Span::styled(
+                format!(" {spinner} Tool 1/{} ", active_count),
+                Style::default()
+                    .fg(RColor::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled("┐ ", border));
+            spans.push(Span::styled(
+                label.to_string(),
+                Style::default().fg(RColor::Yellow),
+            ));
+            spans.push(Span::raw("  "));
+            if !args_preview.is_empty() {
+            spans.push(Span::styled(
+                args_preview,
+                Style::default().fg(RColor::Gray),
+            ));
+                spans.push(Span::raw("  "));
+            }
+            spans.push(Span::styled(
+                format!("{}ms", elapsed_ms),
+                Style::default().fg(RColor::DarkGray),
+            ));
+            lines.push(Line::from(spans));
+        }
+
+        if self.is_waiting && !self.thinking_content.is_empty() {
+            let spinner = ["◐", "◓", "◑", "◒"][self.frame % 4];
+            let preview =
+                TuiApp::thinking_preview(&self.thinking_content, 48).unwrap_or_else(|| {
+                    "Thinking...".to_string()
+                });
+            let mut spans = Vec::new();
+            spans.push(Span::styled("┌", border));
+            spans.push(Span::styled(
+                format!(" {spinner} Thinking "),
+                Style::default()
+                    .fg(RColor::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled("┐ ", border));
+            spans.push(Span::styled(
+                preview,
+                Style::default().fg(RColor::Gray),
+            ));
+            lines.push(Line::from(spans));
+        }
+
+        lines
+    }
+
+    fn render_status_box(&self, f: &mut Frame, area: Rect) {
+        let lines = self.status_lines();
+        if lines.is_empty() || area.height == 0 {
+            return;
+        }
+        let status = Paragraph::new(lines);
+        f.render_widget(status, area);
     }
 }
 
@@ -355,7 +441,9 @@ impl StreamCollector {
 
 fn clean_text(s: &str) -> String {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"\[\d{1,3}(?:;\d{1,3})*m").unwrap());
+    let re = RE.get_or_init(|| {
+        Regex::new(r"(\x1b\[[0-9;]*[A-Za-z]|\[\d{1,3}(?:;\d{1,3})*m)").unwrap()
+    });
     let stripped = strip_ansi_codes(s);
     re.replace_all(&stripped, "").to_string()
 }
@@ -391,9 +479,9 @@ impl TuiApp {
     }
 
     fn required_viewport_height(&self) -> u16 {
-        // Status + input line; clamp to available screen height to avoid overdraw or scrollback overwrites.
-        let status_height = self.state.calculate_status_height();
-        let total = status_height.saturating_add(1);
+        // Dynamic layout: status box (0-2 lines) + input + info row.
+        let status_height = self.state.status_height();
+        let total = status_height.saturating_add(2);
         let max_height = self.state.screen_height.max(1);
         total.min(max_height).max(1)
     }
@@ -413,14 +501,36 @@ impl TuiApp {
         }
     }
 
-    fn shorten(text: &str, max: usize) -> String {
-        if text.len() <= max {
-            text.to_string()
-        } else if max <= 3 {
-            "...".to_string()
-        } else {
-            format!("{}...", &text[..max.saturating_sub(3)])
+    fn thinking_preview(content: &str, _max: usize) -> Option<String> {
+        let last = content
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())?
+            .trim()
+            .to_string();
+        if last.is_empty() {
+            return None;
         }
+        let clean = clean_text(&last);
+        let stripped = Self::strip_list_prefix(&clean);
+        if stripped.is_empty() {
+            None
+        } else {
+            Some(stripped)
+        }
+    }
+
+    fn strip_list_prefix(s: &str) -> String {
+        let mut trimmed = s.trim_start();
+        if let Some(rest) = trimmed.strip_prefix(['-', '*', '•']) {
+            trimmed = rest.trim_start();
+        }
+        if let Some((digits, rest)) = trimmed.split_once('.') {
+            if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+                return rest.trim_start().to_string();
+            }
+        }
+        trimmed.to_string()
     }
 
     fn format_args_preview(arguments: &str) -> String {
@@ -438,15 +548,15 @@ impl TuiApp {
                     } else {
                         value.to_string()
                     };
-                    return format!("{}: {}", key, Self::shorten(&rendered_val, 30));
+                    return format!("{key}: {rendered_val}");
                 }
             }
             if let Some(s) = val.as_str() {
-                return Self::shorten(s, 30);
+                return s.to_string();
             }
         }
 
-        Self::shorten(arguments.trim(), 30)
+        arguments.trim().to_string()
     }
 
     fn summarize_tool_result(result: &Value, success: bool) -> String {
@@ -457,20 +567,20 @@ impl TuiApp {
             ] {
                 if let Some(val) = obj.get(key) {
                     if let Some(s) = val.as_str() {
-                        return Self::shorten(&clean_text(s), 60);
+                        return clean_text(s);
                     }
                     if !val.is_null() {
-                        return Self::shorten(&clean_text(&val.to_string()), 60);
+                        return clean_text(&val.to_string());
                     }
                 }
             }
             if let Some(err) = obj.get("error").and_then(|v| v.as_str()) {
-                return Self::shorten(&clean_text(err), 60);
+                return clean_text(err);
             }
         }
 
         if let Some(s) = result.as_str() {
-            return Self::shorten(&clean_text(s), 60);
+            return clean_text(s);
         }
 
         if !success {
@@ -546,6 +656,7 @@ impl TuiApp {
                             KeyCode::Enter => {
                                 if !self.state.input.is_empty() && !self.state.is_waiting {
                                     self.submit_message().await?;
+                                    redraw = true;
                                 }
                             }
                             KeyCode::Char(c) => {
@@ -559,6 +670,7 @@ impl TuiApp {
                                     .unwrap_or(self.state.input.len());
                                 self.state.input.insert(byte_pos, c);
                                 self.state.input_cursor += 1;
+                                redraw = true;
                             }
                             KeyCode::Backspace => {
                                 if self.state.input_cursor > 0 {
@@ -569,6 +681,7 @@ impl TuiApp {
                                     {
                                         self.state.input.remove(byte_pos);
                                     }
+                                    redraw = true;
                                 }
                             }
                             KeyCode::Delete => {
@@ -579,21 +692,25 @@ impl TuiApp {
                                     {
                                         self.state.input.remove(byte_pos);
                                     }
+                                    redraw = true;
                                 }
                             }
                             KeyCode::Left => {
                                 self.state.input_cursor = self.state.input_cursor.saturating_sub(1);
+                                redraw = true;
                             }
                             KeyCode::Right => {
                                 let char_count = self.state.input.chars().count();
                                 if self.state.input_cursor < char_count {
                                     self.state.input_cursor += 1;
+                                    redraw = true;
                                 }
                             }
                             KeyCode::Esc => {
                                 if !self.state.input.is_empty() {
                                     self.state.input.clear();
                                     self.state.input_cursor = 0;
+                                    redraw = true;
                                 }
                             }
                             KeyCode::BackTab => {
@@ -776,7 +893,8 @@ impl TuiApp {
                                 .as_millis();
                             spans.push(HistorySpan::new(format!(" • {}ms", duration_ms)).dim());
                         }
-                        self.state.pending_history.push(HistoryLine::new(spans));
+                        self.state
+                            .push_history(HistoryKind::Tool, HistoryLine::new(spans));
 
                         // Keep only running tools visible in the status list to avoid duplication.
                         self.state

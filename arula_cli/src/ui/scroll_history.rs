@@ -112,48 +112,58 @@ pub fn insert_history_lines(
     // Place cursor at the line above the viewport to start inserting.
     queue!(writer, MoveTo(0, viewport_top.saturating_sub(1)))?;
 
-    let width = screen_width.max(1) as usize;
-    for line in lines.into_iter() {
-        let owned = line_to_static(&line);
-        let wrapped = wrap_line(&owned, width);
-        for wrapped_line in wrapped {
-            queue!(writer, Print("\r\n"))?;
-            queue!(
-                writer,
-                Clear(ClearType::UntilNewLine),
-                SetColors(Colors::new(
-                    wrapped_line
-                        .style
-                        .fg
-                        .map(to_crossterm_color)
-                        .unwrap_or(crossterm::style::Color::Reset),
-                    wrapped_line
-                        .style
-                        .bg
-                        .map(to_crossterm_color)
-                        .unwrap_or(crossterm::style::Color::Reset)
-                ))
-            )?;
-            for span in wrapped_line.spans {
+        let width = screen_width.max(1) as usize;
+        for line in lines.into_iter() {
+            let owned = line_to_static(&line);
+            let wrapped = wrap_line(&owned, width);
+            for wrapped_line in wrapped {
+                queue!(writer, Print("\r\n"))?;
                 queue!(
                     writer,
-                    SetForegroundColor(
-                        span.style
+                    Clear(ClearType::UntilNewLine),
+                    SetColors(Colors::new(
+                        wrapped_line
+                            .style
                             .fg
                             .map(to_crossterm_color)
-                            .unwrap_or(crossterm::style::Color::Reset)
-                    ),
-                    SetBackgroundColor(
-                        span.style
+                            .unwrap_or(crossterm::style::Color::Reset),
+                        wrapped_line
+                            .style
                             .bg
                             .map(to_crossterm_color)
                             .unwrap_or(crossterm::style::Color::Reset)
-                    ),
-                    Print(span.content)
+                    ))
                 )?;
+
+                let merged_spans: Vec<RSpan> = wrapped_line
+                    .spans
+                    .iter()
+                    .map(|s| RSpan {
+                        content: s.content.clone(),
+                        style: s.style.patch(wrapped_line.style),
+                    })
+                    .collect();
+
+                for span in merged_spans {
+                    queue!(
+                        writer,
+                        SetForegroundColor(
+                            span.style
+                                .fg
+                                .map(to_crossterm_color)
+                                .unwrap_or(crossterm::style::Color::Reset)
+                        ),
+                        SetBackgroundColor(
+                            span.style
+                                .bg
+                                .map(to_crossterm_color)
+                                .unwrap_or(crossterm::style::Color::Reset)
+                        ),
+                        Print(span.content)
+                    )?;
+                }
             }
         }
-    }
 
     // Reset region/cursor.
     queue!(writer, ResetScrollRegion)?;
@@ -162,36 +172,91 @@ pub fn insert_history_lines(
     Ok(())
 }
 
-/// Wrap a line to the given width, preserving span styling.
+/// Wrap a line to the given width using word boundaries where possible.
 fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
     if width == 0 {
         return vec![line.clone()];
     }
+
     let mut out = Vec::new();
     let mut current = Line::default();
     let mut current_width = 0;
 
     for span in line.spans.iter() {
         let content = span.content.clone();
+        // Split span into whitespace and non-whitespace tokens to prefer word boundaries.
+        let mut tokens: Vec<(String, bool)> = Vec::new();
+        let mut buf = String::new();
+        let mut buf_is_space: Option<bool> = None;
         for ch in content.chars() {
-            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
             if ch == '\n' {
+                if let Some(is_space) = buf_is_space.take() {
+                    tokens.push((buf.clone(), is_space));
+                }
+                buf.clear();
+                tokens.push((String::new(), false)); // newline marker
+                continue;
+            }
+            let is_space = ch.is_whitespace();
+            if let Some(prev) = buf_is_space {
+                if prev == is_space {
+                    buf.push(ch);
+                } else {
+                    tokens.push((buf.clone(), prev));
+                    buf.clear();
+                    buf.push(ch);
+                    buf_is_space = Some(is_space);
+                }
+            } else {
+                buf.push(ch);
+                buf_is_space = Some(is_space);
+            }
+        }
+        if let Some(is_space) = buf_is_space {
+            tokens.push((buf, is_space));
+        }
+
+        for (token, is_space) in tokens {
+            if token.is_empty() {
+                // newline marker
                 out.push(current.to_owned());
                 current = Line::default();
                 current_width = 0;
                 continue;
             }
-            if current_width + ch_width > width && current_width > 0 {
+
+            let token_width: usize = token.chars().map(|c| UnicodeWidthChar::width(c).unwrap_or(0)).sum();
+
+            // Long word that exceeds width on its own: fall back to character wrapping.
+            if token_width > width && !is_space {
+                for ch in token.chars() {
+                    let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+                    if current_width + ch_width > width && current_width > 0 {
+                        out.push(current.to_owned());
+                        current = Line::default();
+                        current_width = 0;
+                    }
+                    let mut s = span.clone();
+                    s.content = ch.to_string().into();
+                    current.spans.push(s);
+                    current_width += ch_width;
+                }
+                continue;
+            }
+
+            if current_width + token_width > width && current_width > 0 && !is_space {
                 out.push(current.to_owned());
                 current = Line::default();
                 current_width = 0;
             }
+
             let mut s = span.clone();
-            s.content = ch.to_string().into();
+            s.content = token.into();
+            current_width += token_width;
             current.spans.push(s);
-            current_width += ch_width;
         }
     }
+
     out.push(current);
     out
 }
