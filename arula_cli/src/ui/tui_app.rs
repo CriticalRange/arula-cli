@@ -641,6 +641,22 @@ impl TuiApp {
                 redraw = true;
             }
 
+            // Check for pending init message and send it
+            if let Some(init_message) = self.state.app.pending_init_message.take() {
+                // Add the message as if user typed it
+                self.state.add_user_message(&init_message);
+                self.state.last_ai_message = None;
+
+                // Send to AI
+                self.state.is_waiting = true;
+                self.state.current_response.clear();
+                self.state.thinking_content.clear();
+                self.state.active_tools.clear();
+
+                self.state.app.send_to_ai(&init_message).await?;
+                redraw = true;
+            }
+
             // Handle events - only Press events (not Release or Repeat)
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {

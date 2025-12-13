@@ -1,221 +1,327 @@
-//! AI Pipeline for extracting semantic fragments
+//! AI Pipeline for learning about projects
 //!
-//! This module implements the 4-step pipeline that extracts minimal
-//! semantic fragments from AI without triggering limitations.
+//! This module implements a discovery pipeline that helps AI understand
+//! projects through structured analysis and questions.
 
 use crate::api::agent_client::AgentClient;
 use crate::init::fragments::*;
 use anyhow::Result;
 
-/// Failure mitigation rules prepended to every AI call
-const FAILURE_RULES: &str = "
-RULES:
-- Never use markdown formatting
-- Output exactly 1-15 lines per response
-- Never add explanations or commentary
-- Follow specified output format precisely
-- Never introduce undefined fields
-- Use lowercase unless specifying proper names
-- One concept per line when listing items
-- Never refuse to answer with minimal fragments
+/// Learning and discovery guidelines
+const LEARNING_GUIDELINES: &str = "
+GUIDELINES:
+- Ask clarifying questions to understand the project better
+- Focus on learning rather than making assumptions
+- Identify what we know vs what we need to discover
+- Be conversational and natural in your responses
+- Use markdown to structure information when helpful
+- Always explain your reasoning for better understanding
+- Offer suggestions based on what you learn
+- Don't try to initialize - focus on understanding
 ";
 
-/// Pipeline executor for AI fragment extraction
-pub struct InitPipeline {
+/// Project learning and discovery pipeline
+pub struct ProjectLearningPipeline {
     agent_client: AgentClient,
 }
 
-impl InitPipeline {
+impl ProjectLearningPipeline {
     pub fn new(agent_client: AgentClient) -> Self {
         Self { agent_client }
     }
 
-    /// Step 1: Extract domain fragment
-    pub async fn extract_domain(&self, description: &str) -> Result<DomainFragment> {
+    /// Step 1: Learn project context and purpose
+    pub async fn learn_context(&self, description: &str) -> Result<ProjectContext> {
         let instruction = format!(
-            "{}Given the project description, identify the primary domain and up to 3 secondary concerns.
+            "{}Help me understand this project better. I want to learn about it before taking any action.
 
-Description: {}
+Current understanding: {}
 
-Respond with format:
-domain: <primary_domain>
-concerns: <max 3 items, comma-separated>
-scale: <small|medium|large>
-sensitivity: <low|medium|high>",
-            FAILURE_RULES,
+Please help me discover:
+1. What is the main purpose of this project?
+2. What problem domain does it operate in?
+3. What are the user's goals and objectives?
+4. What business value does it provide?
+
+Feel free to ask questions to clarify anything that's unclear. Provide a brief summary of what you understand about the project context.",
+            LEARNING_GUIDELINES,
             description
         );
 
         let response = self.query_ai(&instruction).await?;
-        self.parse_domain_fragment(&response)
+        self.parse_context_fragment(&response)
     }
 
-    /// Step 2: Extract flow fragment
-    pub async fn decompose_flow(&self, description: &str) -> Result<FlowFragment> {
+    /// Step 2: Discover architecture and technical details
+    pub async fn discover_architecture(&self, context: &ProjectContext) -> Result<ArchitectureFragment> {
         let instruction = format!(
-            "{}List the essential operations this project requires.
+            "{}Now that I understand the project context, help me learn about the technical architecture.
 
-Description: {}
+Project Purpose: {}
+Problem Domain: {}
 
-List operations (verb or verb-noun pairs).
-One per line. Max 3 words per line.
-Aim for 5-10 but any number is acceptable.",
-            FAILURE_RULES,
-            description
+Help me discover:
+1. What architectural patterns might be relevant?
+2. What components or modules would be needed?
+3. What technologies could be suitable?
+4. What external integrations might be required?
+
+This is about exploration and learning, not making final decisions. Ask questions to understand the technical requirements better.",
+            LEARNING_GUIDELINES,
+            context.purpose,
+            context.problem_domain
         );
 
         let response = self.query_ai(&instruction).await?;
-        self.parse_flow_fragment(&response)
+        self.parse_architecture_fragment(&response)
     }
 
-    /// Step 3: Extract constraint fragment
-    pub async fn capture_constraints(&self, description: &str) -> Result<ConstraintFragment> {
+    /// Step 3: Identify requirements and constraints
+    pub async fn identify_requirements(&self, context: &ProjectContext, architecture: &ArchitectureFragment) -> Result<RequirementsFragment> {
         let instruction = format!(
-            "{}Return constraints for this project.
+            "{}Based on what we've learned so far, help me identify the requirements.
 
-Description: {}
+Project Purpose: {}
+User Goals: {:?}
+Technologies Considered: {:?}
 
-Categories: platform, language, framework, compliance, performance, security
-Format: category: value
-One per line. Max 15 chars per line.",
-            FAILURE_RULES,
-            description
+Help me discover:
+1. What functional requirements exist (what the system should do)?
+2. What non-functional requirements exist (how the system should be)?
+3. What constraints or limitations should we consider?
+4. What assumptions are we making?
+
+This is about understanding what needs to be built, not how to build it yet.",
+            LEARNING_GUIDELINES,
+            context.purpose,
+            context.user_goals,
+            architecture.technologies
         );
 
         let response = self.query_ai(&instruction).await?;
-        self.parse_constraint_fragment(&response)
+        self.parse_requirements_fragment(&response)
     }
 
-    /// Step 4: Extract example fragment
-    pub async fn extract_examples(&self, description: &str) -> Result<ExampleFragment> {
+    /// Step 4: Assess current state if it's an existing project
+    pub async fn assess_current_state(&self, project_path: &str) -> Result<CurrentStateFragment> {
         let instruction = format!(
-            "{}Show concrete usage examples for this project.
+            "{}Help me understand the current state of this project at path: {}
 
-Description: {}
+I want to learn about:
+1. What existing code or files are present?
+2. What dependencies are already in use?
+3. What challenges or pain points exist?
+4. What recent changes have been made?
 
-Format:
-INPUT: <example>
-OUTPUT: <example>
-
-Show 2-3 examples. Keep under 40 chars each line.",
-            FAILURE_RULES,
-            description
+This assessment will help me understand where the project stands and what needs to be done next. If the path doesn't exist or is empty, that's valuable information too - it means we're starting fresh.",
+            LEARNING_GUIDELINES,
+            project_path
         );
 
         let response = self.query_ai(&instruction).await?;
-        self.parse_example_fragment(&response)
+        self.parse_current_state_fragment(&response)
     }
 
-    /// Execute AI query with retry logic
+    /// Execute AI query
     async fn query_ai(&self, instruction: &str) -> Result<String> {
-        // Use retry logic for robustness
-        let mut attempts = 0;
-        let max_attempts = 3;
+        let mut blocks = self.agent_client.query(instruction, None).await?;
 
-        while attempts < max_attempts {
-            match self.agent_client.query(instruction, None).await {
-                Ok(mut blocks) => {
-                    // Extract text from response blocks
-                    let mut content = String::new();
-                    use futures::StreamExt;
-                    while let Some(block) = blocks.next().await {
-                        if let crate::api::agent::ContentBlock::Text { text } = block {
-                            content.push_str(&text);
-                        }
-                    }
-
-                    if self.validate_response(&content) {
-                        return Ok(content.trim().to_string());
-                    }
-                }
-                Err(e) if attempts == max_attempts - 1 => return Err(e),
-                Err(_) => attempts += 1,
+        // Extract text from response blocks
+        let mut content = String::new();
+        use futures::StreamExt;
+        while let Some(block) = blocks.next().await {
+            if let crate::api::agent::ContentBlock::Text { text } = block {
+                content.push_str(&text);
             }
         }
 
-        Err(anyhow::anyhow!("Failed to get valid AI response after {} attempts", max_attempts))
+        Ok(content.trim().to_string())
     }
 
-    /// Validate response follows constraints
-    fn validate_response(&self, response: &str) -> bool {
-        !response.is_empty()
-            && response.lines().count() <= 15
-            && !response.contains("```")
-            && !response.contains("**")
-            && !response.contains("##")
-    }
+    /// Parse project context from AI response
+    fn parse_context_fragment(&self, response: &str) -> Result<ProjectContext> {
+        // For learning, we'll extract key information from the conversational response
+        let mut context = ProjectContext::default();
 
-    /// Parse domain fragment from AI response
-    fn parse_domain_fragment(&self, response: &str) -> Result<DomainFragment> {
-        let mut fragment = DomainFragment::default();
-
-        for line in response.lines() {
-            if line.starts_with("domain:") {
-                fragment.primary = line.split(':').nth(1).unwrap_or("").trim().to_string();
-            } else if line.starts_with("concerns:") {
-                fragment.secondary_concerns = line.split(':')
-                    .nth(1)
-                    .unwrap_or("")
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .take(3)  // Limit to first 3 concerns
-                    .collect();
-            } else if line.starts_with("scale:") {
-                fragment.scale_category = line.split(':').nth(1).unwrap_or("").trim().to_string();
-            } else if line.starts_with("sensitivity:") {
-                fragment.data_sensitivity = line.split(':').nth(1).unwrap_or("").trim().to_string();
-            }
-        }
-
-        Ok(fragment)
-    }
-
-    /// Parse flow fragment from AI response
-    fn parse_flow_fragment(&self, response: &str) -> Result<FlowFragment> {
-        let mut fragment = FlowFragment::default();
-        fragment.actions = response
-            .lines()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        Ok(fragment)
-    }
-
-    /// Parse constraint fragment from AI response
-    fn parse_constraint_fragment(&self, response: &str) -> Result<ConstraintFragment> {
-        let mut fragment = ConstraintFragment::default();
-        let mut map = std::collections::HashMap::new();
-
-        for line in response.lines() {
-            if let Some((key, value)) = line.split_once(':') {
-                map.insert(key.trim().to_string(), value.trim().to_string());
-            }
-        }
-
-        fragment.constraints = map;
-        Ok(fragment)
-    }
-
-    /// Parse example fragment from AI response
-    fn parse_example_fragment(&self, response: &str) -> Result<ExampleFragment> {
-        let mut fragment = ExampleFragment::default();
+        // Simple extraction - look for key patterns in the response
+        // In a real implementation, this would be more sophisticated
         let lines: Vec<&str> = response.lines().collect();
 
-        for i in (0..lines.len()).step_by(2) {
-            if i + 1 < lines.len() {
-                let input = lines[i];
-                let output = lines[i + 1];
+        for line in lines {
+            let line_lower = line.to_lowercase();
 
-                if let Some(input_val) = input.strip_prefix("INPUT:").map(|s| s.trim()) {
-                    if let Some(output_val) = output.strip_prefix("OUTPUT:").map(|s| s.trim()) {
-                        fragment.scenarios.push((input_val.to_string(), output_val.to_string()));
-                    }
+            // Extract purpose
+            if line_lower.contains("purpose") || line_lower.contains("goal") {
+                if let Some(start) = line.find(':') {
+                    context.purpose = line[start + 1..].trim().to_string();
+                }
+            }
+
+            // Extract problem domain
+            if line_lower.contains("domain") || line_lower.contains("problem") {
+                if let Some(start) = line.find(':') {
+                    context.problem_domain = line[start + 1..].trim().to_string();
+                }
+            }
+
+            // Extract user goals (collect all)
+            if line_lower.contains("user goal") || line_lower.contains("objective") {
+                if let Some(start) = line.find(':') {
+                    let goals = line[start + 1..].trim().to_string();
+                    context.user_goals.push(goals);
+                }
+            }
+
+            // Extract business value
+            if line_lower.contains("business value") || line_lower.contains("value") {
+                if let Some(start) = line.find(':') {
+                    context.business_value = line[start + 1..].trim().to_string();
                 }
             }
         }
 
-        Ok(fragment)
+        // If structured extraction failed, use the whole response as purpose
+        if context.purpose.is_empty() {
+            context.purpose = response.chars().take(200).collect::<String>();
+        }
+
+        Ok(context)
+    }
+
+    /// Parse architecture fragment from AI response
+    fn parse_architecture_fragment(&self, response: &str) -> Result<ArchitectureFragment> {
+        let mut architecture = ArchitectureFragment::default();
+
+        let lines: Vec<&str> = response.lines().collect();
+
+        for line in lines {
+            let line_lower = line.to_lowercase();
+
+            // Extract patterns
+            if line_lower.contains("pattern") {
+                if let Some(start) = line.find(':') {
+                    let pattern = line[start + 1..].trim().to_string();
+                    architecture.patterns.push(pattern);
+                }
+            }
+
+            // Extract components
+            if line_lower.contains("component") || line_lower.contains("module") {
+                if let Some(start) = line.find(':') {
+                    let component = line[start + 1..].trim().to_string();
+                    architecture.components.push(component);
+                }
+            }
+
+            // Extract technologies
+            if line_lower.contains("technology") || line_lower.contains("tech") {
+                if let Some(start) = line.find(':') {
+                    let tech = line[start + 1..].trim().to_string();
+                    architecture.technologies.push(tech);
+                }
+            }
+
+            // Extract integrations
+            if line_lower.contains("integration") {
+                if let Some(start) = line.find(':') {
+                    let integration = line[start + 1..].trim().to_string();
+                    architecture.integrations.push(integration);
+                }
+            }
+        }
+
+        Ok(architecture)
+    }
+
+    /// Parse requirements fragment from AI response
+    fn parse_requirements_fragment(&self, response: &str) -> Result<RequirementsFragment> {
+        let mut requirements = RequirementsFragment::default();
+
+        let lines: Vec<&str> = response.lines().collect();
+
+        for line in lines {
+            let line_lower = line.to_lowercase();
+
+            // Extract functional requirements
+            if line_lower.contains("functional") || line_lower.contains("should do") {
+                if let Some(start) = line.find(':') {
+                    let req = line[start + 1..].trim().to_string();
+                    requirements.functional.push(req);
+                }
+            }
+
+            // Extract non-functional requirements
+            if line_lower.contains("non-functional") || line_lower.contains("how the") {
+                if let Some(start) = line.find(':') {
+                    let req = line[start + 1..].trim().to_string();
+                    requirements.non_functional.push(req);
+                }
+            }
+
+            // Extract constraints
+            if line_lower.contains("constraint") || line_lower.contains("limitation") {
+                if let Some((key, value)) = line.split_once(':') {
+                    requirements.constraints.insert(
+                        key.trim().to_string(),
+                        value.trim().to_string()
+                    );
+                }
+            }
+
+            // Extract assumptions
+            if line_lower.contains("assumption") {
+                if let Some(start) = line.find(':') {
+                    let assumption = line[start + 1..].trim().to_string();
+                    requirements.assumptions.push(assumption);
+                }
+            }
+        }
+
+        Ok(requirements)
+    }
+
+    /// Parse current state fragment from AI response
+    fn parse_current_state_fragment(&self, response: &str) -> Result<CurrentStateFragment> {
+        let mut state = CurrentStateFragment::default();
+
+        let lines: Vec<&str> = response.lines().collect();
+
+        for line in lines {
+            let line_lower = line.to_lowercase();
+
+            // Extract existing code
+            if line_lower.contains("code") || line_lower.contains("file") {
+                if let Some(start) = line.find(':') {
+                    let code = line[start + 1..].trim().to_string();
+                    state.existing_code.push(code);
+                }
+            }
+
+            // Extract dependencies
+            if line_lower.contains("dependenc") {
+                if let Some(start) = line.find(':') {
+                    let dep = line[start + 1..].trim().to_string();
+                    state.dependencies.push(dep);
+                }
+            }
+
+            // Extract pain points
+            if line_lower.contains("pain point") || line_lower.contains("challenge") {
+                if let Some(start) = line.find(':') {
+                    let pain = line[start + 1..].trim().to_string();
+                    state.pain_points.push(pain);
+                }
+            }
+
+            // Extract recent changes
+            if line_lower.contains("recent") || line_lower.contains("change") {
+                if let Some(start) = line.find(':') {
+                    let change = line[start + 1..].trim().to_string();
+                    state.recent_changes.push(change);
+                }
+            }
+        }
+
+        Ok(state)
     }
 }

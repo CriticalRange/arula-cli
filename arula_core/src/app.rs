@@ -124,6 +124,8 @@ pub struct App {
     tracking_tx: Option<std::sync::mpsc::Sender<TrackingCommand>>,
     // Shared conversation for immediate saving from background tasks
     pub shared_conversation: Arc<Mutex<Option<crate::utils::conversation::Conversation>>>,
+    // Pending init message to be sent to AI
+    pub pending_init_message: Option<String>,
 }
 
 impl App {
@@ -157,6 +159,7 @@ impl App {
             tracking_rx: Some(tracking_rx),
             tracking_tx: Some(tracking_tx),
             shared_conversation: Arc::new(Mutex::new(None)),
+            pending_init_message: None,
         })
     }
 
@@ -286,6 +289,14 @@ You have access to tools for file operations, shell commands, and more. Use them
         // Add built-in tools information
         prompt_parts.push(self.build_builtin_tools_info());
 
+        // Read PROJECT.manifest from current directory (highest priority)
+        if let Some(manifest) = Self::read_project_manifest() {
+            prompt_parts.push(format!(
+                "\n## Project Manifest (Primary Context)\n{}",
+                manifest
+            ));
+        }
+
         // Read global ARULA.md from ~/.arula/
         if let Some(global_arula) = Self::read_global_arula_md() {
             prompt_parts.push(format!(
@@ -406,6 +417,30 @@ You have access to tools for file operations, shell commands, and more. Use them
                 }
             }
         } else {
+            None
+        }
+    }
+
+    /// Read PROJECT.manifest from current directory
+    fn read_project_manifest() -> Option<String> {
+        let manifest_path = Path::new("PROJECT.manifest");
+
+        if manifest_path.exists() {
+            match fs::read_to_string(manifest_path) {
+                Ok(content) => {
+                    debug_print("DEBUG: Loaded PROJECT.manifest - primary project context available");
+                    Some(format!(
+                        "PROJECT MANIFEST CONTENT:\n\n{}",
+                        content
+                    ))
+                }
+                Err(e) => {
+                    debug_print(&format!("DEBUG: Failed to read PROJECT.manifest: {}", e));
+                    None
+                }
+            }
+        } else {
+            debug_print("DEBUG: No PROJECT.manifest found in current directory");
             None
         }
     }

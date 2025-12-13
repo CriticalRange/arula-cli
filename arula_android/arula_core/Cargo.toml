@@ -1,0 +1,42 @@
+[package]
+name = "arula_android"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]  # Compile as dynamic library for Android
+
+[dependencies]
+# Core arula dependencies (reuse from main project)
+arula_core = { path = "../../arula_core" }
+
+# Android-specific dependencies
+jni = "0.21"
+android_logger = "0.13"
+log = "0.4"
+
+# Async runtime
+tokio = { version = "1.48", features = ["rt-multi-thread", "macros", "sync"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Utilities
+async-trait = "0.1"
+futures = "0.3"
+async-stream = "0.3"
+
+# Termux:API wrapper
+termux-api = { version = "0.1", optional = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Android-specific libs
+
+[features]
+default = ["termux"]
+termux = ["termux-api"]

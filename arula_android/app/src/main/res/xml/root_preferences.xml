@@ -1,0 +1,232 @@
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory app:title="AI Provider">
+
+        <ListPreference
+            app:key="active_provider"
+            app:title="Active Provider"
+            app:entries="@array/provider_names"
+            app:entryValues="@array/provider_values"
+            app:defaultValue="openai" />
+
+    </PreferenceCategory>
+
+    <!-- OpenAI Settings -->
+    <PreferenceCategory app:title="OpenAI Settings" app:key="openai_category">
+
+        <EditTextPreference
+            app:key="openai_api_key"
+            app:title="API Key"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="openai_api_url"
+            app:title="API URL"
+            app:defaultValue="https://api.openai.com/v1"
+            app:useSimpleSummaryProvider="true" />
+
+        <ListPreference
+            app:key="openai_model"
+            app:title="Model"
+            app:defaultValue="gpt-4"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="openai_max_tokens"
+            app:title="Max Tokens"
+            app:defaultValue="4096"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="openai_temperature"
+            app:title="Temperature"
+            app:defaultValue="0.7"
+            app:useSimpleSummaryProvider="true" />
+
+    </PreferenceCategory>
+
+    <!-- Anthropic Settings -->
+    <PreferenceCategory app:title="Anthropic Settings" app:key="anthropic_category" app:isPreferenceVisible="false">
+
+        <EditTextPreference
+            app:key="anthropic_api_key"
+            app:title="API Key"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="anthropic_api_url"
+            app:title="API URL"
+            app:defaultValue="https://api.anthropic.com"
+            app:useSimpleSummaryProvider="true" />
+
+        <ListPreference
+            app:key="anthropic_model"
+            app:title="Model"
+            app:defaultValue="claude-3-opus-20240229"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="anthropic_max_tokens"
+            app:title="Max Tokens"
+            app:defaultValue="4096"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="anthropic_temperature"
+            app:title="Temperature"
+            app:defaultValue="0.7"
+            app:useSimpleSummaryProvider="true" />
+
+    </PreferenceCategory>
+
+    <!-- Z.AI Settings -->
+    <PreferenceCategory app:title="Z.AI Settings" app:key="zai_category" app:isPreferenceVisible="false">
+
+        <EditTextPreference
+            app:key="zai_api_key"
+            app:title="API Key"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="zai_api_url"
+            app:title="API URL"
+            app:defaultValue="https://z.ai/api"
+            app:useSimpleSummaryProvider="true" />
+
+        <ListPreference
+            app:key="zai_model"
+            app:title="Model"
+            app:defaultValue="glm-4"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="zai_max_tokens"
+            app:title="Max Tokens"
+            app:defaultValue="4096"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="zai_temperature"
+            app:title="Temperature"
+            app:defaultValue="0.7"
+            app:useSimpleSummaryProvider="true" />
+
+    </PreferenceCategory>
+
+    <!-- Custom Provider Settings -->
+    <PreferenceCategory app:title="Custom Provider" app:key="custom_category" app:isPreferenceVisible="false">
+
+        <EditTextPreference
+            app:key="custom_api_key"
+            app:title="API Key"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="custom_api_url"
+            app:title="API URL"
+            app:useSimpleSummaryProvider="true" />
+
+        <ListPreference
+            app:key="custom_model"
+            app:title="Model"
+            app:useSimpleSummaryProvider="true" />
+
+    </PreferenceCategory>
+
+    <!-- UI Settings -->
+    <PreferenceCategory app:title="User Interface">
+
+        <ListPreference
+            app:key="ui_theme"
+            app:title="Theme"
+            app:entries="@array/theme_names"
+            app:entryValues="@array/theme_values"
+            app:defaultValue="light"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="ui_font_size"
+            app:title="Font Size"
+            app:defaultValue="14"
+            app:useSimpleSummaryProvider="true" />
+
+        <SwitchPreferenceCompat
+            app:key="ui_show_timestamps"
+            app:title="Show Timestamps"
+            app:defaultValue="true" />
+
+        <SwitchPreferenceCompat
+            app:key="ui_auto_scroll"
+            app:title="Auto-scroll"
+            app:defaultValue="true" />
+
+        <SwitchPreferenceCompat
+            app:key="ui_enable_notifications"
+            app:title="Enable Notifications"
+            app:defaultValue="true" />
+
+        <SwitchPreferenceCompat
+            app:key="ui_vibrate_on_tool"
+            app:title="Vibrate on Tool Execution"
+            app:defaultValue="false" />
+
+    </PreferenceCategory>
+
+    <!-- System Settings -->
+    <PreferenceCategory app:title="System">
+
+        <ListPreference
+            app:key="system_log_level"
+            app:title="Log Level"
+            app:entries="@array/log_level_names"
+            app:entryValues="@array/log_level_values"
+            app:defaultValue="info"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="system_max_history"
+            app:title="Max Message History"
+            app:defaultValue="1000"
+            app:useSimpleSummaryProvider="true" />
+
+        <SwitchPreferenceCompat
+            app:key="system_auto_save"
+            app:title="Auto-save Conversations"
+            app:defaultValue="true" />
+
+        <ListPreference
+            app:key="system_export_format"
+            app:title="Export Format"
+            app:entries="@array/export_format_names"
+            app:entryValues="@array/export_format_values"
+            app:defaultValue="json"
+            app:useSimpleSummaryProvider="true" />
+
+        <SwitchPreferenceCompat
+            app:key="system_enable_termux_api"
+            app:title="Enable Termux:API"
+            app:defaultValue="true" />
+
+    </PreferenceCategory>
+
+    <!-- Actions -->
+    <PreferenceCategory app:title="Actions">
+
+        <Preference
+            app:key="test_connection"
+            app:title="Test Connection"
+            app:summary="Test API connection with current settings" />
+
+        <Preference
+            app:key="export_conversation"
+            app:title="Export Conversation"
+            app:summary="Export current conversation" />
+
+        <Preference
+            app:key="clear_conversation"
+            app:title="Clear Conversation"
+            app:summary="Clear all messages" />
+
+    </PreferenceCategory>
+
+</PreferenceScreen>

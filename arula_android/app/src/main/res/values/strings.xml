@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Arula Terminal</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_clear">Clear Conversation</string>
+    <string name="action_export">Export Conversation</string>
+    <string name="message_input_hint">Type your message...</string>
+    <string name="send">Send</string>
+    <string name="typing">Arula is typing...</string>
+</resources>

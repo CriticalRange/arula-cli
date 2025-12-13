@@ -1,7 +1,7 @@
-//! Example usage of the init system
+//! Example usage of the project learning system
 //!
-//! This file demonstrates how to use the Semantic Blueprint Pipeline
-//! to initialize projects without triggering LLM limitations.
+//! This file demonstrates how to use the Project Learning System
+//! to understand projects through structured discovery.
 
 use crate::api::agent_client::AgentClient;
 use crate::api::agent::AgentOptionsBuilder;
@@ -9,12 +9,12 @@ use crate::init::{InitSystem, SbpFiles};
 use crate::utils::config::Config;
 use anyhow::Result;
 
-/// Example project initialization
-pub async fn example_init_project() -> Result<SbpFiles> {
+/// Example project learning
+pub async fn example_learn_project() -> Result<SbpFiles> {
     // Create agent client
     let config = Config::default();
     let agent_options = AgentOptionsBuilder::new()
-        .system_prompt("You are a project initialization assistant.")
+        .system_prompt("You are a project learning and discovery assistant.")
         .auto_execute_tools(false)
         .build();
 
@@ -27,17 +27,18 @@ pub async fn example_init_project() -> Result<SbpFiles> {
         &config,
     );
 
-    // Create init system
-    let init_system = InitSystem::new(agent_client, config);
+    // Create learning system
+    let learning_system = InitSystem::new(agent_client, config);
 
-    // Project description
-    let description = "A web API for task management with user authentication, real-time updates, and data persistence";
+    // Initial understanding of the project
+    let initial_understanding = "A web API for task management with user authentication, real-time updates, and data persistence";
+    let project_path = "./my-project";
 
-    // Initialize project
-    let blueprint = init_system.initialize_project(description).await?;
+    // Learn about the project
+    let understanding = learning_system.learn_about_project(initial_understanding, project_path).await?;
 
-    // Generate SBP files
-    let sbp_files = init_system.generate_sbp_files(&blueprint)?;
+    // Generate analysis report
+    let report = learning_system.generate_analysis_report(&understanding)?;
 
-    Ok(sbp_files)
+    Ok(report)
 }

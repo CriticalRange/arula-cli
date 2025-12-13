@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Provider arrays -->
+    <string-array name="provider_names">
+        <item>OpenAI</item>
+        <item>Anthropic</item>
+        <item>Z.AI</item>
+        <item>Custom</item>
+    </string-array>
+    <string-array name="provider_values">
+        <item>openai</item>
+        <item>anthropic</item>
+        <item>zai</item>
+        <item>custom</item>
+    </string-array>
+
+    <!-- Theme arrays -->
+    <string-array name="theme_names">
+        <item>Light</item>
+        <item>Dark</item>
+        <item>System Default</item>
+    </string-array>
+    <string-array name="theme_values">
+        <item>light</item>
+        <item>dark</item>
+        <item>system</item>
+    </string-array>
+
+    <!-- Log level arrays -->
+    <string-array name="log_level_names">
+        <item>Debug</item>
+        <item>Info</item>
+        <item>Warning</item>
+        <item>Error</item>
+    </string-array>
+    <string-array name="log_level_values">
+        <item>debug</item>
+        <item>info</item>
+        <item>warning</item>
+        <item>error</item>
+    </string-array>
+
+    <!-- Export format arrays -->
+    <string-array name="export_format_names">
+        <item>JSON</item>
+        <item>Markdown</item>
+        <item>Plain Text</item>
+    </string-array>
+    <string-array name="export_format_values">
+        <item>json</item>
+        <item>markdown</item>
+        <item>text</item>
+    </string-array>
+</resources>

@@ -1,0 +1,271 @@
+PROJECT_MANIFEST v1.0
+
+# QUICK REFERENCE (First 30 seconds)
+- What it is: Autonomous AI CLI tool with chat interface
+- Where to start: `arula_cli/src/main.rs` or `arula_core/src/app.rs`
+- Key pattern: Async streaming with full-duplex terminal
+- Main dependencies: tokio, reedline, reqwest, serde
+- Test command: `cargo test`
+- Debug mode: `ARULA_DEBUG=1 cargo run -- --debug`
+- Primary file: `arula_core/src/app.rs` (~83k lines - main orchestration)
+
+# METADATA
+name: ARULA CLI
+type: cli_tool
+language: rust
+framework: tokio + ratatui + custom
+created: 2024-12-05
+last_updated: 2024-12-13
+
+# ESSENCE (TL;DR for AI)
+purpose: Autonomous AI CLI with modern terminal interface, supporting multiple AI providers and extensible tool system
+architecture: Workspace-based Rust project with core library, CLI frontend, and desktop GUI, using async streaming and full-duplex terminal interaction
+key_technologies: tokio, ratatui, reedline, serde, reqwest, MCP (Model Context Protocol)
+
+# CODE NAVIGATION
+## Learning Path
+1. Start: `arula_cli/src/main.rs` - CLI entry point (~300 lines)
+2. Core: `arula_core/src/app.rs` - Main application logic (~83k lines)
+3. AI: `arula_core/src/api/agent_client.rs` - AI communication
+4. UI: `arula_cli/src/ui/tui_app.rs` - Terminal interface
+5. Tools: `arula_core/src/tools/tools.rs` - Tool system
+6. Config: `arula_core/src/utils/config.rs` - Multi-provider config
+
+## Important Relationships
+- Backend trait → Provider implementations (OpenAI, Anthropic, Ollama, etc.)
+- Tool trait → Built-in tools and MCP integration
+- TuiApp → App → AgentClient (data flow)
+- ExternalPrinter → Reedline (concurrent output)
+- Arc<Mutex<App>> → Shared state across threads
+
+## Module Complexity
+- Simple (<500 lines): Most tools, utilities, config parsing
+- Medium (500-2000 lines): API clients, UI components, providers
+- Complex (>2000 lines): app.rs, tui_app.rs, visioneer.rs
+
+# STRUCTURE
+## Core Components
+- arula_core: Core library with AI agents, tools, and utilities
+- arula_cli: Command-line interface with TUI and chat functionality  
+- arula_desktop: Desktop GUI application (Electron-style)
+- tools/builtin: Built-in tools (file ops, bash, vision, etc.)
+- api: Multi-provider AI client (OpenAI, Anthropic, Ollama, etc.)
+
+## Key Files
+- arula_cli/src/main.rs: CLI entry point with clap args and TUI initialization
+- arula_core/src/app.rs: Main application state and AI orchestration (~83k lines)
+- arula_core/src/api/agent_client.rs: Modern AI agent client with tool calling
+- arula_core/src/tools/tools.rs: Tool registry and basic tool implementations
+- arula_core/src/utils/config.rs: Multi-provider configuration management
+- arula_cli/src/ui/tui_app.rs: Terminal UI application with ratatui
+- arula_cli/src/ui/input_handler.rs: Advanced input handling with menus
+
+## Entry Points
+- main: arula_cli/src/main.rs (CLI), arula_desktop/ (Desktop)
+- api: arula_core/src/lib.rs (Backend trait), arula_core/src/api/agent_client.rs
+- cli: arula_cli/src/main.rs with clap (--verbose, --endpoint, --debug)
+
+# PATTERNS & CONVENTIONS
+## Naming
+- files: snake_case.rs, modules organized by function
+- functions: snake_case, async functions use _async suffix where needed
+- variables: snake_case, Arc<Mutex<T>> for shared state
+- types: PascalCase for structs/enums, snake_case for modules
+
+## Architecture Patterns
+- Agent Pattern: AI agents with tool calling via ContentBlock enum
+- Streaming Pattern: tokio async streams for AI responses (StreamEvent enum)
+- Tool Pattern: Extensible tool system with MCP integration
+- Workspace Pattern: Cargo workspace with shared dependencies
+- Full-Duplex Terminal: ExternalPrinter enables concurrent AI output while typing
+- Backend Abstraction: Backend trait for pluggable AI providers
+- Configuration Layer: YAML/JSON config with provider-specific settings
+
+# DEPENDENCIES
+## External Libraries
+- tokio: Async runtime and utilities
+- ratatui: Terminal UI framework
+- reedline: Modern readline with history and completion
+- reqwest: HTTP client with streaming and TLS
+- serde: Serialization/deserialization
+- anyhow: Error handling
+- crossterm: Cross-platform terminal handling
+- console: Colored terminal output
+- futures: Async utilities
+- uuid: Unique identifiers
+- chrono: Date/time handling
+- clap: Command-line argument parsing
+- duct: Command execution
+- syntect: Syntax highlighting
+- image: Image processing (vision tool)
+- rusty-tesseract: OCR functionality
+- windows: Windows API bindings (desktop automation)
+
+## System Requirements
+- Rust 1.70+ with async support
+- Terminal with UTF-8 and color support
+- Network access for AI provider APIs
+- Optional: Windows for desktop automation features
+- Optional: Tesseract OCR for vision tool
+
+# WORKFLOW
+## How to Run
+```bash
+# Development mode
+cargo run
+
+# With options
+cargo run -- --verbose --debug --endpoint http://localhost:8080
+
+# Release build
+cargo build --release
+./target/release/arula_cli
+```
+
+## How to Test
+```bash
+# All tests
+cargo test
+
+# Specific test
+cargo test -- test_name
+
+# Benchmarks
+cargo bench
+```
+
+## How to Build
+```bash
+# Debug build
+cargo build
+
+# Release build (optimized)
+cargo build --release
+
+# Code quality
+cargo clippy && cargo fmt
+```
+
+# DECISION LOG
+## [2024-12-05] Decision: Workspace Architecture
+Context: Need to separate core logic from UI implementations
+Result: Implemented Cargo workspace with arula_core (library), arula_cli (terminal), arula_desktop (GUI)
+
+## [2024-12-05] Decision: Full-Duplex Terminal
+Context: Users want to type while AI streams responses
+Result: Implemented ExternalPrinter with reedline for concurrent output
+
+## [2024-12-08] Decision: Multi-Provider AI Support
+Context: Users want choice of AI providers beyond OpenAI
+Result: Implemented Backend trait with OpenAI, Anthropic, Ollama, Z.AI, OpenRouter support
+
+## [2024-12-09] Decision: MCP Integration
+Context: Need extensible tool system beyond built-ins
+Result: Implemented MCP (Model Context Protocol) client for dynamic tool loading
+
+## [2024-12-12] Decision: TUI with ratatui
+Context: Need rich terminal interface beyond simple chat
+Result: Implemented full TUI with ratatui, menus, and interactive widgets
+
+# TODO & FUTURE
+## Immediate
+- Complete desktop GUI implementation (arula_desktop)
+- Add more built-in tools (git, package management)
+- Improve error handling and recovery
+- Add comprehensive test coverage
+
+## Considered
+- Plugin system: Allow external tool plugins
+- Multiple workspace support: Work on multiple projects simultaneously
+- Theme customization: User-defined terminal themes
+- Mouse interaction: Enhanced TUI with mouse support
+- Voice input/output: Speech-to-text and text-to-speech integration
+
+# AI DEVELOPMENT GUIDE
+## Project Context for AI Assistants
+You're helping with ARULA CLI - an autonomous AI command-line tool. Key things to know:
+
+### Making Changes - Where to Look
+- **UI changes**: Update `arula_cli/src/ui/` components
+- **Core logic**: Modify `arula_core/src/app.rs` or create new modules
+- **Tools**: Add to `arula_core/src/tools/builtin/`
+- **Providers**: Add to `arula_core/src/api/providers/`
+- **Config**: Update `arula_core/src/utils/config.rs`
+
+### Common Patterns
+```rust
+// Adding new tool
+#[async_trait]
+impl Tool for MyTool {
+    type Params = MyParams;
+    type Result = MyResult;
+
+    fn name(&self) -> &str { "my_tool" }
+    async fn execute(&self, params: Self::Params) -> Result<Self::Result, String> {
+        // Implementation
+    }
+}
+
+// Adding new AI provider
+impl Backend for MyProvider {
+    async fn query(&self, prompt: &str, options: Option<AgentOptions>) -> ResponseStream {
+        // Implementation
+    }
+}
+```
+
+### Critical Gotchas
+1. **Don't run `cargo build` while app is running** - file locks
+2. **All AI operations must be async** - using tokio channels
+3. **Terminal state** - always restore after menus/raw mode
+4. **Shared state** - use Arc<Mutex<>> not static variables
+5. **Streaming responses** - don't buffer entire responses
+6. **Tool timeouts** - handle subprocess timeouts gracefully
+
+### Testing Your Changes
+```bash
+# Quick check
+cargo check --package arula_cli
+
+# Full test
+cargo test
+
+# With debug
+ARULA_DEBUG=1 cargo run -- --debug
+```
+
+### When Users Say "It's broken"
+1. Check terminal state (crossterm issues)
+2. Verify configuration in `~/.config/arula/`
+3. Look for async deadlocks in channels
+4. Check AI provider API keys
+5. Verify no file locks from previous runs
+
+### Performance Tips
+- Use `&str` not `String` for function parameters
+- Prefer `Arc<str>` for shared strings
+- Batch small operations
+- Use `tokio::spawn` for independent tasks
+- Watch out for blocking calls in async contexts
+
+# AI ASSISTANCE NOTES
+## Common Tasks
+- Add new tool: Implement Tool trait in arula_core/src/tools/builtin/, register in tools.rs
+- Add new AI provider: Implement Backend trait, add to config.rs provider enum
+- Modify UI: Update arula_cli/src/ui/ components, ensure TUI consistency
+- Update configuration: Modify arula_core/src/utils/config.rs, maintain backward compatibility
+
+## Gotchas
+- Development mode: DO NOT run cargo build/run while ARULA is running (file locks)
+- Async patterns: All AI operations must be async, use tokio::sync channels
+- Tool execution: Tools run in subprocesses, handle timeouts and errors gracefully
+- Configuration: YAML migration to JSON in progress, maintain compatibility
+- Terminal state: Always restore terminal mode after menus/raw mode operations
+- Streaming: Use proper backpressure handling for AI response streams
+
+## Recent Changes
+- [2024-12-13] Added PROJECT.manifest specification and initial manifest
+- [2024-12-12] Implemented ratatui-based TUI with interactive menus
+- [2024-12-09] Added MCP integration for dynamic tool loading
+- [2024-12-08] Implemented multi-provider AI support with Backend trait
+- [2024-12-05] Migrated to workspace architecture with core library separation
