@@ -2,6 +2,7 @@
 
 use arula_core::utils::config::Config;
 use arula_core::SessionConfig;
+use arula_core::{ConversationManager, ConversationMetadata};
 use arula_desktop::animation::Spring;
 use arula_desktop::canvas::{
     LiquidMenuBackground, LivingBackground, LoadingSpinner, SpinnerState, SpinnerType,
@@ -25,10 +26,12 @@ use iced::time::{self, Duration};
 use iced::widget::canvas::Canvas;
 use iced::widget::text_editor;
 use iced::widget::{
-    button, column, container, markdown, pick_list, row, scrollable, stack, text, text_input, Space,
+    button, checkbox, column, container, markdown, pick_list, row, scrollable, stack, text, text_input, Space,
 };
 use iced::{Background, Border, Color, Element, Font, Length, Point, Subscription, Task};
+use rfd::FileDialog;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Application state.
 struct App {
@@ -69,6 +72,24 @@ struct App {
     error_expanded: bool,
     /// Streaming bash output lines per tool call (keyed by tool_call_id)
     bash_output_lines: HashMap<String, Vec<(String, bool)>>, // (line, is_stderr)
+    /// Current working directory for the session
+    current_directory: PathBuf,
+    /// Whether the directory popup is shown
+    show_directory_popup: bool,
+    /// Whether the custom directory input is shown
+    show_directory_custom_input: bool,
+    /// Draft value for the custom directory input
+    directory_draft: String,
+    /// Recently used directories (most recent first)
+    recent_directories: Vec<PathBuf>,
+    /// Conversation manager for saving/loading conversations
+    conversation_manager: ConversationManager,
+    /// List of saved conversations
+    saved_conversations: Vec<ConversationMetadata>,
+    /// Whether the conversations sidebar is shown
+    show_conversations: bool,
+    /// Animation state for conversations sidebar (0.0 = hidden, 1.0 = visible)
+    conversations_sidebar_animation: f32,
 }
 
 /// Application messages.
@@ -123,6 +144,32 @@ enum Message {
     CopyToClipboard(String),
     /// Clear the current chat session
     ClearChat,
+    /// Toggle the directory popup visibility
+    ToggleDirectoryPopup,
+    /// Open native file picker to select a directory
+    OpenDirectoryPicker,
+    /// Handle the result from the directory picker
+    DirectoryPickerResult(Option<PathBuf>),
+    /// Toggle showing the manual directory input
+    ShowDirectoryCustomInput,
+    /// Track manual directory input changes
+    DirectoryDraftChanged(String),
+    /// Apply a manual directory change
+    ChangeDirectory,
+    /// Select a recent directory from the popup
+    SelectRecentDirectory(PathBuf),
+    /// Close the directory popup
+    CloseDirectoryPopup,
+    /// Toggle conversations sidebar
+    ToggleConversations,
+    /// Load a conversation by ID
+    LoadConversation(uuid::Uuid),
+    /// Delete a conversation by ID
+    DeleteConversation(uuid::Uuid),
+    /// Refresh the conversations list
+    RefreshConversations,
+    /// Close conversations sidebar
+    CloseConversations,
 }
 
 /// Input field ID for focus management
@@ -239,6 +286,15 @@ impl App {
             stream_error: None,
             error_expanded: false,
             bash_output_lines: HashMap::new(),
+            current_directory: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+            show_directory_popup: false,
+            show_directory_custom_input: false,
+            directory_draft: String::new(),
+            recent_directories: Vec::new(),
+            conversation_manager: ConversationManager::new()?,
+            saved_conversations: Vec::new(),
+            show_conversations: false,
+            conversations_sidebar_animation: 0.0,
         })
     }
 
@@ -274,6 +330,19 @@ impl App {
             stream_error: None,
             error_expanded: false,
             bash_output_lines: HashMap::new(),
+            current_directory: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+            show_directory_popup: false,
+            show_directory_custom_input: false,
+            directory_draft: String::new(),
+            recent_directories: Vec::new(),
+            conversation_manager: ConversationManager::new().unwrap_or_else(|_| {
+                // If we can't create the conversation manager, just use a dummy one
+                // This shouldn't happen in normal circumstances
+                panic!("Failed to create conversation manager")
+            }),
+            saved_conversations: Vec::new(),
+            show_conversations: false,
+            conversations_sidebar_animation: 0.0,
         }
     }
 
@@ -395,6 +464,13 @@ impl App {
 
                 // Note: This Tick also drives the message bubble fade-in animations
                 // Iced automatically redraws the view after handling a message
+
+                // Animate conversations sidebar
+                let target_conversations = if self.show_conversations { 1.0 } else { 0.0 };
+                self.conversations_sidebar_animation += (target_conversations - self.conversations_sidebar_animation) * 0.15;
+                if (self.conversations_sidebar_animation - target_conversations).abs() < 0.005 {
+                    self.conversations_sidebar_animation = target_conversations;
+                }
 
                 // Update all tilt cards efficiently
                 let mut redraw_cards = false;
@@ -633,8 +709,110 @@ impl App {
 
                 return iced::widget::operation::focus(input_id());
             }
+            Message::ToggleDirectoryPopup => {
+                self.show_directory_popup = !self.show_directory_popup;
+                if !self.show_directory_popup {
+                    // Reset custom input state when closing
+                    self.show_directory_custom_input = false;
+                    self.directory_draft.clear();
+                }
+            }
+            Message::CloseDirectoryPopup => {
+                self.show_directory_popup = false;
+                self.show_directory_custom_input = false;
+                self.directory_draft.clear();
+            }
+            Message::ShowDirectoryCustomInput => {
+                self.show_directory_custom_input = true;
+                // Pre-fill with current directory
+                self.directory_draft = self.current_directory.display().to_string();
+            }
+            Message::DirectoryDraftChanged(s) => {
+                self.directory_draft = s;
+            }
+            Message::ChangeDirectory => {
+                let path = PathBuf::from(&self.directory_draft);
+                self.apply_directory_selection(path);
+            }
+            Message::OpenDirectoryPicker => {
+                let start_dir = self.current_directory.clone();
+                return Task::future(async move {
+                    let path = FileDialog::new().set_directory(start_dir).pick_folder();
+                    Message::DirectoryPickerResult(path)
+                });
+            }
+            Message::DirectoryPickerResult(path) => {
+                if let Some(path) = path {
+                    self.apply_directory_selection(path);
+                }
+            }
+            Message::SelectRecentDirectory(path) => {
+                self.apply_directory_selection(path);
+            }
+            Message::ToggleConversations => {
+                self.show_conversations = !self.show_conversations;
+                if self.show_conversations {
+                    return Task::future(async move {
+                        Message::RefreshConversations
+                    });
+                }
+            }
+            Message::RefreshConversations => {
+                if let Ok(conversations) = self.conversation_manager.list_conversations() {
+                    self.saved_conversations = conversations;
+                }
+            }
+            Message::LoadConversation(conversation_id) => {
+                if let Ok(conversation) = self.conversation_manager.load_conversation(conversation_id) {
+                    // Create a new session from the loaded events
+                    let new_session = Session::from_events(conversation_id, &conversation.events);
+                    
+                    // Add the new session
+                    self.sessions.push(new_session);
+                    self.current = self.sessions.len() - 1;
+                    
+                    // Close the conversations sidebar
+                    self.show_conversations = false;
+                    
+                    // Clear the draft
+                    self.draft.clear();
+                    
+                    // Focus the input
+                    return iced::widget::operation::focus(input_id());
+                }
+            }
+            Message::DeleteConversation(conversation_id) => {
+                if let Err(err) = self.conversation_manager.delete_conversation(conversation_id) {
+                    eprintln!("Failed to delete conversation: {}", err);
+                } else {
+                    // Refresh the list
+                    return Task::future(async move {
+                        Message::RefreshConversations
+                    });
+                }
+            }
+            Message::CloseConversations => {
+                self.show_conversations = false;
+            }
         }
         Task::none()
+    }
+
+    fn apply_directory_selection(&mut self, path: PathBuf) {
+        if !path.exists() || !path.is_dir() {
+            return;
+        }
+
+        if std::env::set_current_dir(&path).is_ok() {
+            self.recent_directories.retain(|p| p != &path);
+            self.recent_directories.insert(0, path.clone());
+            self.recent_directories.truncate(10);
+
+            self.current_directory = path;
+            self.show_directory_popup = false;
+            self.show_directory_custom_input = false;
+            self.directory_draft.clear();
+        }
     }
 
     /// Helper function to get tool icons
@@ -654,6 +832,12 @@ impl App {
 
     fn handle_ui_event(&mut self, ev: UiEvent) -> Task<Message> {
         match ev {
+            UiEvent::UserMessage { content: _, timestamp: _ } => {
+                // User messages are handled locally in the session, no action needed
+            }
+            UiEvent::AiMessage { content: _, timestamp: _ } => {
+                // AI messages are handled via Token events, no action needed
+            }
             UiEvent::StreamStarted(id) => {
                 if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
                     s.set_streaming(true);
@@ -665,24 +849,42 @@ impl App {
 
                 if let Some(idx) = session_idx {
                     let session = &mut self.sessions[idx];
-                    session.append_ai_message(delta, Utc::now().to_rfc3339());
+                    
+                    // Check if this is a non-streaming response (complete response at once)
+                    let is_non_streaming = !session.is_streaming() && is_final;
+                    
+                    if is_non_streaming {
+                        // For non-streaming responses, use add_ai_message to create separate bubbles
+                        session.add_ai_message(delta, Utc::now().to_rfc3339());
+                    } else {
+                        // For streaming responses, use append_ai_message
+                        session.append_ai_message(delta, Utc::now().to_rfc3339());
+                    }
 
                     // Get or create the text editor content for the AI message
                     let msg_idx = session.messages.len() - 1;
                     let key = format!("{}:{}", idx, msg_idx);
 
-                    // Only update text editor content if it doesn't exist or if this is a final token
-                    // This prevents flickering during streaming
-                    if !self.message_editors.contains_key(&key) {
+                    // Handle message editor updates differently for streaming vs non-streaming
+                    if is_non_streaming {
+                        // For non-streaming responses, always update the editor content
                         self.message_editors.insert(
                             key.clone(),
                             text_editor::Content::with_text(&session.messages[msg_idx].content),
                         );
-                    } else if is_final {
-                        // Only update on final token to avoid constant recreation
-                        if let Some(editor_content) = self.message_editors.get_mut(&key) {
-                            let text = &session.messages[msg_idx].content;
-                            *editor_content = text_editor::Content::with_text(text);
+                    } else {
+                        // For streaming responses, only update if it doesn't exist or if this is final
+                        if !self.message_editors.contains_key(&key) {
+                            self.message_editors.insert(
+                                key.clone(),
+                                text_editor::Content::with_text(&session.messages[msg_idx].content),
+                            );
+                        } else if is_final {
+                            // Only update on final token to avoid constant recreation
+                            if let Some(editor_content) = self.message_editors.get_mut(&key) {
+                                let text = &session.messages[msg_idx].content;
+                                *editor_content = text_editor::Content::with_text(text);
+                            }
                         }
                     }
 
@@ -695,10 +897,14 @@ impl App {
                         self.markdown_cache.insert(key, items);
                     }
 
+                    // Handle final token differently for streaming vs non-streaming
                     if is_final {
-                        session.flush_ai_buffer(Utc::now().to_rfc3339());
+                        if !is_non_streaming {
+                            // For streaming responses, flush any remaining buffer content
+                            session.flush_ai_buffer(Utc::now().to_rfc3339());
+                        }
                         session.set_streaming(false);
-                        // Re-focus input when streaming completes
+                        // Re-focus input when response completes
                         return iced::widget::operation::focus(input_id());
                     }
                 }
@@ -708,6 +914,16 @@ impl App {
                     // Flush any remaining AI content from the buffer
                     s.flush_ai_buffer(Utc::now().to_rfc3339());
                     s.set_streaming(false);
+                    
+                    // Save the conversation
+                    let events = s.to_ui_events();
+                    if let Err(err) = self.conversation_manager.save_conversation(
+                        s.id,
+                        &events,
+                        self.config.get_model(),
+                    ) {
+                        eprintln!("Failed to save conversation: {}", err);
+                    }
                 }
                 // Re-focus input when stream finishes
                 return iced::widget::operation::focus(input_id());
@@ -1059,10 +1275,36 @@ impl App {
             Space::new().into()
         };
 
+        let directory_popup = self.directory_popup(pal);
+        let conversations_sidebar = self.conversations_sidebar(pal);
+
+        // Add backdrop overlay for conversations sidebar
+        let conversations_backdrop: Element<'_, Message> = if self.show_conversations {
+            button(Space::new().width(Length::Fill).height(Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(move |_theme, _status| button::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: self.conversations_sidebar_animation * 0.3, // Darken backdrop when sidebar is open
+                    })),
+                    ..Default::default()
+                })
+                .on_press(Message::CloseConversations) // Close when clicking backdrop
+                .into()
+        } else {
+            Space::new().into()
+        };
+
         let content = stack(vec![
             background.into(),
             main_layer.into(),
             overlay,
+            conversations_backdrop, // Add backdrop behind conversations sidebar
+            directory_popup,
+            conversations_sidebar,
             error_overlay,
         ]);
         container(content)
@@ -1101,6 +1343,45 @@ impl App {
     }
 
     fn top_bar(&self, pal: PaletteColors) -> Element<'_, Message> {
+        let conversations_button = button(
+            row![
+                bootstrap::clock_history()
+                    .size(14)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(if self.show_conversations { pal.text } else { pal.accent })
+                    }),
+                Space::new().width(Length::Fixed(6.0)),
+                text("Conversations")
+                    .size(14)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(pal.text)
+                    }),
+            ]
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::ToggleConversations)
+        .padding([8, 16])
+        .style(move |_theme, status| {
+            let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+            let is_active = self.show_conversations;
+            button::Style {
+                background: Some(Background::Color(Color {
+                    a: if is_active { 0.3 } else if is_hovered { 0.2 } else { 0.15 },
+                    ..pal.surface
+                })),
+                border: Border {
+                    radius: 6.0.into(),
+                    width: 1.0,
+                    color: Color {
+                        a: if is_active { 0.6 } else if is_hovered { 0.4 } else { 0.3 },
+                        ..pal.surface
+                    },
+                },
+                text_color: pal.text,
+                ..Default::default()
+            }
+        });
+
         let clear_button = button(
             row![
                 bootstrap::eraser()
@@ -1109,7 +1390,7 @@ impl App {
                         color: Some(pal.text)
                     }),
                 Space::new().width(Length::Fixed(6.0)),
-                text("Clear")
+                text("New Chat")
                     .size(14)
                     .style(move |_| iced::widget::text::Style {
                         color: Some(pal.text)
@@ -1139,18 +1420,635 @@ impl App {
             }
         });
 
+        // Directory display - show current directory name
+        let dir_name = self.current_directory
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_else(|| self.current_directory.to_str().unwrap_or("/"));
+        
+        // Directory button (always shown)
+        let is_popup_open = self.show_directory_popup;
+        let directory_button = button(
+            row![
+                bootstrap::folder()
+                    .size(14)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(if is_popup_open { pal.text } else { pal.accent })
+                    }),
+                Space::new().width(Length::Fixed(6.0)),
+                text(dir_name)
+                    .size(13)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(if is_popup_open { pal.text } else { pal.muted })
+                    }),
+                Space::new().width(Length::Fixed(6.0)),
+                bootstrap::chevron_down()
+                    .size(10)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(pal.muted)
+                    }),
+            ]
+            .align_y(iced::Alignment::Center),
+        )
+        .on_press(Message::ToggleDirectoryPopup)
+        .padding([8, 12])
+        .style(move |_theme, status| {
+            let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+            button::Style {
+                background: Some(Background::Color(Color {
+                    a: if is_popup_open { 0.25 } else if is_hovered { 0.15 } else { 0.08 },
+                    ..pal.surface
+                })),
+                border: Border {
+                    radius: 6.0.into(),
+                    width: 1.0,
+                    color: Color {
+                        a: if is_popup_open { 0.5 } else if is_hovered { 0.3 } else { 0.15 },
+                        ..pal.accent
+                    },
+                },
+                text_color: pal.muted,
+                ..Default::default()
+            }
+        });
+
         container(
-            row![clear_button, Space::new().width(Length::Fill),].align_y(iced::Alignment::Center),
+            row![
+                conversations_button,
+                Space::new().width(Length::Fixed(12.0)),
+                clear_button,
+                Space::new().width(Length::Fixed(12.0)),
+                directory_button,
+                Space::new().width(Length::Fill),
+            ]
+            .align_y(iced::Alignment::Center),
         )
         .padding([12, 20])
         .width(Length::Fill)
-        .height(Length::Fixed(48.0))
+        .height(Length::Fixed(56.0))
         .style(move |_| container::Style {
             background: Some(Background::Color(Color::TRANSPARENT)),
             border: Border {
                 radius: 0.0.into(),
                 width: 0.0,
                 color: Color::TRANSPARENT,
+            },
+            ..Default::default()
+        })
+        .into()
+    }
+
+    /// Creates the directory popup overlay
+    fn directory_popup(&self, pal: PaletteColors) -> Element<'_, Message> {
+        if !self.show_directory_popup {
+            return Space::new().into();
+        }
+
+        let mut popup_content: Vec<Element<'_, Message>> = Vec::new();
+
+        // Recent directories section
+        if !self.recent_directories.is_empty() {
+            popup_content.push(
+                text("Recent")
+                    .size(11)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(pal.muted)
+                    })
+                    .into()
+            );
+            popup_content.push(Space::new().height(Length::Fixed(6.0)).into());
+
+            for dir in self.recent_directories.iter().take(5) {
+                let dir_clone = dir.clone();
+                let dir_name = dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_else(|| dir.to_str().unwrap_or("?"));
+                let dir_path = dir.display().to_string();
+                
+                let recent_item = button(
+                    row![
+                        bootstrap::folder()
+                            .size(12)
+                            .style(move |_| iced::widget::text::Style {
+                                color: Some(pal.accent)
+                            }),
+                        Space::new().width(Length::Fixed(8.0)),
+                        column![
+                            text(dir_name)
+                                .size(13)
+                                .style(move |_| iced::widget::text::Style {
+                                    color: Some(pal.text)
+                                }),
+                            text(dir_path)
+                                .size(10)
+                                .style(move |_| iced::widget::text::Style {
+                                    color: Some(pal.muted)
+                                }),
+                        ]
+                        .spacing(2),
+                    ]
+                    .align_y(iced::Alignment::Center),
+                )
+                .on_press(Message::SelectRecentDirectory(dir_clone))
+                .padding([8, 12])
+                .width(Length::Fill)
+                .style(move |_theme, status| {
+                    let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                    button::Style {
+                        background: Some(Background::Color(Color {
+                            a: if is_hovered { 0.15 } else { 0.0 },
+                            ..pal.surface
+                        })),
+                        border: Border {
+                            radius: 4.0.into(),
+                            width: 0.0,
+                            color: Color::TRANSPARENT,
+                        },
+                        text_color: pal.text,
+                        ..Default::default()
+                    }
+                });
+                
+                popup_content.push(recent_item.into());
+            }
+
+            // Divider
+            popup_content.push(Space::new().height(Length::Fixed(8.0)).into());
+            popup_content.push(
+                container(Space::new().height(Length::Fixed(1.0)))
+                    .width(Length::Fill)
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(Color {
+                            a: 0.2,
+                            ..pal.muted
+                        })),
+                        ..Default::default()
+                    })
+                    .into()
+            );
+            popup_content.push(Space::new().height(Length::Fixed(8.0)).into());
+        }
+
+        // Custom input section
+        if self.show_directory_custom_input {
+            let dir_input = text_input("Enter directory path...", &self.directory_draft)
+                .on_input(Message::DirectoryDraftChanged)
+                .on_submit(Message::ChangeDirectory)
+                .padding([8, 12])
+                .size(13)
+                .width(Length::Fill)
+                .style(move |_theme, _status| iced::widget::text_input::Style {
+                    background: Background::Color(Color {
+                        a: 0.15,
+                        ..pal.surface
+                    }),
+                    border: Border {
+                        radius: 4.0.into(),
+                        width: 1.0,
+                        color: pal.accent,
+                    },
+                    icon: pal.muted,
+                    placeholder: pal.muted,
+                    value: pal.text,
+                    selection: Color { a: 0.3, ..pal.accent },
+                });
+
+            let confirm_btn = button(
+                row![
+                    bootstrap::check_lg()
+                        .size(12)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(pal.success)
+                        }),
+                    Space::new().width(Length::Fixed(6.0)),
+                    text("Open")
+                        .size(12)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(pal.success)
+                        }),
+                ]
+                .align_y(iced::Alignment::Center),
+            )
+            .on_press(Message::ChangeDirectory)
+            .padding([6, 12])
+            .style(move |_theme, status| {
+                let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                button::Style {
+                    background: Some(Background::Color(Color {
+                        a: if is_hovered { 0.2 } else { 0.1 },
+                        ..pal.success
+                    })),
+                    border: Border {
+                        radius: 4.0.into(),
+                        width: 1.0,
+                        color: Color { a: 0.3, ..pal.success },
+                    },
+                    text_color: pal.success,
+                    ..Default::default()
+                }
+            });
+
+            popup_content.push(dir_input.into());
+            popup_content.push(Space::new().height(Length::Fixed(8.0)).into());
+            popup_content.push(confirm_btn.into());
+        } else {
+            // Open Directory button
+            let open_dir_button = button(
+                row![
+                    bootstrap::folder_plus()
+                        .size(14)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(pal.accent)
+                        }),
+                    Space::new().width(Length::Fixed(8.0)),
+                    text("Open Directory...")
+                        .size(13)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(pal.text)
+                    }),
+                ]
+                .align_y(iced::Alignment::Center),
+            )
+            .on_press(Message::OpenDirectoryPicker)
+            .padding([10, 12])
+            .width(Length::Fill)
+            .style(move |_theme, status| {
+                let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                button::Style {
+                    background: Some(Background::Color(Color {
+                        a: if is_hovered { 0.15 } else { 0.0 },
+                        ..pal.surface
+                    })),
+                    border: Border {
+                        radius: 4.0.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    text_color: pal.text,
+                    ..Default::default()
+                }
+            });
+            
+            popup_content.push(open_dir_button.into());
+
+            let manual_button = button(
+                row![text("Enter path manually")
+                    .size(12)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(pal.muted)
+                    })]
+                .align_y(iced::Alignment::Center),
+            )
+            .on_press(Message::ShowDirectoryCustomInput)
+            .padding([6, 8])
+            .width(Length::Fill)
+            .style(move |_theme, status| {
+                let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                button::Style {
+                    background: Some(Background::Color(Color {
+                        a: if is_hovered { 0.12 } else { 0.05 },
+                        ..pal.surface
+                    })),
+                    border: Border {
+                        radius: 4.0.into(),
+                        width: 1.0,
+                        color: Color { a: 0.2, ..pal.muted },
+                    },
+                    text_color: pal.muted,
+                    ..Default::default()
+                }
+            });
+
+            popup_content.push(Space::new().height(Length::Fixed(6.0)).into());
+            popup_content.push(manual_button.into());
+        }
+
+        // Popup container
+        let popup = container(
+            column(popup_content)
+                .spacing(2)
+                .padding(8)
+        )
+        .width(Length::Fixed(320.0))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(Color {
+                r: pal.background.r * 0.95,
+                g: pal.background.g * 0.95,
+                b: pal.background.b * 0.95,
+                a: 0.98,
+            })),
+            border: Border {
+                radius: 8.0.into(),
+                width: 1.0,
+                color: Color { a: 0.3, ..pal.accent },
+            },
+            ..Default::default()
+        });
+
+        // Position the popup below the top bar
+        container(
+            column![
+                Space::new().height(Length::Fixed(56.0)), // Top bar height
+                row![
+                    Space::new().width(Length::Fixed(140.0)), // Offset from left (after New Chat button)
+                    popup,
+                ],
+            ]
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    /// Creates the conversations sidebar
+    /// Creates the conversations sidebar with smooth animations
+    fn conversations_sidebar(&self, pal: PaletteColors) -> Element<'_, Message> {
+        // Animate sidebar width and opacity
+        let sidebar_width = 320.0 * self.conversations_sidebar_animation;
+        let sidebar_opacity = self.conversations_sidebar_animation;
+        
+        if sidebar_width <= 1.0 {
+            return Space::new().into();
+        }
+
+        let mut sidebar_content: Vec<Element<'_, Message>> = Vec::new();
+
+        // Animated header with gradient background
+        let header = container(
+            row![
+                text("💬 Conversations")
+                    .size(18)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(pal.text)
+                    }),
+                Space::new().width(Length::Fill),
+                button(
+                    text("✕")
+                        .size(16)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(pal.muted)
+                        })
+                )
+                .on_press(Message::CloseConversations)
+                .padding([6, 10])
+                .style(move |_theme, status| {
+                    let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                    button::Style {
+                        background: Some(Background::Color(Color {
+                            r: pal.danger.r,
+                            g: pal.danger.g,
+                            b: pal.danger.b,
+                            a: if is_hovered { 0.8 } else { 0.6 },
+                        })),
+                        border: Border {
+                            radius: 4.0.into(),
+                            width: 0.0,
+                            color: Color::TRANSPARENT,
+                        },
+                        text_color: Color::WHITE,
+                        ..Default::default()
+                    }
+                }),
+            ]
+            .align_y(iced::Alignment::Center)
+        )
+        .padding(20.0)
+        .width(Length::Fill)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(Color {
+                r: pal.background.r * 0.95,
+                g: pal.background.g * 0.95,
+                b: pal.background.b * 0.95,
+                a: 1.0,
+            })),
+            border: Border {
+                radius: 12.0.into(),
+                width: 0.0,
+                color: Color::TRANSPARENT,
+            },
+            ..Default::default()
+        });
+        sidebar_content.push(header.into());
+
+        // Refresh button
+        let refresh_button = container(
+            button(
+                row![
+                    text("🔄")
+                        .size(14)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(pal.text)
+                        }),
+                    text("Refresh")
+                        .size(13)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(pal.text)
+                        }),
+                ]
+                .spacing(8)
+                .align_y(iced::Alignment::Center)
+            )
+            .on_press(Message::RefreshConversations)
+            .padding([8.0, 20.0])
+            .style(move |_theme, status| {
+                let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                button::Style {
+                    background: Some(Background::Color(Color {
+                        a: if is_hovered { 0.15 } else { 0.08 },
+                        ..pal.surface
+                    })),
+                    border: Border {
+                        radius: 8.0.into(),
+                        width: 1.0,
+                        color: Color {
+                            a: 0.2,
+                            ..pal.muted
+                        },
+                    },
+                    text_color: pal.text,
+                    ..Default::default()
+                }
+            })
+        )
+        .padding([0.0, 20.0]);
+
+        sidebar_content.push(refresh_button.into());
+
+        // Conversation list with fancy styling
+        if self.saved_conversations.is_empty() {
+            let empty_state = container(
+                column![
+                    text("📝")
+                        .size(48)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(pal.muted)
+                        }),
+                    text("No saved conversations yet")
+                        .size(16)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(pal.text)
+                        }),
+                    text("Start a chat and it will be automatically saved here")
+                        .size(13)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(pal.muted)
+                        }),
+                ]
+                .spacing(12)
+                .align_x(iced::Alignment::Center)
+            )
+            .padding([40, 20])
+            .width(Length::Fill)
+            .align_x(iced::Alignment::Center);
+            sidebar_content.push(empty_state.into());
+        } else {
+            for (index, conversation) in self.saved_conversations.iter().enumerate() {
+                let conv_id = conversation.id;
+                let title = if conversation.title.len() > 35 {
+                    format!("{}...", &conversation.title[..35].trim())
+                } else {
+                    conversation.title.clone()
+                };
+
+                // Add staggered animation delay for each item
+                let item_animation = ((self.conversations_sidebar_animation - 0.3) - (index as f32 * 0.05)).clamp(0.0, 1.0);
+                let item_opacity = item_animation;
+
+                let conversation_item = container(
+                    button(
+                        column![
+                            row![
+                                text("💭")
+                                    .size(14)
+                                    .style(move |_| iced::widget::text::Style {
+                                        color: Some(pal.accent)
+                                    }),
+                                text(title)
+                                    .size(14)
+                                    .style(move |_| iced::widget::text::Style {
+                                        color: Some(pal.text)
+                                    }),
+                            ]
+                            .spacing(8)
+                            .align_y(iced::Alignment::Center),
+                            row![
+                                text(format!("🔢 {} messages", conversation.message_count))
+                                    .size(12)
+                                    .style(move |_| iced::widget::text::Style {
+                                        color: Some(pal.muted)
+                                    }),
+                                Space::new().width(Length::Fill),
+                                text(conversation.relative_time())
+                                    .size(11)
+                                    .style(move |_| iced::widget::text::Style {
+                                        color: Some(pal.muted)
+                                    }),
+                            ]
+                            .align_y(iced::Alignment::Center),
+                        ]
+                        .spacing(6)
+                        .align_x(iced::Alignment::Start)
+                    )
+                    .on_press(Message::LoadConversation(conv_id))
+                    .padding([14.0, 20.0])
+                    .width(Length::Fill)
+                    .style(move |_theme, status| {
+                        let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                        button::Style {
+                            background: Some(Background::Color(Color {
+                                r: pal.accent.r * 0.1,
+                                g: pal.accent.g * 0.1,
+                                b: pal.accent.b * 0.1,
+                                a: if is_hovered { 0.8 } else { 0.3 },
+                            })),
+                            border: Border {
+                                radius: 12.0.into(),
+                                width: 1.0,
+                                color: Color {
+                                    r: pal.accent.r,
+                                    g: pal.accent.g,
+                                    b: pal.accent.b,
+                                    a: if is_hovered { 0.4 } else { 0.15 },
+                                },
+                            },
+                            text_color: pal.text,
+                            shadow: iced::Shadow {
+                                color: Color {
+                                    a: if is_hovered { 0.2 } else { 0.0 },
+                                    ..Color::BLACK
+                                },
+                                offset: iced::Vector { x: 0.0, y: 2.0 },
+                                blur_radius: if is_hovered { 8.0 } else { 0.0 },
+                            },
+                            ..Default::default()
+                        }
+                    })
+                )
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: pal.background.r,
+                        g: pal.background.g,
+                        b: pal.background.b,
+                        a: item_opacity * 0.8,
+                    })),
+                    border: Border::default(),
+                    ..Default::default()
+                })
+                .into();
+
+                sidebar_content.push(conversation_item);
+
+                // Add subtle separator between items
+                if index < self.saved_conversations.len() - 1 {
+                    sidebar_content.push(
+                        container(Space::new())
+                            .padding([0.0, 20.0])
+                            .width(Length::Fill)
+                            .height(Length::Fixed(1.0))
+                            .style(move |_| container::Style {
+                                background: Some(Background::Color(Color {
+                                    a: 0.05 * item_opacity,
+                                    ..pal.muted
+                                })),
+                                ..Default::default()
+                            })
+                            .into()
+                    );
+                }
+            }
+        }
+
+        // Animated sidebar container with backdrop blur effect
+        container(
+            scrollable(column(sidebar_content))
+                .width(Length::Fill)
+                .height(Length::Fill)
+        )
+        .width(Length::Fixed(sidebar_width))
+        .height(Length::Fill)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(Color {
+                r: pal.background.r,
+                g: pal.background.g, 
+                b: pal.background.b,
+                a: sidebar_opacity * 0.98,
+            })),
+            border: Border {
+                radius: 16.0.into(),
+                width: 1.0,
+                color: Color {
+                    a: 0.15 * sidebar_opacity,
+                    ..pal.muted
+                },
+            },
+            shadow: iced::Shadow {
+                color: Color {
+                    a: 0.15 * sidebar_opacity,
+                    ..Color::BLACK
+                },
+                offset: iced::Vector { x: -4.0, y: 0.0 },
+                blur_radius: 20.0 * sidebar_opacity,
             },
             ..Default::default()
         })
@@ -1229,7 +2127,7 @@ impl App {
             row![
                 spinner,
                 Space::new().width(Length::Fixed(8.0)),
-                text("is thinking...")
+                text("aruling...")
                     .size(14)
                     .style(move |_| iced::widget::text::Style {
                         color: Some(pal.muted)
@@ -2890,6 +3788,46 @@ impl App {
                 .on_input(Message::ConfigApiKeyChanged)
                 .padding(8)
                 .style(input_style(pal)),
+            Space::new().height(Length::Fixed(16.0)),
+            // Thinking toggle
+            column![
+                row![
+                    checkbox(form.thinking_enabled)
+                        .on_toggle(Message::ConfigThinkingToggled)
+                        .size(16)
+                        .style(move |_theme, _status| {
+                            iced::widget::checkbox::Style {
+                                background: Background::Color(Color {
+                                    a: 0.1,
+                                    ..pal.accent
+                                }),
+                                border: Border {
+                                    radius: 4.0.into(),
+                                    width: 1.0,
+                                    color: Color {
+                                        a: 0.3,
+                                        ..pal.accent
+                                    },
+                                },
+                                icon_color: pal.accent,
+                                text_color: Some(pal.text),
+                            }
+                        }),
+                    text("Enable thinking mode")
+                        .size(14)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(pal.text)
+                        }),
+                ]
+                .align_y(iced::Alignment::Center)
+                .spacing(8),
+                text("Note: Requires reasoning models (OpenAI o1/o3, Claude with thinking)")
+                    .size(11)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(pal.muted)
+                    }),
+            ]
+            .spacing(4),
             Space::new().height(Length::Fixed(12.0)),
             text("Endpoint URL")
                 .size(12)

@@ -422,6 +422,12 @@ impl ApiClient {
         let config = crate::utils::config::Config::load_or_default()?;
         let thinking_enabled = config.get_thinking_enabled().unwrap_or(false);
 
+        // Debug: Check if thinking is enabled for Z.AI
+        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+            eprintln!("🧠 DEBUG: thinking_enabled = {} for provider {:?}", thinking_enabled, self.provider);
+            eprintln!("🧠 DEBUG: endpoint = {}", self.endpoint);
+        }
+
         // Build request body based on provider
         let request_body = match self.provider {
             AIProvider::Claude => {
@@ -567,6 +573,18 @@ impl ApiClient {
 
                     if let Some(system) = system_content {
                         request["system"] = json!(system);
+                    }
+
+                    // Add thinking mode if enabled (for Z.AI Anthropic-compatible endpoint)
+                    if thinking_enabled {
+                        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+                            eprintln!("🧠 DEBUG: Adding thinking block to Z.AI Anthropic-compatible request");
+                        }
+                        request["thinking"] = serde_json::json!({
+                            "type": "enabled"
+                        });
+                    } else if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+                        eprintln!("🧠 DEBUG: NOT adding thinking block - thinking_enabled is false");
                     }
 
                     // Convert tools to Anthropic format

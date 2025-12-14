@@ -181,6 +181,17 @@ pub fn build_anthropic_request(
     tools: Option<&[Value]>,
     max_tokens: u32,
 ) -> Value {
+    // Check if thinking is enabled
+    let thinking_enabled = if let Ok(config) = crate::utils::config::Config::load_or_default() {
+        config.get_thinking_enabled().unwrap_or(false)
+    } else {
+        false
+    };
+
+    // Debug output
+    if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+        eprintln!("🧠 DEBUG build_anthropic_request: thinking_enabled = {}, model = {}", thinking_enabled, model);
+    }
     // Extract system message (first message with role "system")
     let system_content: Option<String> = messages
         .iter()
@@ -233,6 +244,16 @@ pub fn build_anthropic_request(
 
         // Add temperature
         request["temperature"] = json!(0.7);
+
+        // Add thinking mode if enabled (for Z.AI Anthropic-compatible endpoint)
+        if thinking_enabled {
+            if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+                eprintln!("🧠 DEBUG: Adding thinking block to Z.AI build_anthropic_request");
+            }
+            request["thinking"] = json!({"type": "enabled"});
+        } else if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+            eprintln!("🧠 DEBUG: NOT adding thinking block to Z.AI build_anthropic_request - thinking_enabled is false");
+        }
 
         // Add tools if provided (Z.AI supports tools)
         if let Some(tools) = tools {
@@ -318,6 +339,16 @@ pub fn build_anthropic_request(
         request["system"] = json!(system);
     }
 
+    // Add thinking mode if enabled (for Anthropic or other compatible endpoints)
+    if thinking_enabled {
+        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+            eprintln!("🧠 DEBUG: Adding thinking block to non-Z.AI build_anthropic_request");
+        }
+        request["thinking"] = json!({"type": "enabled"});
+    } else if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+        eprintln!("🧠 DEBUG: NOT adding thinking block to non-Z.AI build_anthropic_request - thinking_enabled is false");
+    }
+
     // Convert and add tools if present
     if let Some(t) = tools {
         if !t.is_empty() {
@@ -340,7 +371,18 @@ pub fn build_streaming_request(
     temperature: f32,
     max_tokens: u32,
 ) -> Value {
+    // Check if thinking is enabled
+    let thinking_enabled = if let Ok(config) = crate::utils::config::Config::load_or_default() {
+        config.get_thinking_enabled().unwrap_or(false)
+    } else {
+        false
+    };
     let is_zai = matches!(provider, AIProvider::ZAiCoding);
+
+    // Debug output
+    if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+        eprintln!("🧠 DEBUG build_streaming_request: thinking_enabled = {}, provider = {:?}", thinking_enabled, provider);
+    }
     let is_ollama = matches!(provider, AIProvider::Ollama);
 
     // 1. Process Messages
@@ -440,10 +482,21 @@ pub fn build_streaming_request(
     // Add temperature separately to avoid type issues
     if is_zai {
         request["temperature"] = json!("0.7");
-        // Add thinking parameter for Z.AI
-        request["thinking"] = json!({"type": "enabled"});
+        // Add thinking parameter for Z.AI if enabled
+        if thinking_enabled {
+            if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+                eprintln!("🧠 DEBUG: Adding thinking block to Z.AI streaming request");
+            }
+            request["thinking"] = json!({"type": "enabled"});
+        } else if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+            eprintln!("🧠 DEBUG: NOT adding thinking block to Z.AI streaming request - thinking_enabled is false");
+        }
     } else {
         request["temperature"] = json!(temperature);
+        // Add reasoning_effort for other providers if thinking is enabled
+        if thinking_enabled {
+            request["reasoning_effort"] = json!("medium");
+        }
     }
 
     // Option flags

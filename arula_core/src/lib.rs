@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod app;
+pub mod conversation_manager;
 pub mod init;
 pub mod prelude;
 pub mod session_manager;
@@ -16,6 +17,7 @@ use std::pin::Pin;
 pub use api::agent::{ContentBlock, ToolRegistry};
 pub use api::api::Usage;
 pub use app::App;
+pub use conversation_manager::{ConversationManager, ConversationMetadata, SavedConversation};
 pub use prelude::*;
 pub use session_manager::{SessionManager, UiEvent};
 pub use tools::*;

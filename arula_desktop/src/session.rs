@@ -144,6 +144,107 @@ impl Session {
         }
     }
 
+    /// Creates a session from saved UiEvents.
+    pub fn from_events(id: Uuid, events: &[arula_core::session_manager::UiEvent]) -> Self {
+        let mut session = Self {
+            id,
+            messages: Vec::new(),
+            is_streaming: false,
+            ai_buffer: String::new(),
+        };
+
+        for event in events {
+            match event {
+                arula_core::session_manager::UiEvent::UserMessage { content, timestamp } => {
+                    session.add_user_message(content.clone(), timestamp.clone());
+                }
+                arula_core::session_manager::UiEvent::AiMessage { content, timestamp } => {
+                    session.add_ai_message(content.clone(), timestamp.clone());
+                }
+                arula_core::session_manager::UiEvent::Thinking(_, text) => {
+                    session.append_thinking_message(text.clone(), Utc::now().to_rfc3339());
+                }
+                arula_core::session_manager::UiEvent::ToolCallStart(_, tool_call_id, _name, display_args) => {
+                    session.add_tool_message(
+                        format!("{} {}", session.get_tool_icon("tool"), display_args),
+                        Utc::now().to_rfc3339(),
+                        Some(tool_call_id.clone()),
+                    );
+                }
+                arula_core::session_manager::UiEvent::ToolCallResult(_, _name, _success, _result_summary) => {
+                    // For simplicity, we'll just mark the tool as complete
+                    // The actual display is handled by the update_tool_message
+                }
+                _ => {}
+            }
+        }
+
+        // Flush any remaining AI buffer
+        session.flush_ai_buffer(Utc::now().to_rfc3339());
+        
+        session
+    }
+
+    /// Gets a tool icon for a given tool name.
+    fn get_tool_icon(&self, name: &str) -> &'static str {
+        match name.to_lowercase().as_str() {
+            "execute_bash" => "⚡",
+            "read_file" => "📄",
+            "write_file" => "📝",
+            "edit_file" => "✏️",
+            "list_directory" => "📁",
+            "search_files" => "🔍",
+            "web_search" => "🌐",
+            "mcp_call" => "🔌",
+            "visioneer" => "👁️",
+            _ => "🔧",
+        }
+    }
+
+    /// Converts session messages to UiEvents for saving conversations.
+    pub fn to_ui_events(&self) -> Vec<arula_core::session_manager::UiEvent> {
+        let mut events = Vec::new();
+        
+        for msg in &self.messages {
+            match msg.role.as_str() {
+                "User" => {
+                    events.push(arula_core::session_manager::UiEvent::UserMessage {
+                        content: msg.content.clone(),
+                        timestamp: msg.timestamp.clone(),
+                    });
+                }
+                "Arula" => {
+                    events.push(arula_core::session_manager::UiEvent::AiMessage {
+                        content: msg.content.clone(),
+                        timestamp: msg.timestamp.clone(),
+                    });
+                }
+                "Thinking" => {
+                    events.push(arula_core::session_manager::UiEvent::Thinking(self.id, msg.content.clone()));
+                }
+                "Tool" => {
+                    // For tool messages, we'll create a simple ToolCallStart and ToolCallResult pair
+                    let tool_call_id = msg.tool_call_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                    events.push(arula_core::session_manager::UiEvent::ToolCallStart(
+                        self.id,
+                        tool_call_id.clone(),
+                        "tool".to_string(),
+                        msg.content.clone(),
+                    ));
+                    events.push(arula_core::session_manager::UiEvent::ToolCallResult(
+                        self.id,
+                        "tool".to_string(),
+                        true,
+                        msg.content.clone(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        
+        events
+    }
+
     /// Finalizes any pending thinking messages by calculating their duration.
     /// Called when a new non-thinking message is about to be added.
     fn finalize_thinking_messages(&mut self) {
@@ -165,14 +266,6 @@ impl Session {
     /// Adds or appends to an AI message using buffered approach.
     /// Content is buffered until substantial to prevent incomplete messages before tool calls.
     pub fn append_ai_message(&mut self, content: String, timestamp: String) {
-        // If there's already an AI message being built, append directly
-        if let Some(last) = self.messages.last_mut() {
-            if last.is_ai() {
-                last.append(&content);
-                return;
-            }
-        }
-
         // Add content to the buffer
         self.ai_buffer.push_str(&content);
 
@@ -183,9 +276,27 @@ impl Session {
         // 15 chars is enough to have a meaningful start like "I'll read the"
         if trimmed.len() >= 15 {
             self.finalize_thinking_messages();
+            
+            // Always create a new AI message instead of appending to existing one
+            // This ensures each response gets its own bubble
             self.messages.push(MessageEntry::ai(trimmed, timestamp));
             self.ai_buffer.clear();
         }
+    }
+
+    /// Adds a complete non-streaming AI response.
+    /// This always creates a separate message bubble.
+    pub fn add_ai_message(&mut self, content: String, timestamp: String) {
+        self.finalize_thinking_messages();
+        
+        // For non-streaming responses, always create a new message bubble
+        let trimmed = content.trim();
+        if !trimmed.is_empty() {
+            self.messages.push(MessageEntry::ai(trimmed.to_string(), timestamp));
+        }
+        
+        // Clear any buffered content
+        self.ai_buffer.clear();
     }
 
     /// Flushes any pending AI buffer content as a message.
@@ -193,14 +304,8 @@ impl Session {
     pub fn flush_ai_buffer(&mut self, timestamp: String) {
         let trimmed = self.ai_buffer.trim();
         if !trimmed.is_empty() {
-            // Append to existing AI message or create new one
-            if let Some(last) = self.messages.last_mut() {
-                if last.is_ai() {
-                    last.append(&format!("{}", trimmed));
-                    self.ai_buffer.clear();
-                    return;
-                }
-            }
+            // Always create a new AI message instead of appending to existing one
+            // This ensures the final buffered content gets its own bubble
             self.messages
                 .push(MessageEntry::ai(trimmed.to_string(), timestamp));
         }
@@ -297,7 +402,12 @@ impl Session {
         self.is_streaming = streaming;
     }
 
-    /// Clears all messages from the session.
+    /// Gets the current streaming state.
+    pub fn is_streaming(&self) -> bool {
+        self.is_streaming
+    }
+
+      /// Clears all messages from the session.
     pub fn clear_messages(&mut self) {
         self.messages.clear();
         self.ai_buffer.clear();

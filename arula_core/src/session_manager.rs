@@ -11,6 +11,7 @@ use crate::api::models::{
 use crate::utils::config::Config;
 use crate::{AgentBackend, SessionConfig, SessionRunner, StreamEvent};
 use futures::StreamExt;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
@@ -65,8 +66,18 @@ fn build_system_prompt_with_arula() -> String {
 }
 
 /// Events emitted by the session manager for UI updates.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UiEvent {
+    /// User message sent to the AI
+    UserMessage {
+        content: String,
+        timestamp: String,
+    },
+    /// AI message received from the model
+    AiMessage {
+        content: String,
+        timestamp: String,
+    },
     StreamStarted(Uuid),
     Token(Uuid, String, bool), // session_id, text, is_final
     Thinking(Uuid, String),
@@ -267,6 +278,128 @@ impl SessionManager {
                 // Return count header plus file list
                 return format!("{} items:\n{}", count, file_list.join("\n"));
             }
+        }
+
+        // Check for find_files result - show actual files found
+        if let Some(files) = data.get("files").and_then(|f| f.as_array()) {
+            let total_matches = data.get("total_matches").and_then(|m| m.as_u64()).unwrap_or(0) as usize;
+            let limit_reached = data.get("limit_reached").and_then(|l| l.as_bool()).unwrap_or(false);
+
+            if files.is_empty() {
+                return format!("No files found");
+            }
+
+            // Show up to 5 files with their sizes
+            let file_count = files.len().min(5);
+            let mut file_list = Vec::new();
+
+            for i in 0..file_count {
+                if let Some(file) = files.get(i) {
+                    let path = file.get("path").and_then(|p| p.as_str()).unwrap_or("?");
+                    let size = file.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
+                    let file_type = file.get("file_type").and_then(|t| t.as_str()).unwrap_or("file");
+
+                    let icon = if file_type == "directory" {
+                        "📁"
+                    } else if file_type == "symlink" {
+                        "🔗"
+                    } else {
+                        "📄"
+                    };
+
+                    // Format size nicely
+                    let size_str = if size == 0 {
+                        String::new()
+                    } else if size < 1024 {
+                        format!("{}B", size)
+                    } else if size < 1024 * 1024 {
+                        format!("{}KB", size / 1024)
+                    } else {
+                        format!("{}MB", size / (1024 * 1024))
+                    };
+
+                    // Show just the filename, not full path
+                    let filename = path.split('/').last().unwrap_or(path);
+
+                    if size_str.is_empty() {
+                        file_list.push(format!("{} {}", icon, filename));
+                    } else {
+                        file_list.push(format!("{} {} ({})", icon, filename, size_str));
+                    }
+                }
+            }
+
+            let mut result = format!("Found {} file{}", total_matches, if total_matches != 1 { "s" } else { "" });
+            if limit_reached {
+                result.push_str(" (showing first 5)");
+            }
+            result.push_str(":\n");
+            result.push_str(&file_list.join("\n"));
+
+            return result;
+        }
+
+        // Check for search_files result - show matches found
+        if let Some(files) = data.get("files").and_then(|f| f.as_array()) {
+            static EMPTY_VEC: std::sync::LazyLock<Vec<serde_json::Value>> = std::sync::LazyLock::new(Vec::new);
+            let total_matches = data.get("total_matches").and_then(|m| m.as_u64()).unwrap_or(0) as usize;
+            let files_searched = data.get("files_searched").and_then(|f| f.as_u64()).unwrap_or(0) as usize;
+            let limit_reached = data.get("limit_reached").and_then(|l| l.as_bool()).unwrap_or(false);
+
+            if files.is_empty() {
+                return format!("No matches found in {} files searched", files_searched);
+            }
+
+            // Show up to 3 files with match counts and context
+            let file_count = files.len().min(3);
+            let mut file_list = Vec::new();
+
+            for i in 0..file_count {
+                if let Some(file) = files.get(i) {
+                    let path = file.get("path").and_then(|p| p.as_str()).unwrap_or("?");
+                    let matches = file.get("matches")
+                        .and_then(|m| m.as_array())
+                        .unwrap_or(&EMPTY_VEC);
+
+                    // Show just the filename, not full path
+                    let filename = path.split('/').last().unwrap_or(path);
+
+                    // Get first match as example
+                    if let Some(first_match) = matches.first() {
+                        let line_num = first_match.get("line_number").and_then(|l| l.as_u64()).unwrap_or(0);
+                        let line_content = first_match.get("line_content").and_then(|l| l.as_str()).unwrap_or("");
+
+                        // Truncate line content if too long
+                        let truncated = if line_content.len() > 60 {
+                            format!("{}...", &line_content[..60])
+                        } else {
+                            line_content.to_string()
+                        };
+
+                        if matches.len() == 1 {
+                            file_list.push(format!("📄 {} (line {}): {}", filename, line_num, truncated));
+                        } else {
+                            file_list.push(format!("📄 {} ({} matches, first at line {}): {}",
+                                filename, matches.len(), line_num, truncated));
+                        }
+                    } else {
+                        file_list.push(format!("📄 {}", filename));
+                    }
+                }
+            }
+
+            let mut result = format!("Found {} match{} in {} file{}",
+                total_matches,
+                if total_matches != 1 { "es" } else { "" },
+                files_searched,
+                if files_searched != 1 { "s" } else { "" });
+            if limit_reached {
+                result.push_str(" (showing first 3 files)");
+            }
+            result.push_str(":\n");
+            result.push_str(&file_list.join("\n"));
+
+            return result;
         }
 
         // Check for file content

@@ -111,12 +111,12 @@ impl<Message> canvas::Program<Message> for LoadingSpinner {
                             center.x + start_angle.cos() * outer_radius,
                             center.y + start_angle.sin() * outer_radius,
                         );
-                        let end_point = Point::new(
+                        let _end_point = Point::new(
                             center.x + end_angle.cos() * outer_radius,
                             center.y + end_angle.sin() * outer_radius,
                         );
 
-                        let inner_start = Point::new(
+                        let _inner_start = Point::new(
                             center.x + start_angle.cos() * inner_radius,
                             center.y + start_angle.sin() * inner_radius,
                         );
@@ -236,7 +236,7 @@ impl<Message> canvas::Program<Message> for LoadingSpinner {
                 }
                 SpinnerType::Morph => {
                     // Morphing between shapes
-                    let morph_progress = (time * 2.0) % 1.0;
+                    let _morph_progress = (time * 2.0) % 1.0;
                     let sides = 3 + ((time * 0.5) % 5.0) as usize; // 3 to 8 sides
 
                     let mut points = Vec::new();
