@@ -42,6 +42,11 @@ impl SpinnerStyle {
             Self::Network => "◐◓◑◒",
             Self::Search => "🔍🔎🔍🔎",
             Self::Orbital => "◜◠◝◞◡◟",
+            Self::NeuralThinking => "⚛️🧠⚛️🧠⚛️",
+            Self::Helix => "🧬🔀🧬🔀🧬",
+            Self::Quantum => "⚛️◈⚛️◈⚛️",
+            Self::Pulse => "💓💗💓💗💓",
+            Self::Matrix => "01🌊01🌊01",
         }
     }
 
@@ -54,6 +59,11 @@ impl SpinnerStyle {
             Self::Network => "🌐",
             Self::Search => "🔍",
             Self::Orbital => "✨",
+            Self::NeuralThinking => "🧠",
+            Self::Helix => "🧬",
+            Self::Quantum => "⚛️",
+            Self::Pulse => "💓",
+            Self::Matrix => "💊",
         }
     }
 
@@ -66,6 +76,11 @@ impl SpinnerStyle {
             Self::Network => "Connecting",
             Self::Search => "Searching",
             Self::Orbital => "Processing",
+            Self::NeuralThinking => "Analyzing",
+            Self::Helix => "Sequencing",
+            Self::Quantum => "Computing",
+            Self::Pulse => "Monitoring",
+            Self::Matrix => "Decoding",
         }
     }
 }

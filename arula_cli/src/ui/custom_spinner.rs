@@ -242,8 +242,8 @@ fn run_star_spinner(
     let mut index: i32 = 0;
     let mut stdout = io::stdout();
 
-    // Start with star frames
-    let mut current_frames: Vec<String> = STAR_FRAMES.iter().map(|&s| s.to_string()).collect();
+    // Start with orbital frames
+    let mut current_frames: Vec<String> = ORBITAL_FRAMES.iter().map(|&s| s.to_string()).collect();
     let mut transition_in_progress = false;
     let mut transition_type: Option<Transition> = None;
     let mut transition_frame_count = 0;
@@ -512,7 +512,7 @@ mod tests {
 
     #[test]
     fn test_frame_count() {
-        assert_eq!(STAR_FRAMES.len(), 12);
+        assert_eq!(ORBITAL_FRAMES.len(), 16);
     }
 
     #[test]
@@ -531,16 +531,16 @@ mod tests {
 
     #[test]
     fn test_index_wrapping() {
-        let len = STAR_FRAMES.len() as i32;
+        let len = ORBITAL_FRAMES.len() as i32;
         assert_eq!((0i32 + 1i32).rem_euclid(len), 1);
-        assert_eq!((11i32 + 1i32).rem_euclid(len), 0);
-        assert_eq!((0i32 - 1i32).rem_euclid(len), 11);
+        assert_eq!((15i32 + 1i32).rem_euclid(len), 0);
+        assert_eq!((0i32 - 1i32).rem_euclid(len), 15);
     }
 
     #[test]
     fn test_all_frames_braille() {
         // Ensure all frames are valid braille patterns (2 chars combined into 1 visual)
-        for frame in STAR_FRAMES.iter() {
+        for frame in ORBITAL_FRAMES.iter() {
             assert!(
                 frame.chars().count() == 2,
                 "Frame '{}' should be 2 braille chars",
