@@ -4,7 +4,7 @@
 
 use crate::api::agent::{Tool, ToolSchema, ToolSchemaBuilder};
 use async_trait::async_trait;
-use once_cell::sync::OnceCell;
+// OnceCell replaced with OnceLock (Rust 1.70+)
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -60,7 +60,7 @@ struct CacheEntry {
     result: AnalyzeContextResult,
 }
 
-static ANALYSIS_CACHE: OnceCell<Mutex<HashMap<PathBuf, CacheEntry>>> = OnceCell::new();
+static ANALYSIS_CACHE: std::sync::OnceLock<Mutex<HashMap<PathBuf, CacheEntry>>> = std::sync::OnceLock::new();
 
 fn cache() -> &'static Mutex<HashMap<PathBuf, CacheEntry>> {
     ANALYSIS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))

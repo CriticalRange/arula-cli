@@ -54,7 +54,7 @@ pub struct BashTool;
 
 impl BashTool {
     /// Create a new BashTool instance
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -64,6 +64,9 @@ impl Default for BashTool {
         Self::new()
     }
 }
+
+// Provide a const instance for global use
+pub const BASH_TOOL: BashTool = BashTool::new();
 
 #[async_trait]
 impl Tool for BashTool {

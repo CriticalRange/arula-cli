@@ -1983,11 +1983,15 @@ mod tests {
         debug_print("test message");
 
         // Set debug flag
-        std::env::set_var("ARULA_DEBUG", "1");
+        unsafe {
+            std::env::set_var("ARULA_DEBUG", "1");
+        }
         debug_print("debug message");
 
         // Clean up
-        std::env::remove_var("ARULA_DEBUG");
+        unsafe {
+            std::env::remove_var("ARULA_DEBUG");
+        }
     }
 
     #[test]

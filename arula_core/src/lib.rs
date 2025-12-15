@@ -3,9 +3,12 @@
 
 pub mod api;
 pub mod app;
+pub mod async_optimizations;
 pub mod conversation_manager;
 pub mod init;
 pub mod prelude;
+pub mod profiling;
+pub mod rust_2024_examples;
 pub mod session_manager;
 pub mod tools;
 pub mod utils;

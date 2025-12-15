@@ -202,24 +202,15 @@ impl Conversation {
             return None;
         }
 
-        // Common greetings that don't make good titles
-        let greetings = [
-            "hi",
-            "hello",
-            "hey",
-            "yo",
-            "sup",
-            "good morning",
-            "good afternoon",
+        // Common greetings that don't make good titles (optimized check)
+        const GREETINGS: &[&str] = &[
+            "hi", "hello", "hey", "yo", "sup", "good morning", "good afternoon",
         ];
-        if greetings
-            .iter()
-            .any(|greeting| content.eq_ignore_ascii_case(greeting))
-        {
+        if GREETINGS.iter().any(|greeting| content.eq_ignore_ascii_case(greeting)) {
             return None;
         }
 
-        // Split into words and take first meaningful words
+        // Split into words and take first meaningful words (optimized)
         let words: Vec<&str> = content
             .split_whitespace()
             .take(6) // Take first 6 words max
@@ -247,19 +238,14 @@ impl Conversation {
             }
         }
 
-        // Capitalize first letter
+        // Capitalize first letter (optimized)
         if !title.is_empty() {
-            title = title
-                .chars()
-                .enumerate()
-                .map(|(i, c)| {
-                    if i == 0 {
-                        c.to_uppercase().collect::<String>()
-                    } else {
-                        c.to_string()
-                    }
-                })
-                .collect();
+            // More efficient: avoid collecting each char into a string
+            let mut chars: Vec<char> = title.chars().collect();
+            if let Some(first) = chars.get_mut(0) {
+                *first = first.to_uppercase().next().unwrap_or(*first);
+            }
+            title = chars.into_iter().collect();
         }
 
         Some(title)

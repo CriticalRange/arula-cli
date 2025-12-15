@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -283,9 +284,12 @@ impl McpManager {
     }
 }
 
-// Global MCP manager instance
-lazy_static::lazy_static! {
-    pub static ref MCP_MANAGER: McpManager = McpManager::new();
+// Global MCP manager instance using OnceLock (Rust 1.70+)
+pub static MCP_MANAGER: OnceLock<McpManager> = OnceLock::new();
+
+/// Get the global MCP manager instance
+pub fn get_mcp_manager() -> &'static McpManager {
+    MCP_MANAGER.get_or_init(|| McpManager::new())
 }
 
 /// MCP Tool for accessing MCP servers
@@ -303,15 +307,15 @@ impl McpTool {
     }
 
     pub async fn update_global_config(config: Config) {
-        MCP_MANAGER.update_config(config).await;
+        get_mcp_manager().update_config(config).await;
     }
 
     async fn get_client(&self, server_id: &str) -> Option<McpClient> {
-        MCP_MANAGER.get_client(server_id).await
+        get_mcp_manager().get_client(server_id).await
     }
 
     async fn list_available_tools(&self) -> Result<HashMap<String, Vec<String>>> {
-        MCP_MANAGER.list_available_tools().await
+        get_mcp_manager().list_available_tools().await
     }
 }
 
@@ -421,7 +425,7 @@ impl Tool for McpDiscoveryTool {
     }
 
     async fn execute(&self, _params: Self::Params) -> Result<Self::Result, String> {
-        match MCP_MANAGER.list_available_tools().await {
+        match get_mcp_manager().list_available_tools().await {
             Ok(server_tools) => {
                 // Format the results for better readability
                 let mut formatted_servers = Vec::new();

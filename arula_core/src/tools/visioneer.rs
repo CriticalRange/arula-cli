@@ -744,7 +744,9 @@ impl VisioneerTool {
 
         // Set Tesseract data path if found
         if let Some(path) = tesseract_path {
-            std::env::set_var("TESSDATA_PREFIX", format!("{}\\tessdata", path));
+            unsafe {
+                std::env::set_var("TESSDATA_PREFIX", format!("{}\\tessdata", path));
+            }
         }
 
         // Create a temporary capture for OCR
@@ -1307,7 +1309,9 @@ impl OcrEngine for TesseractOcrEngine {
 
         // Set Tesseract data path if found
         if let Some(path) = tesseract_path {
-            std::env::set_var("TESSDATA_PREFIX", format!("{}\\tessdata", path));
+            unsafe {
+                std::env::set_var("TESSDATA_PREFIX", format!("{}\\tessdata", path));
+            }
         }
 
         // Get base64 data from capture result, decode and save to temp file

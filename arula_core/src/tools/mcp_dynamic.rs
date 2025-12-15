@@ -11,8 +11,8 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
-// Import MCP_MANAGER
-use crate::tools::mcp::MCP_MANAGER;
+// Import MCP manager getter
+use crate::tools::mcp::get_mcp_manager;
 
 /// Represents a discovered MCP server
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ impl ServerMcpTool {
     }
 
     async fn call_mcp_tool(&self, tool_name: &str, parameters: Value) -> Result<Value, String> {
-        let client = MCP_MANAGER
+        let client = get_mcp_manager()
             .get_client(&self.server_info.server_id)
             .await
             .ok_or_else(|| format!("MCP server '{}' not available", self.server_info.server_id))?;
@@ -232,26 +232,29 @@ impl DynamicMcpRegistry {
     }
 }
 
-// Global dynamic MCP registry
-lazy_static::lazy_static! {
-    static ref DYNAMIC_MCP_REGISTRY: DynamicMcpRegistry = DynamicMcpRegistry::new();
+// Global dynamic MCP registry using OnceLock (Rust 1.70+)
+static DYNAMIC_MCP_REGISTRY: std::sync::OnceLock<DynamicMcpRegistry> = std::sync::OnceLock::new();
+
+/// Get the global dynamic MCP registry
+fn get_dynamic_mcp_registry() -> &'static DynamicMcpRegistry {
+    DYNAMIC_MCP_REGISTRY.get_or_init(|| DynamicMcpRegistry::new())
 }
 
 /// Initialize dynamic MCP tools and register them in the tool registry
 pub async fn initialize_dynamic_mcp_tools(config: &Config) -> Result<usize, String> {
-    DYNAMIC_MCP_REGISTRY.update_config(config.clone()).await
+    get_dynamic_mcp_registry().update_config(config.clone()).await
 }
 
 /// Get all discovered MCP servers
 pub async fn get_discovered_mcp_servers() -> Vec<DiscoveredMcpServer> {
-    DYNAMIC_MCP_REGISTRY.get_discovered_servers().await
+    get_dynamic_mcp_registry().get_discovered_servers().await
 }
 
 /// Register dynamic MCP tools in the provided tool registry
 pub async fn register_dynamic_mcp_tools(
     registry: &mut crate::api::agent::ToolRegistry,
 ) -> Result<usize, String> {
-    let server_tools = DYNAMIC_MCP_REGISTRY.get_server_tools().await;
+    let server_tools = get_dynamic_mcp_registry().get_server_tools().await;
 
     let mut registered_count = 0;
     for tool in server_tools {

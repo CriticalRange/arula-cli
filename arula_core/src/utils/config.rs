@@ -734,7 +734,9 @@ mod tests {
 
     #[test]
     fn test_config_default() {
-        std::env::remove_var("OPENAI_API_KEY");
+        unsafe {
+            std::env::remove_var("OPENAI_API_KEY");
+        }
         let config = Config::default();
 
         assert_eq!(config.active_provider, "openai");
@@ -745,11 +747,15 @@ mod tests {
 
     #[test]
     fn test_config_with_env_api_key() {
-        std::env::set_var("OPENAI_API_KEY", "test-key-123");
+        unsafe {
+            std::env::set_var("OPENAI_API_KEY", "test-key-123");
+        }
         let config = Config::default();
 
         assert_eq!(config.get_api_key(), "test-key-123");
-        std::env::remove_var("OPENAI_API_KEY");
+        unsafe {
+            std::env::remove_var("OPENAI_API_KEY");
+        }
     }
 
     #[test]
@@ -844,17 +850,17 @@ mod tests {
     #[test]
     fn test_get_config_path() {
         // Set a known HOME directory for testing
-        std::env::set_var("HOME", "/test/home");
+        unsafe { std::env::set_var("HOME", "/test/home"); }
         let config_path = Config::get_config_path();
 
         assert_eq!(config_path, "/test/home/.arula/config.json");
-        std::env::remove_var("HOME");
+        unsafe { std::env::remove_var("HOME"); }
     }
 
     #[test]
     fn test_get_config_path_no_home() {
         // Remove HOME environment variable
-        std::env::remove_var("HOME");
+        unsafe { std::env::remove_var("HOME"); }
         let config_path = Config::get_config_path();
 
         // Should fall back to current directory
@@ -876,7 +882,7 @@ mod tests {
         test_config.save_to_file(&config_path)?;
 
         // Temporarily override HOME to point to our test directory
-        std::env::set_var("HOME", temp_dir.path());
+        unsafe { std::env::set_var("HOME", temp_dir.path()); }
 
         // Load using load_or_default
         let loaded_config = Config::load_or_default()?;
@@ -886,7 +892,7 @@ mod tests {
         assert_eq!(loaded_config.get_api_url(), "custom-url");
         assert_eq!(loaded_config.get_api_key(), "custom-key");
 
-        std::env::remove_var("HOME");
+        unsafe { std::env::remove_var("HOME"); }
         Ok(())
     }
 
@@ -895,7 +901,7 @@ mod tests {
         let temp_dir = TempDir::new()?;
 
         // Set HOME to a directory without config file
-        std::env::set_var("HOME", temp_dir.path());
+        unsafe { std::env::set_var("HOME", temp_dir.path()); }
         std::env::remove_var("OPENAI_API_KEY");
 
         let config = Config::load_or_default()?;
@@ -906,7 +912,7 @@ mod tests {
         assert_eq!(config.get_api_url(), "https://api.openai.com/v1");
         assert_eq!(config.get_api_key(), "");
 
-        std::env::remove_var("HOME");
+        unsafe { std::env::remove_var("HOME"); }
         Ok(())
     }
 
