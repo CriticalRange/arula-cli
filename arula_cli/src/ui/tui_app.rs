@@ -1,11 +1,11 @@
 use anyhow::Result;
 use console::strip_ansi_codes;
 use crossterm::{
-    cursor::Show,
+    cursor::{Hide, MoveTo, Show},
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     style::Color,
-    terminal::{self, disable_raw_mode, enable_raw_mode},
+    terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType},
 };
 use ratatui::{
     backend::CrosstermBackend,
@@ -180,46 +180,103 @@ impl AppState {
 
     fn render_viewport(&self, f: &mut Frame) {
         let area = f.area();
-        let status_height = self.status_height();
-        let has_info_row = area.height > 1;
+
+        // Always reserve space for input and info at the bottom
+        let input_height = 1;
+        let info_height = 1;
+
+        // Calculate available space for status (above input and info)
+        let bottom_reserved = input_height + info_height;
+        let status_max_height = area.height.saturating_sub(bottom_reserved);
+
+        // Get actual status height, but clamp it to available space
+        let status_height = self.status_height().min(status_max_height);
+
+        // Build layout with input ALWAYS at the bottom
         let mut constraints = Vec::new();
+
+        // Status takes whatever space it needs (or is available)
         if status_height > 0 {
             constraints.push(Constraint::Length(status_height));
+        } else {
+            // If no status, add empty space to push input down
+            constraints.push(Constraint::Min(0));
         }
-        constraints.push(Constraint::Length(1)); // input row
-        if has_info_row {
-            constraints.push(Constraint::Length(1)); // info row
+
+        // Fill any remaining space (this ensures input stays at bottom)
+        if status_height + bottom_reserved < area.height {
+            constraints.push(Constraint::Min(0));
         }
+
+        // Input row (always present)
+        constraints.push(Constraint::Length(input_height));
+
+        // Info row (if we have space)
+        if area.height > 1 {
+            constraints.push(Constraint::Length(info_height));
+        }
+
+        // Create the layout
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints(constraints)
             .split(area);
 
-        let mut idx = 0;
-        if status_height > 0 {
-            self.render_status_box(f, chunks[idx]);
-            idx += 1;
+        // Render status if present
+        if status_height > 0 && !chunks.is_empty() {
+            self.render_status_box(f, chunks[0]);
         }
 
-        self.render_input(f, chunks[idx]);
-        idx += 1;
+        // Render input (always at bottom of its allocated space)
+        let input_idx = chunks.len().saturating_sub(2);
+        if input_idx < chunks.len() {
+            self.render_input(f, chunks[input_idx]);
+        }
 
-        if has_info_row && idx < chunks.len() {
-            self.render_info(f, chunks[idx]);
+        // Render info at very bottom
+        if !chunks.is_empty() {
+            let info_idx = chunks.len() - 1;
+            self.render_info(f, chunks[info_idx]);
         }
     }
 
     fn render_input(&self, f: &mut Frame, area: Rect) {
+        // Ensure area is valid
+        if area.height == 0 || area.width == 0 {
+            return;
+        }
+
+        // Clear the input area to prevent artifacts
+        f.render_widget(ratatui::widgets::Clear, area);
+
+        // Create input text with prompt
         let input_text = format!("▶ {}", self.input);
-        let input = Paragraph::new(input_text.as_str()).style(Style::default().fg(RColor::White));
-        // Removed Block::borders(TOP) to save space
+        let input = Paragraph::new(input_text.as_str())
+            .style(Style::default().fg(RColor::White))
+            .block(
+                ratatui::widgets::Block::default()
+                    .borders(ratatui::widgets::Borders::TOP)
+                    .border_style(Style::default().fg(RColor::DarkGray))
+            );
 
         f.render_widget(input, area);
 
-        // Calculate cursor X position based on char count
-        let cursor_x = area.x + 2 + self.input.chars().take(self.input_cursor).count() as u16;
-        // Cursor Y is just area.y because no border
-        f.set_cursor_position((cursor_x, area.y));
+        // Calculate cursor X position with bounds checking
+        let prompt_width = 2; // Width of "▶ "
+        let input_char_count = self.input.chars().take(self.input_cursor).count() as u16;
+
+        // Ensure cursor stays within the input area (minus border)
+        let max_cursor_x = area.width.saturating_sub(1); // Leave 1 char for border
+        let cursor_offset = input_char_count.min(max_cursor_x.saturating_sub(prompt_width));
+        let cursor_x = area.x + prompt_width + cursor_offset;
+
+        // Cursor Y is at the input line (accounting for top border)
+        let cursor_y = area.y;
+
+        // Only set cursor if it's within bounds
+        if cursor_x < area.x + area.width && cursor_y <= area.y + area.height {
+            f.set_cursor_position((cursor_x, cursor_y));
+        }
     }
 
     fn render_info(&self, f: &mut Frame, area: Rect) {
@@ -308,7 +365,11 @@ impl AppState {
         if self.is_waiting && !self.active_tools.is_empty() {
             height += 1;
         }
-        height
+
+        // Limit status height to prevent overflow
+        // We need at least 2 lines for input and info
+        let max_status_height = self.screen_height.saturating_sub(2);
+        height.min(max_status_height)
     }
 
     fn status_lines(&self) -> Vec<Line<'static>> {
@@ -379,7 +440,15 @@ impl AppState {
         if lines.is_empty() || area.height == 0 {
             return;
         }
-        let status = Paragraph::new(lines);
+
+        // Add a bottom border to separate status from input
+        let status = Paragraph::new(lines)
+            .block(
+                ratatui::widgets::Block::default()
+                    .borders(ratatui::widgets::Borders::BOTTOM)
+                    .border_style(Style::default().fg(RColor::DarkGray))
+            );
+
         f.render_widget(status, area);
     }
 }
@@ -452,6 +521,12 @@ impl TuiApp {
         let backend = CrosstermBackend::new(stdout);
         let (width, height) = terminal::size()?;
 
+        // Ensure we have a valid terminal size
+        if width == 0 || height == 0 {
+            disable_raw_mode()?;
+            return Err(anyhow::anyhow!("Terminal has zero size"));
+        }
+
         let viewport = Viewport::Inline(VIEWPORT_HEIGHT);
         let terminal = Terminal::with_options(backend, TerminalOptions { viewport })?;
         let viewport_height = VIEWPORT_HEIGHT;
@@ -464,6 +539,22 @@ impl TuiApp {
     }
 
     fn rebuild_terminal(&mut self, viewport_height: u16) -> Result<()> {
+        // Get current terminal size
+        let (_, screen_h) = terminal::size()?;
+
+        // Ensure viewport_height doesn't exceed screen height
+        let viewport_height = viewport_height.min(screen_h);
+
+        // Save current cursor state
+        let (cursor_x, cursor_y) = crossterm::cursor::position().unwrap_or((0, 0));
+
+        // Clear any pending input display
+        execute!(
+            io::stdout(),
+            Hide,
+            Clear(ClearType::CurrentLine)
+        )?;
+
         let stdout = io::stdout();
         let backend = CrosstermBackend::new(stdout);
         let options = TerminalOptions {
@@ -471,15 +562,32 @@ impl TuiApp {
         };
         self.terminal = Terminal::with_options(backend, options)?;
         self.viewport_height = viewport_height;
+
+        // Restore cursor position (ensure it's within screen bounds)
+        let cursor_y = cursor_y.min(screen_h - 1);
+        execute!(
+            io::stdout(),
+            MoveTo(cursor_x, cursor_y),
+            Show
+        )?;
+
         Ok(())
     }
 
     fn required_viewport_height(&self) -> u16 {
-        // Dynamic layout: status box (0-2 lines) + input + info row.
+        // Always reserve space for input + info at bottom (2 lines)
+        let bottom_reserved = 2;
+
+        // Add status height, but ensure we don't exceed screen
         let status_height = self.state.status_height();
-        let total = status_height.saturating_add(2);
-        let max_height = self.state.screen_height.max(1);
-        total.min(max_height).max(1)
+        let screen_height = self.state.screen_height.max(bottom_reserved);
+
+        // Status can take available space above the bottom reserved area
+        let max_status_height = screen_height.saturating_sub(bottom_reserved);
+        let actual_status_height = status_height.min(max_status_height);
+
+        // Total height = status (if any) + bottom reserved
+        actual_status_height + bottom_reserved
     }
 
     fn display_tool_name(name: &str) -> &str {
@@ -607,8 +715,13 @@ impl TuiApp {
 
             // Grow/shrink inline viewport to match current status/input needs.
             let needed_height = self.required_viewport_height();
+
+            // Only rebuild terminal if there's a significant change
             if needed_height != self.viewport_height {
+                // Use sync update to prevent flicker
+                execute!(io::stdout(), crossterm::terminal::BeginSynchronizedUpdate)?;
                 self.rebuild_terminal(needed_height)?;
+                execute!(io::stdout(), crossterm::terminal::EndSynchronizedUpdate)?;
                 redraw = true;
             }
             // Keep buffer in sync with terminal size so scrollback stays intact.
@@ -642,6 +755,10 @@ impl TuiApp {
                 // Add the message as if user typed it
                 self.state.add_user_message(&init_message);
                 self.state.last_ai_message = None;
+
+                // Clear input BEFORE setting waiting state
+                self.state.input.clear();
+                self.state.input_cursor = 0;
 
                 // Send to AI
                 self.state.is_waiting = true;

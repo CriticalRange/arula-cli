@@ -102,8 +102,14 @@ pub fn insert_history_lines(
     let viewport_top = screen_height.saturating_sub(viewport_height);
     let writer = terminal.backend_mut();
 
+    // Use synchronized update to prevent flicker
+    queue!(writer, crossterm::terminal::BeginSynchronizedUpdate)?;
+
     // Cache cursor position to restore later.
     let cursor_pos = crossterm::cursor::position().unwrap_or((0, viewport_top));
+
+    // Clear any current input to prevent interference
+    queue!(writer, crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine))?;
 
     // Limit scroll region to everything above the inline viewport (1-based coordinates).
     if viewport_top > 0 {
@@ -168,6 +174,7 @@ pub fn insert_history_lines(
     // Reset region/cursor.
     queue!(writer, ResetScrollRegion)?;
     queue!(writer, MoveTo(cursor_pos.0, cursor_pos.1))?;
+    queue!(writer, crossterm::terminal::EndSynchronizedUpdate)?;
     writer.flush()?;
     Ok(())
 }
