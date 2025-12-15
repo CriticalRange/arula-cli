@@ -1,7 +1,7 @@
 [package]
 name = "arula_cli"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["CriticalRange"]
 description = "Autonomous AI CLI with native terminal chat interface"
 
@@ -35,7 +35,6 @@ syntect = "5.0"
 termimad = "0.34"
 base64 = "0.22"
 rusty-tesseract = "1.1"
-lazy_static = "1.4"
 uuid = { version = "1.0", features = ["v4"] }
 # Temporary: for YAML to JSON migration (can be removed after migration)
 serde_yaml = "0.9"

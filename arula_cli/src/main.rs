@@ -70,7 +70,9 @@ async fn main() -> Result<()> {
 
     // Set debug environment variable if debug flag is enabled
     if cli.debug {
-        std::env::set_var("ARULA_DEBUG", "1");
+        unsafe {
+            std::env::set_var("ARULA_DEBUG", "1");
+        }
     }
 
     // Initialize global logger
