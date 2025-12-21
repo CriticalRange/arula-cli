@@ -19,7 +19,35 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-/// Read ARULA.md from ~/.arula/ directory
+/// Read the comprehensive system prompt from ARULA_SYSTEM_PROMPT.md
+/// This is the primary system prompt that defines ARULA's behavior
+fn read_base_system_prompt() -> Option<String> {
+    // Check multiple locations for the system prompt
+    let possible_paths = [
+        // Current directory (for development)
+        std::path::PathBuf::from("ARULA_SYSTEM_PROMPT.md"),
+        // Executable directory
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.join("ARULA_SYSTEM_PROMPT.md")))
+            .unwrap_or_default(),
+        // Home directory config
+        dirs::home_dir()
+            .map(|p| p.join(".arula").join("ARULA_SYSTEM_PROMPT.md"))
+            .unwrap_or_default(),
+    ];
+
+    for path in &possible_paths {
+        if path.exists() {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                return Some(content);
+            }
+        }
+    }
+    None
+}
+
+/// Read ARULA.md from ~/.arula/ directory (user customizations)
 fn read_global_arula_md() -> Option<String> {
     let home_dir = dirs::home_dir()?;
     let global_arula_path = home_dir.join(".arula").join("ARULA.md");
@@ -31,7 +59,7 @@ fn read_global_arula_md() -> Option<String> {
     }
 }
 
-/// Read ARULA.md from current directory
+/// Read ARULA.md from current directory (project-specific context)
 fn read_local_arula_md() -> Option<String> {
     let local_arula_path = std::path::Path::new("ARULA.md");
 
@@ -42,24 +70,67 @@ fn read_local_arula_md() -> Option<String> {
     }
 }
 
-/// Build system prompt with ARULA.md content
+/// Default base prompt if ARULA_SYSTEM_PROMPT.md is not found
+const DEFAULT_BASE_PROMPT: &str = r#"# ARULA - Autonomous AI Interface
+
+You are ARULA, an advanced AI coding assistant designed for software engineering tasks.
+
+## CORE PRINCIPLES
+
+1. **Be concise and direct** - Keep responses short unless detail is requested
+2. **Use tools for actions** - Don't output code, use tools to implement changes  
+3. **Read before editing** - Always understand existing code before making changes
+4. **Follow conventions** - Match existing code style, patterns, and libraries
+5. **Verify your work** - Run tests/lint when available
+
+## TOOL USAGE
+
+- Call tools directly when actions are needed
+- Read files before editing them
+- Never commit unless explicitly asked
+- Batch independent operations when possible
+
+## CODE QUALITY
+
+- Never assume libraries are available - check first
+- Never add comments unless asked
+- Never expose secrets or credentials
+- Ensure code is immediately runnable
+
+## COMMUNICATION
+
+- Be technical and to the point
+- Don't start with "Great", "Certainly", "Sure"
+- Provide brief summaries after completing tasks
+- Don't end responses with questions
+"#;
+
+/// Build system prompt with layered content
+/// Priority: Base System Prompt -> Global ARULA.md -> Local ARULA.md
 fn build_system_prompt_with_arula() -> String {
     let mut prompt_parts = Vec::new();
 
-    // Base ARULA prompt
-    prompt_parts.push("You are ARULA, an Autonomous AI Interface assistant. You help users with coding, shell commands, and general software development tasks. Be concise, helpful, and provide practical solutions.".to_string());
+    // 1. Base system prompt (comprehensive or default)
+    if let Some(base_prompt) = read_base_system_prompt() {
+        prompt_parts.push(base_prompt);
+    } else {
+        prompt_parts.push(DEFAULT_BASE_PROMPT.to_string());
+    }
 
-    // Add global ARULA.md from ~/.arula/
+    // 2. Add global ARULA.md from ~/.arula/ (user preferences)
     if let Some(global_arula) = read_global_arula_md() {
         prompt_parts.push(format!(
-            "\n## Global Project Instructions\n{}",
+            "\n====\n\n## USER PREFERENCES\n\nThe following preferences are set globally by the user:\n\n{}",
             global_arula
         ));
     }
 
-    // Add local ARULA.md from current directory
+    // 3. Add local ARULA.md from current directory (project context)
     if let Some(local_arula) = read_local_arula_md() {
-        prompt_parts.push(format!("\n## Current Project Context\n{}", local_arula));
+        prompt_parts.push(format!(
+            "\n====\n\n## PROJECT CONTEXT\n\nThe following context is specific to this project:\n\n{}", 
+            local_arula
+        ));
     }
 
     prompt_parts.join("\n")
@@ -593,7 +664,12 @@ impl SessionManager {
     /// Fetch Ollama models asynchronously and cache them.
     pub fn fetch_ollama_models(&self) {
         let cache = self.model_cache.clone();
-        let api_url = self.config.get_api_url();
+        // Get Ollama-specific URL, not the active provider's URL
+        // This is important when the active provider is different (e.g., Z.AI)
+        let api_url = self.config.providers
+            .get("ollama")
+            .and_then(|p| p.api_url.clone())
+            .unwrap_or_else(|| "http://localhost:11434".to_string());
         self.runtime.spawn(async move {
             let fetcher = OllamaFetcher;
             let models = fetcher.fetch_models("", Some(&api_url)).await;

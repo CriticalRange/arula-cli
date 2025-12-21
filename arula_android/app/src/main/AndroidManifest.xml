@@ -22,14 +22,14 @@
         android:label="@string/app_name"
         android:roundIcon="@drawable/ic_terminal"
         android:supportsRtl="true"
-        android:theme="@style/Theme.ArulaTerminal.Neon"
+        android:theme="@style/Theme.ArulaTerminal"
         android:usesCleartextTraffic="true"
         tools:targetApi="31">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.ArulaTerminal.Neon"
+            android:theme="@style/Theme.ArulaTerminal"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

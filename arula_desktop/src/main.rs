@@ -90,6 +90,8 @@ struct App {
     show_conversations: bool,
     /// Animation state for conversations sidebar (0.0 = hidden, 1.0 = visible)
     conversations_sidebar_animation: f32,
+    /// Persistent clipboard for Wayland compatibility
+    clipboard: Option<arboard::Clipboard>,
 }
 
 /// Application messages.
@@ -207,17 +209,20 @@ fn build_enhanced_system_prompt(base_prompt: &str) -> String {
     // Start with base prompt
     prompt_parts.push(base_prompt.to_string());
 
-    // Add global ARULA.md from ~/.arula/
+    // Add global ARULA.md from ~/.arula/ (user preferences)
     if let Some(global_arula) = read_global_arula_md() {
         prompt_parts.push(format!(
-            "\n## Global Project Instructions\n{}",
+            "\n====\n\n## USER PREFERENCES\n\nThe following preferences are set globally by the user:\n\n{}",
             global_arula
         ));
     }
 
-    // Add local ARULA.md from current directory
+    // Add local ARULA.md from current directory (project context)
     if let Some(local_arula) = read_local_arula_md() {
-        prompt_parts.push(format!("\n## Current Project Context\n{}", local_arula));
+        prompt_parts.push(format!(
+            "\n====\n\n## PROJECT CONTEXT\n\nThe following context is specific to this project:\n\n{}", 
+            local_arula
+        ));
     }
 
     prompt_parts.join("\n")
@@ -295,6 +300,7 @@ impl App {
             saved_conversations: Vec::new(),
             show_conversations: false,
             conversations_sidebar_animation: 0.0,
+            clipboard: arboard::Clipboard::new().ok(),
         })
     }
 
@@ -343,6 +349,7 @@ impl App {
             saved_conversations: Vec::new(),
             show_conversations: false,
             conversations_sidebar_animation: 0.0,
+            clipboard: arboard::Clipboard::new().ok(),
         }
     }
 
@@ -657,8 +664,8 @@ impl App {
                 self.error_expanded = !self.error_expanded;
             }
             Message::CopyToClipboard(text) => {
-                // Copy text to clipboard using arboard
-                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                // Use persistent clipboard to prevent Wayland "dropped too quickly" issue
+                if let Some(ref mut clipboard) = self.clipboard {
                     let _ = clipboard.set_text(text);
                 }
             }
@@ -2476,6 +2483,7 @@ impl App {
         let is_shell = tool_type == ToolType::Shell;
         let is_edit = tool_type == ToolType::EditFile;
         let is_read = tool_type == ToolType::ReadFile;
+        let is_search = tool_type == ToolType::Search || tool_type == ToolType::WebSearch;
         let _is_list = tool_type == ToolType::ListDirectory;
 
         // Check if operation completed (has ✓ or ✗)
@@ -2483,227 +2491,141 @@ impl App {
         let has_error = content.contains('✗');
 
         // Tool-specific theming: (accent_color, header_bg, content_bg, icon, label)
+        // Using muted, neutral colors with subtle tints for a calmer UI
+        let neutral_header_bg = Color {
+            r: 0.10,
+            g: 0.10,
+            b: 0.11,
+            a: fade_opacity * 0.95,
+        };
+        let neutral_terminal_bg = Color {
+            r: 0.06,
+            g: 0.06,
+            b: 0.07,
+            a: fade_opacity * 0.95,
+        };
+
         let (bubble_accent_color, header_bg_color, terminal_bg_color, tool_icon, header_label) =
             match tool_type {
                 ToolType::Shell => (
                     Color {
-                        r: 0.6,
-                        g: 0.5,
-                        b: 0.9,
-                        a: fade_opacity,
-                    }, // Purple
-                    Color {
-                        r: 0.12,
-                        g: 0.10,
-                        b: 0.18,
-                        a: fade_opacity * 0.98,
-                    },
-                    Color {
-                        r: 0.06,
-                        g: 0.05,
-                        b: 0.10,
-                        a: fade_opacity * 0.98,
-                    },
+                        r: 0.55,
+                        g: 0.55,
+                        b: 0.65,
+                        a: fade_opacity * 0.85,
+                    }, // Muted grayish-purple
+                    neutral_header_bg,
+                    neutral_terminal_bg,
                     bootstrap::terminal(),
-                    "Terminal",
+                    "",
                 ),
                 ToolType::ReadFile => (
                     Color {
-                        r: 0.4,
-                        g: 0.7,
-                        b: 1.0,
-                        a: fade_opacity,
-                    }, // Blue
-                    Color {
-                        r: 0.08,
-                        g: 0.12,
-                        b: 0.18,
-                        a: fade_opacity * 0.98,
-                    },
-                    Color {
-                        r: 0.04,
-                        g: 0.08,
-                        b: 0.12,
-                        a: fade_opacity * 0.98,
-                    },
+                        r: 0.5,
+                        g: 0.55,
+                        b: 0.65,
+                        a: fade_opacity * 0.85,
+                    }, // Muted grayish-blue
+                    neutral_header_bg,
+                    neutral_terminal_bg,
                     bootstrap::file_earmark_text(),
-                    "Read File",
+                    "Read",
                 ),
                 ToolType::WriteFile => (
                     Color {
-                        r: 0.4,
-                        g: 0.9,
-                        b: 0.5,
-                        a: fade_opacity,
-                    }, // Green
-                    Color {
-                        r: 0.08,
-                        g: 0.15,
-                        b: 0.10,
-                        a: fade_opacity * 0.98,
-                    },
-                    Color {
-                        r: 0.04,
-                        g: 0.10,
-                        b: 0.06,
-                        a: fade_opacity * 0.98,
-                    },
+                        r: 0.5,
+                        g: 0.6,
+                        b: 0.55,
+                        a: fade_opacity * 0.85,
+                    }, // Muted grayish-green
+                    neutral_header_bg,
+                    neutral_terminal_bg,
                     bootstrap::file_earmark_plus(),
-                    "Write File",
+                    "Wrote",
                 ),
                 ToolType::EditFile => (
                     Color {
-                        r: 1.0,
-                        g: 0.7,
-                        b: 0.3,
-                        a: fade_opacity,
-                    }, // Orange
-                    Color {
-                        r: 0.18,
-                        g: 0.12,
-                        b: 0.06,
-                        a: fade_opacity * 0.98,
-                    },
-                    Color {
-                        r: 0.12,
-                        g: 0.08,
-                        b: 0.04,
-                        a: fade_opacity * 0.98,
-                    },
+                        r: 0.65,
+                        g: 0.58,
+                        b: 0.5,
+                        a: fade_opacity * 0.85,
+                    }, // Muted grayish-orange
+                    neutral_header_bg,
+                    neutral_terminal_bg,
                     bootstrap::file_earmark_diff(),
-                    "Edit File",
+                    "Edited",
                 ),
                 ToolType::ListDirectory => (
                     Color {
-                        r: 0.3,
-                        g: 0.8,
-                        b: 0.8,
-                        a: fade_opacity,
-                    }, // Teal
-                    Color {
-                        r: 0.06,
-                        g: 0.14,
-                        b: 0.14,
-                        a: fade_opacity * 0.98,
-                    },
-                    Color {
-                        r: 0.04,
-                        g: 0.10,
-                        b: 0.10,
-                        a: fade_opacity * 0.98,
-                    },
+                        r: 0.5,
+                        g: 0.58,
+                        b: 0.58,
+                        a: fade_opacity * 0.85,
+                    }, // Muted grayish-teal
+                    neutral_header_bg,
+                    neutral_terminal_bg,
                     bootstrap::folder_fill(),
-                    "List Directory",
+                    "Listed",
                 ),
                 ToolType::Search => (
                     Color {
-                        r: 0.5,
-                        g: 0.8,
-                        b: 1.0,
-                        a: fade_opacity,
-                    }, // Cyan
-                    Color {
-                        r: 0.08,
-                        g: 0.12,
-                        b: 0.16,
-                        a: fade_opacity * 0.98,
-                    },
-                    Color {
-                        r: 0.04,
-                        g: 0.08,
-                        b: 0.12,
-                        a: fade_opacity * 0.98,
-                    },
+                        r: 0.52,
+                        g: 0.58,
+                        b: 0.62,
+                        a: fade_opacity * 0.85,
+                    }, // Muted grayish-cyan
+                    neutral_header_bg,
+                    neutral_terminal_bg,
                     bootstrap::search(),
-                    "Search",
+                    "Searched",
                 ),
                 ToolType::WebSearch => (
                     Color {
-                        r: 0.4,
-                        g: 0.6,
-                        b: 1.0,
-                        a: fade_opacity,
-                    }, // Deep Blue
-                    Color {
-                        r: 0.06,
-                        g: 0.08,
-                        b: 0.16,
-                        a: fade_opacity * 0.98,
-                    },
-                    Color {
-                        r: 0.04,
-                        g: 0.06,
-                        b: 0.12,
-                        a: fade_opacity * 0.98,
-                    },
+                        r: 0.5,
+                        g: 0.55,
+                        b: 0.62,
+                        a: fade_opacity * 0.85,
+                    }, // Muted grayish-blue
+                    neutral_header_bg,
+                    neutral_terminal_bg,
                     bootstrap::globe(),
-                    "Web Search",
+                    "Searched Web",
                 ),
                 ToolType::Mcp => (
                     Color {
-                        r: 0.8,
-                        g: 0.5,
-                        b: 0.9,
-                        a: fade_opacity,
-                    }, // Magenta
-                    Color {
-                        r: 0.14,
-                        g: 0.08,
-                        b: 0.16,
-                        a: fade_opacity * 0.98,
-                    },
-                    Color {
-                        r: 0.10,
-                        g: 0.05,
-                        b: 0.12,
-                        a: fade_opacity * 0.98,
-                    },
+                        r: 0.58,
+                        g: 0.52,
+                        b: 0.6,
+                        a: fade_opacity * 0.85,
+                    }, // Muted grayish-purple
+                    neutral_header_bg,
+                    neutral_terminal_bg,
                     bootstrap::plug_fill(),
-                    "MCP Tool",
+                    "Ran MCP",
                 ),
                 ToolType::Vision => (
                     Color {
-                        r: 0.9,
-                        g: 0.6,
-                        b: 0.8,
-                        a: fade_opacity,
-                    }, // Pink
-                    Color {
-                        r: 0.16,
-                        g: 0.10,
-                        b: 0.14,
-                        a: fade_opacity * 0.98,
-                    },
-                    Color {
-                        r: 0.12,
-                        g: 0.06,
-                        b: 0.10,
-                        a: fade_opacity * 0.98,
-                    },
+                        r: 0.6,
+                        g: 0.55,
+                        b: 0.58,
+                        a: fade_opacity * 0.85,
+                    }, // Muted grayish-pink
+                    neutral_header_bg,
+                    neutral_terminal_bg,
                     bootstrap::eye_fill(),
-                    "Vision",
+                    "Viewed",
                 ),
                 ToolType::Other => (
                     Color {
-                        r: 0.6,
-                        g: 0.6,
-                        b: 0.6,
-                        a: fade_opacity,
-                    }, // Gray
-                    Color {
-                        r: 0.12,
-                        g: 0.12,
-                        b: 0.12,
-                        a: fade_opacity * 0.98,
-                    },
-                    Color {
-                        r: 0.08,
-                        g: 0.08,
-                        b: 0.08,
-                        a: fade_opacity * 0.98,
-                    },
+                        r: 0.55,
+                        g: 0.55,
+                        b: 0.55,
+                        a: fade_opacity * 0.85,
+                    }, // Neutral gray
+                    neutral_header_bg,
+                    neutral_terminal_bg,
                     bootstrap::gear_fill(),
-                    "Tool",
+                    "Ran",
                 ),
             };
 
@@ -2766,19 +2688,20 @@ impl App {
             bootstrap::circle()
         };
 
+        // Muted status colors - less vibrant green/red
         let status_color = if has_checkmark {
             Color {
-                r: 0.4,
-                g: 1.0,
-                b: 0.5,
-                a: fade_opacity,
+                r: 0.5,
+                g: 0.7,
+                b: 0.55,
+                a: fade_opacity * 0.9,
             }
         } else if has_error {
             Color {
-                r: 1.0,
-                g: 0.4,
-                b: 0.4,
-                a: fade_opacity,
+                r: 0.75,
+                g: 0.5,
+                b: 0.5,
+                a: fade_opacity * 0.9,
             }
         } else {
             bubble_accent_color
@@ -2805,19 +2728,30 @@ impl App {
 
         // Build header row - chevron goes on the RIGHT side (after status icon)
         // ReadFile doesn't get a chevron since it's not expandable
+        // Shell commands don't show a label, just the icon and command
         let mut header_row = row![
             tool_icon
                 .size(14)
                 .style(move |_| iced::widget::text::Style {
                     color: Some(bubble_accent_color)
                 }),
-            Space::new().width(Length::Fixed(6.0)),
-            text(header_label)
-                .size(13)
-                .style(move |_| iced::widget::text::Style {
-                    color: Some(bubble_accent_color)
-                }),
-            Space::new().width(Length::Fixed(8.0)),
+        ]
+        .align_y(iced::Alignment::Center);
+
+        // Only add label if not empty (shell commands have empty label)
+        if !header_label.is_empty() {
+            header_row = header_row.push(Space::new().width(Length::Fixed(6.0)));
+            header_row = header_row.push(
+                text(header_label)
+                    .size(13)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(bubble_accent_color)
+                    }),
+            );
+        }
+
+        header_row = header_row.push(Space::new().width(Length::Fixed(8.0)));
+        header_row = header_row.push(
             text(header_detail)
                 .size(12)
                 .font(Font::MONOSPACE)
@@ -2827,15 +2761,16 @@ impl App {
                         ..pal.text
                     })
                 }),
-            Space::new().width(Length::Fill),
+        );
+        header_row = header_row.push(Space::new().width(Length::Fill));
+        header_row = header_row.push(
             status_icon
                 .size(14)
                 .style(move |_| iced::widget::text::Style {
                     color: Some(status_color)
                 }),
-        ]
-        .align_y(iced::Alignment::Center)
-        .width(Length::Fill);
+        );
+        header_row = header_row.width(Length::Fill);
 
         // Add chevron on right side for expandable tools (not read file)
         if !is_read {
@@ -2919,47 +2854,51 @@ impl App {
                 a: content_opacity,
             }; // White command
 
-            // Result color with glow effect
+            // Result color - muted tones
             let result_glow_color = if has_checkmark {
                 Color {
-                    r: 0.4,
-                    g: 1.0,
-                    b: 0.5,
-                    a: content_opacity,
-                } // Bright green glow
+                    r: 0.55,
+                    g: 0.72,
+                    b: 0.58,
+                    a: content_opacity * 0.9,
+                } // Muted green
             } else if has_error {
                 Color {
-                    r: 1.0,
-                    g: 0.4,
-                    b: 0.4,
-                    a: content_opacity,
-                } // Bright red glow
+                    r: 0.75,
+                    g: 0.52,
+                    b: 0.52,
+                    a: content_opacity * 0.9,
+                } // Muted red
             } else {
                 Color {
-                    r: 0.7,
-                    g: 0.7,
-                    b: 0.7,
-                    a: content_opacity,
-                } // Gray
+                    r: 0.6,
+                    g: 0.6,
+                    b: 0.6,
+                    a: content_opacity * 0.85,
+                } // Neutral gray
             };
 
-            // Command line with green prompt and white command
-            let command_row = row![
-                text(prompt_prefix)
-                    .size(13)
-                    .font(Font::MONOSPACE)
-                    .style(move |_| iced::widget::text::Style {
-                        color: Some(prompt_color)
-                    }),
-                text(command_display.clone())
-                    .size(13)
-                    .font(Font::MONOSPACE)
-                    .style(move |_| iced::widget::text::Style {
-                        color: Some(command_color)
-                    })
-            ];
-
-            let mut terminal_column = column![command_row].spacing(4);
+            // Command line with prompt and command (skip for search tools - already in header)
+            let mut terminal_column: iced::widget::Column<'_, Message> = if is_search {
+                // For search tools, skip the command row since it's shown in the header
+                column![].spacing(4)
+            } else {
+                let command_row = row![
+                    text(prompt_prefix)
+                        .size(13)
+                        .font(Font::MONOSPACE)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(prompt_color)
+                        }),
+                    text(command_display.clone())
+                        .size(13)
+                        .font(Font::MONOSPACE)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(command_color)
+                        })
+                ];
+                column![command_row].spacing(4)
+            };
 
             // Check for streaming bash output lines first (keyed by tool_call_id)
             let streaming_lines: Option<&Vec<(String, bool)>> = message
@@ -2969,15 +2908,15 @@ impl App {
 
             if let Some(lines) = streaming_lines {
                 // Use streaming lines - show each with proper color
-                // stdout = green, stderr = orange/red
+                // stdout = muted green, stderr = muted orange
                 for (line, is_stderr) in lines.iter() {
                     let line_color = if *is_stderr {
                         Color {
-                            r: 1.0,
-                            g: 0.6,
-                            b: 0.4,
-                            a: content_opacity,
-                        } // Orange for stderr
+                            r: 0.72,
+                            g: 0.55,
+                            b: 0.48,
+                            a: content_opacity * 0.9,
+                        } // Muted orange for stderr
                     } else {
                         result_glow_color
                     };
@@ -3048,6 +2987,22 @@ impl App {
                         }
                     }
                 }
+            } else if is_shell && !has_checkmark && !has_error {
+                // Shell command running but no output yet - show a running indicator
+                let running_color = Color {
+                    r: 0.6,
+                    g: 0.6,
+                    b: 0.65,
+                    a: content_opacity * 0.8,
+                };
+                terminal_column = terminal_column.push(
+                    text("Running...")
+                        .size(12)
+                        .font(Font::MONOSPACE)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(running_color),
+                        }),
+                );
             }
 
             // Wrap in container with tool-themed background
@@ -4205,65 +4160,133 @@ impl App {
             .width(Length::Fill)
             .into()
         } else {
-            // Show model list as buttons
-            let mut model_col = column![].spacing(4).width(Length::Fill);
-            for model in &self.model_list {
-                let model_name = model.clone();
-                let model_display = model.clone();
-                let is_selected = model == &self.config_form.model;
-                let model_btn = button(
-                    row![
-                        bootstrap::check_lg()
-                            .size(14)
-                            .style(move |_| iced::widget::text::Style {
-                                color: Some(if is_selected {
-                                    pal.accent
-                                } else {
-                                    Color::TRANSPARENT
-                                })
-                            }),
-                        Space::new().width(Length::Fixed(8.0)),
-                        text(model_display)
-                            .size(13)
-                            .style(move |_| iced::widget::text::Style {
-                                color: Some(pal.text)
-                            }),
-                    ]
-                    .align_y(iced::Alignment::Center),
-                )
-                .on_press(Message::SelectModel(model_name))
-                .padding([10, 14])
-                .width(Length::Fill)
-                .style(move |_theme, status| {
-                    let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
-                    iced::widget::button::Style {
-                        background: Some(Background::Color(if is_selected {
-                            Color {
-                                a: 0.2,
-                                ..pal.accent
-                            }
-                        } else if is_hovered {
-                            Color { a: 0.1, ..pal.text }
-                        } else {
-                            Color::TRANSPARENT
-                        })),
-                        border: Border {
-                            radius: 8.0.into(),
-                            width: if is_selected { 1.0 } else { 0.0 },
-                            color: Color {
-                                a: 0.3,
-                                ..pal.accent
-                            },
-                        },
-                        text_color: pal.text,
-                        ..Default::default()
+            // Check if the list contains error/warning messages (starts with ⚠️)
+            let has_errors = self.model_list.iter().any(|m| m.starts_with("⚠️"));
+            
+            if has_errors {
+                // Display error messages as non-selectable text
+                let mut error_col = column![].spacing(8).width(Length::Fill);
+                for message in &self.model_list {
+                    if message.starts_with("⚠️") {
+                        // Create an owned String from the trimmed message to avoid lifetime issues
+                        let error_text = message.trim_start_matches("⚠️").trim().to_string();
+                        error_col = error_col.push(
+                            container(
+                                row![
+                                    bootstrap::exclamation_triangle_fill()
+                                        .size(16)
+                                        .style(move |_| iced::widget::text::Style {
+                                            color: Some(pal.danger)
+                                        }),
+                                    Space::new().width(Length::Fixed(8.0)),
+                                    text(error_text)
+                                        .size(13)
+                                        .style(move |_| iced::widget::text::Style {
+                                            color: Some(pal.danger)
+                                        }),
+                                ]
+                                .align_y(iced::Alignment::Center)
+                            )
+                            .padding([12, 16])
+                            .width(Length::Fill)
+                            .style(move |_| container::Style {
+                                background: Some(Background::Color(Color {
+                                    a: 0.1,
+                                    ..pal.danger
+                                })),
+                                border: Border {
+                                    radius: 8.0.into(),
+                                    width: 1.0,
+                                    color: Color {
+                                        a: 0.2,
+                                        ..pal.danger
+                                    },
+                                },
+                                ..Default::default()
+                            })
+                        );
                     }
-                });
-                model_col = model_col.push(model_btn);
-            }
-            iced::widget::scrollable(model_col)
-                .height(Length::Fill)
+                }
+                
+                // Add helpful text
+                error_col = error_col.push(Space::new().height(Length::Fixed(8.0)));
+                error_col = error_col.push(
+                    text("Check your provider settings and try again.")
+                        .size(12)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(pal.muted)
+                        })
+                );
+                
+                column![
+                    Space::new().height(Length::Fixed(20.0)),
+                    error_col,
+                    Space::new().height(Length::Fill),
+                ]
+                .align_x(iced::Alignment::Center)
+                .width(Length::Fill)
                 .into()
+            } else {
+                // Show model list as buttons
+                let mut model_col = column![].spacing(4).width(Length::Fill);
+                for model in &self.model_list {
+                    let model_name = model.clone();
+                    let model_display = model.clone();
+                    let is_selected = model == &self.config_form.model;
+                    let model_btn = button(
+                        row![
+                            bootstrap::check_lg()
+                                .size(14)
+                                .style(move |_| iced::widget::text::Style {
+                                    color: Some(if is_selected {
+                                        pal.accent
+                                    } else {
+                                        Color::TRANSPARENT
+                                    })
+                                }),
+                            Space::new().width(Length::Fixed(8.0)),
+                            text(model_display)
+                                .size(13)
+                                .style(move |_| iced::widget::text::Style {
+                                    color: Some(pal.text)
+                                }),
+                        ]
+                        .align_y(iced::Alignment::Center),
+                    )
+                    .on_press(Message::SelectModel(model_name))
+                    .padding([10, 14])
+                    .width(Length::Fill)
+                    .style(move |_theme, status| {
+                        let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                        iced::widget::button::Style {
+                            background: Some(Background::Color(if is_selected {
+                                Color {
+                                    a: 0.2,
+                                    ..pal.accent
+                                }
+                            } else if is_hovered {
+                                Color { a: 0.1, ..pal.text }
+                            } else {
+                                Color::TRANSPARENT
+                            })),
+                            border: Border {
+                                radius: 8.0.into(),
+                                width: if is_selected { 1.0 } else { 0.0 },
+                                color: Color {
+                                    a: 0.3,
+                                    ..pal.accent
+                                },
+                            },
+                            text_color: pal.text,
+                            ..Default::default()
+                        }
+                    });
+                    model_col = model_col.push(model_btn);
+                }
+                iced::widget::scrollable(model_col)
+                    .height(Length::Fill)
+                    .into()
+            }
         };
 
         let content = container(content_items)

@@ -120,6 +120,14 @@ impl Tool for FileReadTool {
         if let Ok(mmap) = unsafe { MmapOptions::new().map(&file) } {
             // Use memmap2 for efficient reading
             let content = if let (Some(start), Some(end)) = (start_line, end_line) {
+                // Validate line range
+                if start > end {
+                    return Err(format!(
+                        "Invalid line range: start_line ({}) cannot be greater than end_line ({})",
+                        start, end
+                    ));
+                }
+                
                 // For line range with memmap, we need to count lines
                 let lines: Vec<&str> = std::str::from_utf8(&mmap)
                     .map_err(|e| format!("Invalid UTF-8 in file: {}", e))?

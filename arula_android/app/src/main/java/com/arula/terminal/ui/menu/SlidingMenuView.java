@@ -1,75 +1,105 @@
 package com.arula.terminal.ui.menu;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Path;
-import android.graphics.RectF;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.DecelerateInterpolator;
+import android.widget.ArrayAdapter;
+import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
+import android.widget.SeekBar;
+import android.widget.Spinner;
+import android.widget.Switch;
+import android.widget.TextView;
+import android.widget.AdapterView;
 import androidx.annotation.Nullable;
 
 import com.arula.terminal.R;
+import com.arula.terminal.SettingsManager;
 import com.arula.terminal.ui.animation.SpringAnimation;
-import com.arula.terminal.ui.canvas.LiquidMenuBackground;
 
 /**
- * Sliding menu with liquid background and spring animations
- * Replicates the desktop version's menu system
+ * Full-screen overlay menu with liquid expanding background
+ * Matches desktop version with submenu slide navigation and functional settings
  */
 public class SlidingMenuView extends FrameLayout {
     public enum MenuState {
         CLOSED,
-        OPENING,
-        OPEN,
-        CLOSING
+        ANIMATING,
+        OPEN
     }
 
     public enum MenuPage {
         MAIN,
-        CONVERSATIONS,
-        SETTINGS,
+        PROVIDER,
+        BEHAVIOR,
+        APPEARANCE,
         ABOUT
     }
 
     private MenuState currentState = MenuState.CLOSED;
     private MenuPage currentPage = MenuPage.MAIN;
 
-    // Animation components
-    private SpringAnimation menuSpring;
-    private SpringAnimation pageSpring;
-    private ValueAnimator menuAnimator;
+    // Spring animation
+    private SpringAnimation spring;
+    private ValueAnimator animator;
     private ValueAnimator pageAnimator;
 
-    // Visual components
-    private LiquidMenuBackground liquidBackground;
+    // Drawing
+    private Paint circlePaint;
+    private int backgroundColor;
+
+    private static final float ANCHOR_X = 40f;
+    private float anchorY;
+    private float maxRadius;
+
+    // Page transition
+    private float pageProgress = 0f;
+    private float screenWidth = 0f;
+
+    // Content views
     private View menuContent;
     private ViewGroup mainMenuContainer;
-    private ViewGroup conversationsContainer;
-    private ViewGroup settingsContainer;
-    private ViewGroup aboutContainer;
+    private ViewGroup submenuContainer;
+    private ImageButton closeButton;
+    private View backButton;
+    private View menuButton;
 
-    // Animation parameters
-    private float menuPosition = 0f; // 0 = closed, 1 = open
-    private float pagePosition = 0f; // For page transitions
-    private float menuWidth = 0f;
-    private float pageSlideDistance = 0f;
+    // Settings manager
+    private SettingsManager settingsManager;
 
-    // Visual settings
-    private int backgroundColor;
-    private int accentColor;
-    private Paint overlayPaint;
-    private Path clipPath;
-    private RectF clipBounds;
+    // Settings UI elements
+    private Spinner providerSpinner;
+    private TextView modelName;
+    private EditText apiKeyInput;
+    private CheckBox thinkingModeCheckbox;
+    private EditText endpointInput;
+
+    private EditText systemPromptInput;
+    private SeekBar temperatureSeekBar;
+    private TextView temperatureLabel;
+    private EditText maxTokensInput;
+    private Switch streamingSwitch;
+
+    private Switch livingBackgroundSwitch;
 
     public interface MenuListener {
         void onMenuOpened();
+
         void onMenuClosed();
+
         void onPageChanged(MenuPage page);
     }
 
@@ -91,265 +121,649 @@ public class SlidingMenuView extends FrameLayout {
     }
 
     private void init() {
+        setWillNotDraw(false);
+
+        spring = new SpringAnimation();
         backgroundColor = getContext().getColor(R.color.neon_background);
-        accentColor = getContext().getColor(R.color.neon_accent);
 
-        // Initialize animations
-        menuSpring = new SpringAnimation(250f, 0.85f);
-        pageSpring = new SpringAnimation(200f, 0.9f);
+        circlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        circlePaint.setStyle(Paint.Style.FILL);
 
-        // Initialize visual components
-        overlayPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        overlayPaint.setColor(backgroundColor);
-        clipPath = new Path();
-        clipBounds = new RectF();
-
-        // Create liquid background
-        liquidBackground = new LiquidMenuBackground(getContext());
-        addView(liquidBackground, new LayoutParams(
-            LayoutParams.MATCH_PARENT,
-            LayoutParams.MATCH_PARENT
-        ));
+        // Initialize settings manager
+        settingsManager = new SettingsManager(getContext());
 
         // Inflate menu content
         LayoutInflater.from(getContext()).inflate(R.layout.sliding_menu_content, this, true);
         menuContent = findViewById(R.id.menuContent);
         mainMenuContainer = findViewById(R.id.mainMenuContainer);
-        conversationsContainer = findViewById(R.id.conversationsContainer);
-        settingsContainer = findViewById(R.id.settingsContainer);
-        aboutContainer = findViewById(R.id.aboutContainer);
+        submenuContainer = findViewById(R.id.submenuContainer);
+        closeButton = findViewById(R.id.closeMenuButton);
+        backButton = findViewById(R.id.backButton);
 
-        // Initially hide
+        // Setup close button
+        if (closeButton != null) {
+            closeButton.setOnClickListener(v -> closeMenu());
+        }
+
+        // Setup back button
+        if (backButton != null) {
+            backButton.setOnClickListener(v -> navigateToMain());
+        }
+
+        // Setup category buttons
+        setupCategoryButtons();
+
+        // Setup settings UI elements
+        setupSettingsUI();
+
+        // Initially hidden
         setVisibility(View.GONE);
-        setAlpha(0f);
+        if (menuContent != null) {
+            menuContent.setAlpha(0f);
+        }
+    }
+
+    private void setupCategoryButtons() {
+        View btnProvider = findViewById(R.id.btnProvider);
+        View btnBehavior = findViewById(R.id.btnBehavior);
+        View btnAppearance = findViewById(R.id.btnAppearance);
+
+        if (btnProvider != null) {
+            btnProvider.setOnClickListener(v -> navigateToPage(MenuPage.PROVIDER));
+        }
+        if (btnBehavior != null) {
+            btnBehavior.setOnClickListener(v -> navigateToPage(MenuPage.BEHAVIOR));
+        }
+        if (btnAppearance != null) {
+            btnAppearance.setOnClickListener(v -> navigateToPage(MenuPage.APPEARANCE));
+        }
+    }
+
+    private void setupSettingsUI() {
+        // Provider settings
+        providerSpinner = findViewById(R.id.providerSpinner);
+        modelName = findViewById(R.id.modelName);
+        apiKeyInput = findViewById(R.id.apiKeyInput);
+        thinkingModeCheckbox = findViewById(R.id.thinkingModeCheckbox);
+        endpointInput = findViewById(R.id.endpointInput);
+
+        // Z.AI specific
+        View zaiEndpointContainer = findViewById(R.id.zaiEndpointContainer);
+        Spinner zaiEndpointSpinner = findViewById(R.id.zaiEndpointSpinner);
+
+        // Behavior settings
+        systemPromptInput = findViewById(R.id.systemPromptInput);
+        temperatureSeekBar = findViewById(R.id.temperatureSeekBar);
+        temperatureLabel = findViewById(R.id.temperatureLabel);
+        maxTokensInput = findViewById(R.id.maxTokensInput);
+        streamingSwitch = findViewById(R.id.streamingSwitch);
+
+        // Appearance settings
+        livingBackgroundSwitch = findViewById(R.id.livingBackgroundSwitch);
+
+        // Setup z.ai endpoint spinner
+        if (zaiEndpointSpinner != null) {
+            ArrayAdapter<String> endpointAdapter = new ArrayAdapter<>(
+                    getContext(),
+                    android.R.layout.simple_spinner_item,
+                    SettingsManager.ZAI_ENDPOINTS);
+            endpointAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+            zaiEndpointSpinner.setAdapter(endpointAdapter);
+
+            // Set current endpoint
+            String currentEndpoint = settingsManager.getZaiEndpoint();
+            for (int i = 0; i < SettingsManager.ZAI_ENDPOINTS.length; i++) {
+                if (SettingsManager.ZAI_ENDPOINTS[i].equals(currentEndpoint)) {
+                    zaiEndpointSpinner.setSelection(i);
+                    break;
+                }
+            }
+
+            zaiEndpointSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                @Override
+                public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                    String endpoint = SettingsManager.ZAI_ENDPOINTS[position];
+                    settingsManager.setZaiEndpoint(endpoint);
+                    // Update endpoint URL display
+                    if (endpointInput != null) {
+                        String url = SettingsManager.getZaiEndpointUrl(endpoint);
+                        if (!url.isEmpty()) {
+                            endpointInput.setText(url);
+                        }
+                    }
+                }
+
+                @Override
+                public void onNothingSelected(AdapterView<?> parent) {
+                }
+            });
+        }
+
+        // Setup provider spinner
+        if (providerSpinner != null) {
+            ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                    getContext(),
+                    android.R.layout.simple_spinner_item,
+                    SettingsManager.PROVIDERS);
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+            providerSpinner.setAdapter(adapter);
+
+            // Set current provider
+            String currentProvider = settingsManager.getActiveProvider();
+            for (int i = 0; i < SettingsManager.PROVIDERS.length; i++) {
+                if (SettingsManager.PROVIDERS[i].equalsIgnoreCase(currentProvider)) {
+                    providerSpinner.setSelection(i);
+                    break;
+                }
+            }
+
+            // Show/hide z.ai options based on current provider
+            updateZaiVisibility(currentProvider, zaiEndpointContainer);
+
+            providerSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                @Override
+                public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                    String provider = SettingsManager.PROVIDERS[position];
+                    settingsManager.setActiveProvider(provider);
+
+                    // Show/hide z.ai endpoint options
+                    updateZaiVisibility(provider, zaiEndpointContainer);
+
+                    // Update endpoint URL to default for this provider
+                    if (endpointInput != null) {
+                        endpointInput.setText(SettingsManager.getDefaultApiUrl(provider));
+                    }
+                    // Update model display to first model for this provider
+                    String[] models = SettingsManager.getModelsForProvider(provider);
+                    if (modelName != null && models.length > 0) {
+                        modelName.setText(models[0]);
+                        settingsManager.setModel(models[0]);
+                    }
+                }
+
+                @Override
+                public void onNothingSelected(AdapterView<?> parent) {
+                }
+            });
+        }
+
+        // Setup model selector (click to show model picker)
+        View modelSelector = findViewById(R.id.modelSelector);
+        if (modelSelector != null) {
+            modelSelector.setOnClickListener(v -> showModelPicker());
+        }
+
+        // Setup API key input
+        if (apiKeyInput != null) {
+            apiKeyInput.setText(settingsManager.getApiKey());
+            apiKeyInput.addTextChangedListener(new SimpleTextWatcher() {
+                @Override
+                public void afterTextChanged(Editable s) {
+                    settingsManager.setApiKey(s.toString());
+                }
+            });
+        }
+
+        // Setup thinking mode checkbox
+        if (thinkingModeCheckbox != null) {
+            thinkingModeCheckbox.setChecked(settingsManager.isThinkingEnabled());
+            thinkingModeCheckbox.setOnCheckedChangeListener(
+                    (buttonView, isChecked) -> settingsManager.setThinkingEnabled(isChecked));
+        }
+
+        // Setup endpoint input
+        if (endpointInput != null) {
+            endpointInput.setText(settingsManager.getApiUrl());
+            endpointInput.addTextChangedListener(new SimpleTextWatcher() {
+                @Override
+                public void afterTextChanged(Editable s) {
+                    settingsManager.setApiUrl(s.toString());
+                }
+            });
+        }
+
+        // Setup system prompt
+        if (systemPromptInput != null) {
+            systemPromptInput.setText(settingsManager.getSystemPrompt());
+            systemPromptInput.addTextChangedListener(new SimpleTextWatcher() {
+                @Override
+                public void afterTextChanged(Editable s) {
+                    settingsManager.setSystemPrompt(s.toString());
+                }
+            });
+        }
+
+        // Setup temperature slider
+        if (temperatureSeekBar != null && temperatureLabel != null) {
+            int progress = (int) (settingsManager.getTemperature() * 10);
+            temperatureSeekBar.setProgress(progress);
+            temperatureLabel.setText(String.format("Temperature: %.1f", settingsManager.getTemperature()));
+
+            temperatureSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                @Override
+                public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                    float temp = progress / 10f;
+                    temperatureLabel.setText(String.format("Temperature: %.1f", temp));
+                    if (fromUser) {
+                        settingsManager.setTemperature(temp);
+                    }
+                }
+
+                @Override
+                public void onStartTrackingTouch(SeekBar seekBar) {
+                }
+
+                @Override
+                public void onStopTrackingTouch(SeekBar seekBar) {
+                }
+            });
+        }
+
+        // Setup max tokens
+        if (maxTokensInput != null) {
+            maxTokensInput.setText(String.valueOf(settingsManager.getMaxTokens()));
+            maxTokensInput.addTextChangedListener(new SimpleTextWatcher() {
+                @Override
+                public void afterTextChanged(Editable s) {
+                    try {
+                        int tokens = Integer.parseInt(s.toString());
+                        settingsManager.setMaxTokens(tokens);
+                    } catch (NumberFormatException e) {
+                        // Ignore invalid input
+                    }
+                }
+            });
+        }
+
+        // Setup streaming switch
+        if (streamingSwitch != null) {
+            streamingSwitch.setChecked(settingsManager.isStreamingEnabled());
+            streamingSwitch.setOnCheckedChangeListener(
+                    (buttonView, isChecked) -> settingsManager.setStreamingEnabled(isChecked));
+        }
+
+        // Setup living background switch
+        if (livingBackgroundSwitch != null) {
+            livingBackgroundSwitch.setChecked(settingsManager.isLivingBackgroundEnabled());
+            livingBackgroundSwitch.setOnCheckedChangeListener(
+                    (buttonView, isChecked) -> settingsManager.setLivingBackgroundEnabled(isChecked));
+        }
+
+        // Setup debug mode switch
+        Switch debugModeSwitch = findViewById(R.id.debugModeSwitch);
+        if (debugModeSwitch != null) {
+            debugModeSwitch.setChecked(settingsManager.isDebugModeEnabled());
+            debugModeSwitch.setOnCheckedChangeListener(
+                    (buttonView, isChecked) -> settingsManager.setDebugModeEnabled(isChecked));
+        }
+
+        // Update model name display
+        if (modelName != null) {
+            modelName.setText(settingsManager.getModel());
+        }
+    }
+
+    private void updateZaiVisibility(String provider, View zaiEndpointContainer) {
+        if (zaiEndpointContainer == null)
+            return;
+
+        boolean isZai = SettingsManager.isZaiProvider(provider);
+        zaiEndpointContainer.setVisibility(isZai ? View.VISIBLE : View.GONE);
+    }
+
+    private void showModelPicker() {
+        String provider = settingsManager.getActiveProvider();
+        String[] models = SettingsManager.getModelsForProvider(provider);
+
+        android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(getContext());
+        builder.setTitle("Select Model");
+        builder.setItems(models, (dialog, which) -> {
+            String selectedModel = models[which];
+            settingsManager.setModel(selectedModel);
+            if (modelName != null) {
+                modelName.setText(selectedModel);
+            }
+        });
+        builder.show();
+    }
+
+    public void setSettingsManager(SettingsManager manager) {
+        this.settingsManager = manager;
+        // Reload UI with new settings
+        loadSettingsToUI();
+    }
+
+    private void loadSettingsToUI() {
+        if (settingsManager == null)
+            return;
+
+        if (apiKeyInput != null)
+            apiKeyInput.setText(settingsManager.getApiKey());
+        if (endpointInput != null)
+            endpointInput.setText(settingsManager.getApiUrl());
+        if (modelName != null)
+            modelName.setText(settingsManager.getModel());
+        if (thinkingModeCheckbox != null)
+            thinkingModeCheckbox.setChecked(settingsManager.isThinkingEnabled());
+        if (systemPromptInput != null)
+            systemPromptInput.setText(settingsManager.getSystemPrompt());
+        if (temperatureSeekBar != null)
+            temperatureSeekBar.setProgress((int) (settingsManager.getTemperature() * 10));
+        if (maxTokensInput != null)
+            maxTokensInput.setText(String.valueOf(settingsManager.getMaxTokens()));
+        if (streamingSwitch != null)
+            streamingSwitch.setChecked(settingsManager.isStreamingEnabled());
+        if (livingBackgroundSwitch != null)
+            livingBackgroundSwitch.setChecked(settingsManager.isLivingBackgroundEnabled());
     }
 
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        menuWidth = w * 0.8f; // Menu takes 80% of screen width
-        pageSlideDistance = w;
 
-        // Position menu content off-screen initially
-        if (menuContent != null) {
-            menuContent.setTranslationX(-menuWidth);
+        anchorY = h - 40f;
+        screenWidth = w;
+
+        float dx = w - ANCHOR_X;
+        float dy = anchorY;
+        float diagonalDistance = (float) Math.sqrt(dx * dx + dy * dy);
+        float desktopFormula = Math.max(w, h) * 1.8f;
+        maxRadius = Math.max(diagonalDistance * 1.1f, desktopFormula);
+    }
+
+    public void setMenuButton(View button) {
+        this.menuButton = button;
+    }
+
+    public void openMenu() {
+        if (currentState == MenuState.OPEN)
+            return;
+
+        currentState = MenuState.ANIMATING;
+        setVisibility(View.VISIBLE);
+
+        currentPage = MenuPage.MAIN;
+        pageProgress = 0f;
+        setupContainers();
+        loadSettingsToUI();
+
+        animateMenuButton(true);
+        spring.setTarget(1.0f);
+        startAnimation();
+
+        if (listener != null) {
+            listener.onMenuOpened();
+        }
+    }
+
+    public void closeMenu() {
+        if (currentState == MenuState.CLOSED)
+            return;
+
+        currentState = MenuState.ANIMATING;
+        animateMenuButton(false);
+        spring.setTarget(0.0f);
+        startAnimation();
+    }
+
+    public void toggleMenu() {
+        if (currentState == MenuState.OPEN || spring.getTarget() > 0.5f) {
+            closeMenu();
+        } else {
+            openMenu();
+        }
+    }
+
+    private void animateMenuButton(boolean toClose) {
+        if (menuButton == null)
+            return;
+
+        ImageButton btn = (ImageButton) menuButton;
+
+        btn.animate()
+                .scaleX(0.0f)
+                .scaleY(0.0f)
+                .setDuration(150)
+                .setInterpolator(new DecelerateInterpolator())
+                .setListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        btn.setImageResource(toClose ? R.drawable.ic_close : R.drawable.ic_menu);
+                        btn.animate()
+                                .scaleX(1.0f)
+                                .scaleY(1.0f)
+                                .setDuration(150)
+                                .setInterpolator(new DecelerateInterpolator())
+                                .setListener(null)
+                                .start();
+                    }
+                })
+                .start();
+    }
+
+    private void startAnimation() {
+        if (animator != null && animator.isRunning()) {
+            animator.cancel();
         }
 
-        // Update clip bounds
-        clipBounds.set(0, 0, menuWidth, h);
+        animator = ValueAnimator.ofFloat(0f, 1f);
+        animator.setDuration(16);
+        animator.setRepeatCount(ValueAnimator.INFINITE);
+
+        animator.addUpdateListener(animation -> {
+            boolean stillAnimating = spring.update();
+
+            float progress = spring.getPosition();
+            if (menuContent != null) {
+                if (progress > 0.2f) {
+                    float contentAlpha = Math.min(1f, (progress - 0.2f) / 0.3f);
+                    menuContent.setAlpha(contentAlpha);
+                } else {
+                    menuContent.setAlpha(0f);
+                }
+            }
+
+            invalidate();
+
+            if (!stillAnimating) {
+                animation.cancel();
+
+                if (spring.getPosition() < 0.01f) {
+                    setVisibility(View.GONE);
+                    currentState = MenuState.CLOSED;
+                    if (listener != null) {
+                        listener.onMenuClosed();
+                    }
+                } else {
+                    currentState = MenuState.OPEN;
+                }
+            }
+        });
+
+        animator.start();
     }
 
-    /**
-     * Opens the sliding menu
-     */
-    public void openMenu() {
-        if (currentState == MenuState.OPEN || currentState == MenuState.OPENING) return;
-
-        currentState = MenuState.OPENING;
-        setVisibility(View.VISIBLE);
-        animateAlpha(1f);
-
-        // Start liquid background animation
-        liquidBackground.openMenu();
-
-        // Start menu slide animation
-        menuSpring.setTarget(1f);
-        startMenuAnimation();
-
-        // Initialize containers
-        setupContainers();
-    }
-
-    /**
-     * Closes the sliding menu
-     */
-    public void closeMenu() {
-        if (currentState == MenuState.CLOSED || currentState == MenuState.CLOSING) return;
-
-        currentState = MenuState.CLOSING;
-
-        // Start liquid background animation
-        liquidBackground.closeMenu();
-
-        // Start menu slide animation
-        menuSpring.setTarget(0f);
-        startMenuAnimation();
-    }
-
-    /**
-     * Navigates to a specific menu page
-     */
     public void navigateToPage(MenuPage page) {
-        if (page == currentPage) return;
+        if (page == currentPage || page == MenuPage.MAIN)
+            return;
 
         currentPage = page;
-        pageSpring.setPosition(0f);
-        pageSpring.setTarget(1f);
-        startPageAnimation();
+        updateSubmenuContent(page);
+        startPageTransition(true);
 
         if (listener != null) {
             listener.onPageChanged(page);
         }
     }
 
-    /**
-     * Goes back to the main page
-     */
     public void navigateToMain() {
-        navigateToPage(MenuPage.MAIN);
+        if (currentPage == MenuPage.MAIN)
+            return;
+        startPageTransition(false);
     }
 
-    private void setupContainers() {
-        // Hide all containers initially
-        mainMenuContainer.setVisibility(currentPage == MenuPage.MAIN ? View.VISIBLE : View.INVISIBLE);
-        conversationsContainer.setVisibility(currentPage == MenuPage.CONVERSATIONS ? View.VISIBLE : View.INVISIBLE);
-        settingsContainer.setVisibility(currentPage == MenuPage.SETTINGS ? View.VISIBLE : View.INVISIBLE);
-        aboutContainer.setVisibility(currentPage == MenuPage.ABOUT ? View.VISIBLE : View.INVISIBLE);
-
-        // Position containers for page transitions
-        for (int i = 0; i < getChildCount(); i++) {
-            View child = getChildAt(i);
-            if (child instanceof ViewGroup && child != menuContent && child != liquidBackground) {
-                child.setTranslationX(i == getPageIndex(currentPage) ? 0f : pageSlideDistance);
-            }
-        }
-    }
-
-    private int getPageIndex(MenuPage page) {
-        switch (page) {
-            case MAIN: return 0;
-            case CONVERSATIONS: return 1;
-            case SETTINGS: return 2;
-            case ABOUT: return 3;
-            default: return 0;
-        }
-    }
-
-    private void startMenuAnimation() {
-        if (menuAnimator != null) {
-            menuAnimator.cancel();
+    private void startPageTransition(boolean forward) {
+        if (pageAnimator != null && pageAnimator.isRunning()) {
+            pageAnimator.cancel();
         }
 
-        menuAnimator = ValueAnimator.ofFloat(0f, 1f);
-        menuAnimator.setDuration(16); // ~60fps
-        menuAnimator.setRepeatCount(ValueAnimator.INFINITE);
+        float startProgress = pageProgress;
+        float endProgress = forward ? 1f : 0f;
 
-        menuAnimator.addUpdateListener(animation -> {
-            boolean stillAnimating = menuSpring.update();
-            menuPosition = menuSpring.getPosition();
+        pageAnimator = ValueAnimator.ofFloat(startProgress, endProgress);
+        pageAnimator.setDuration(250);
+        pageAnimator.setInterpolator(new DecelerateInterpolator());
 
-            // Update menu content position
-            if (menuContent != null) {
-                float targetX = -menuWidth + (menuWidth * menuPosition);
-                menuContent.setTranslationX(targetX);
+        pageAnimator.addUpdateListener(animation -> {
+            pageProgress = (float) animation.getAnimatedValue();
+
+            if (mainMenuContainer != null) {
+                mainMenuContainer.setTranslationX(-screenWidth * pageProgress);
+                mainMenuContainer.setAlpha(1f - pageProgress);
             }
 
-            // Update overlay alpha
-            if (overlayPaint != null) {
-                int alpha = (int) (100 * (1f - menuPosition));
-                overlayPaint.setAlpha(alpha);
+            if (submenuContainer != null) {
+                submenuContainer.setTranslationX(screenWidth * (1f - pageProgress));
+                submenuContainer.setAlpha(pageProgress);
             }
+        });
 
-            if (!stillAnimating) {
-                animation.cancel();
-                if (menuPosition > 0.5f) {
-                    currentState = MenuState.OPEN;
-                    if (listener != null) {
-                        listener.onMenuOpened();
-                    }
-                } else {
-                    currentState = MenuState.CLOSED;
-                    animateAlpha(0f);
-                    setVisibility(View.GONE);
-                    if (listener != null) {
-                        listener.onMenuClosed();
+        pageAnimator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                if (!forward) {
+                    currentPage = MenuPage.MAIN;
+                    if (submenuContainer != null) {
+                        submenuContainer.setVisibility(View.GONE);
                     }
                 }
             }
 
-            invalidate();
-        });
-
-        menuAnimator.start();
-    }
-
-    private void startPageAnimation() {
-        if (pageAnimator != null) {
-            pageAnimator.cancel();
-        }
-
-        pageAnimator = ValueAnimator.ofFloat(0f, 1f);
-        pageAnimator.setDuration(16); // ~60fps
-        pageAnimator.setRepeatCount(ValueAnimator.INFINITE);
-
-        pageAnimator.addUpdateListener(animation -> {
-            boolean stillAnimating = pageSpring.update();
-            pagePosition = pageSpring.getPosition();
-
-            updatePagePositions();
-
-            if (!stillAnimating) {
-                animation.cancel();
-                setupContainers();
+            @Override
+            public void onAnimationStart(Animator animation) {
+                if (forward && submenuContainer != null) {
+                    submenuContainer.setVisibility(View.VISIBLE);
+                }
             }
-
-            invalidate();
         });
 
         pageAnimator.start();
     }
 
-    private void updatePagePositions() {
-        int currentIndex = getPageIndex(currentPage);
+    private void updateSubmenuContent(MenuPage page) {
+        TextView submenuTitle = findViewById(R.id.submenuTitle);
 
-        for (int i = 0; i < getChildCount(); i++) {
-            View child = getChildAt(i);
-            if (child instanceof ViewGroup && child != menuContent && child != liquidBackground) {
-                float offset = (i - currentIndex) * pageSlideDistance;
-                float targetX = offset * (1f - pagePosition);
-                child.setTranslationX(targetX);
-                child.setAlpha(i == currentIndex ? 1f : 0.3f * (1f - pagePosition));
+        View providerContent = findViewById(R.id.providerContent);
+        View behaviorContent = findViewById(R.id.behaviorContent);
+        View appearanceContent = findViewById(R.id.appearanceContent);
+
+        if (providerContent != null)
+            providerContent.setVisibility(View.GONE);
+        if (behaviorContent != null)
+            behaviorContent.setVisibility(View.GONE);
+        if (appearanceContent != null)
+            appearanceContent.setVisibility(View.GONE);
+
+        if (submenuTitle != null) {
+            switch (page) {
+                case PROVIDER:
+                    submenuTitle.setText("Provider & Model");
+                    if (providerContent != null)
+                        providerContent.setVisibility(View.VISIBLE);
+                    break;
+                case BEHAVIOR:
+                    submenuTitle.setText("Behavior");
+                    if (behaviorContent != null)
+                        behaviorContent.setVisibility(View.VISIBLE);
+                    break;
+                case APPEARANCE:
+                    submenuTitle.setText("Appearance");
+                    if (appearanceContent != null)
+                        appearanceContent.setVisibility(View.VISIBLE);
+                    break;
+                default:
+                    submenuTitle.setText("Settings");
             }
         }
     }
 
-    private void animateAlpha(float targetAlpha) {
-        animate()
-            .alpha(targetAlpha)
-            .setDuration(200)
-            .start();
+    private void setupContainers() {
+        if (mainMenuContainer != null) {
+            mainMenuContainer.setVisibility(View.VISIBLE);
+            mainMenuContainer.setTranslationX(0);
+            mainMenuContainer.setAlpha(1f);
+        }
+        if (submenuContainer != null) {
+            submenuContainer.setVisibility(View.GONE);
+            submenuContainer.setTranslationX(screenWidth);
+            submenuContainer.setAlpha(0f);
+        }
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+
+        float progress = spring.getPosition();
+        if (progress < 0.01f)
+            return;
+
+        float currentRadius = maxRadius * progress;
+        float alpha = 0.98f * Math.min(progress, 1.0f);
+
+        int colorWithAlpha = Color.argb(
+                (int) (alpha * 255),
+                Color.red(backgroundColor),
+                Color.green(backgroundColor),
+                Color.blue(backgroundColor));
+        circlePaint.setColor(colorWithAlpha);
+
+        canvas.drawCircle(ANCHOR_X, anchorY, currentRadius, circlePaint);
     }
 
     @Override
     protected void dispatchDraw(Canvas canvas) {
-        // Draw overlay
-        if (menuPosition > 0f && menuPosition < 1f) {
-            overlayPaint.setAlpha((int) (100 * (1f - menuPosition)));
-            canvas.drawRect(0, 0, getWidth(), getHeight(), overlayPaint);
-        }
-
-        // Apply clip for menu content
-        clipPath.reset();
-        clipPath.addRect(clipBounds, Path.Direction.CW);
-        canvas.clipPath(clipPath);
-
+        onDraw(canvas);
         super.dispatchDraw(canvas);
     }
 
-    // Getters and setters
-    public MenuState getCurrentState() { return currentState; }
-    public MenuPage getCurrentPage() { return currentPage; }
-    public boolean isOpen() { return currentState == MenuState.OPEN; }
-    public void setListener(MenuListener listener) { this.listener = listener; }
+    public boolean isMenuOpen() {
+        return currentState == MenuState.OPEN || spring.getTarget() > 0.5f;
+    }
+
+    public boolean isOpen() {
+        return isMenuOpen();
+    }
+
+    public MenuPage getCurrentPage() {
+        return currentPage;
+    }
+
+    public float getProgress() {
+        return spring.getPosition();
+    }
+
+    public void setListener(MenuListener listener) {
+        this.listener = listener;
+    }
 
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
-        if (menuAnimator != null) {
-            menuAnimator.cancel();
-        }
-        if (pageAnimator != null) {
+        if (animator != null)
+            animator.cancel();
+        if (pageAnimator != null)
             pageAnimator.cancel();
+    }
+
+    // Simple TextWatcher implementation
+    private abstract class SimpleTextWatcher implements TextWatcher {
+        @Override
+        public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+        }
+
+        @Override
+        public void onTextChanged(CharSequence s, int start, int before, int count) {
         }
     }
 }

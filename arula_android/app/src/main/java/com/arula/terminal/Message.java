@@ -57,17 +57,27 @@ public class Message {
         this.text += append;
     }
 
+    public void setText(String text) {
+        this.text = text;
+    }
+
     @Override
     public boolean equals(Object obj) {
-        if (this == obj) return true;
-        if (obj == null || getClass() != obj.getClass()) return false;
+        if (this == obj)
+            return true;
+        if (obj == null || getClass() != obj.getClass())
+            return false;
 
         Message message = (Message) obj;
 
-        if (id != message.id) return false;
-        if (!text.equals(message.text)) return false;
-        if (type != message.type) return false;
-        if (timestamp != message.timestamp) return false;
+        if (id != message.id)
+            return false;
+        if (!text.equals(message.text))
+            return false;
+        if (type != message.type)
+            return false;
+        if (timestamp != message.timestamp)
+            return false;
         return toolId != null ? toolId.equals(message.toolId) : message.toolId == null;
     }
 

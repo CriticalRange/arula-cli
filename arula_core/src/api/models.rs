@@ -345,7 +345,16 @@ pub struct OllamaFetcher;
 #[async_trait]
 impl ModelFetcher for OllamaFetcher {
     async fn fetch_models(&self, _api_key: &str, api_url: Option<&str>) -> Vec<String> {
-        let base_url = api_url.unwrap_or("http://localhost:11434");
+        let raw_url = api_url.unwrap_or("http://localhost:11434");
+        
+        // Normalize the URL: remove trailing paths and slashes to get base URL
+        // This prevents malformed URLs like http://localhost:11434/api/chat/api/tags
+        let base_url = raw_url
+            .trim_end_matches('/')
+            .trim_end_matches("/api/chat")
+            .trim_end_matches("/api/tags")
+            .trim_end_matches("/api/generate")
+            .trim_end_matches("/api");
 
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
@@ -378,10 +387,25 @@ impl ModelFetcher for OllamaFetcher {
                         Err(e) => vec![format!("⚠️ Failed to parse Ollama response: {}", e)],
                     }
                 } else {
-                    vec![format!("⚠️ Ollama API error: Status {}", status)]
+                    // Provide more helpful error messages based on status code
+                    match status.as_u16() {
+                        401 => vec![format!("⚠️ Ollama authentication failed. Check if Ollama requires auth or if the endpoint URL is correct.")],
+                        404 => vec![format!("⚠️ Ollama endpoint not found. Make sure Ollama is running at: {}", base_url)],
+                        _ => vec![format!("⚠️ Ollama API error: Status {}", status)],
+                    }
                 }
             }
-            Err(e) => vec![format!("⚠️ Failed to fetch Ollama models: {}", e)],
+            Err(e) => {
+                // Provide more specific error messages
+                let error_str = e.to_string();
+                if error_str.contains("Connection refused") || error_str.contains("connect") {
+                    vec![format!("⚠️ Cannot connect to Ollama. Is it running at {}?", base_url)]
+                } else if error_str.contains("timeout") {
+                    vec![format!("⚠️ Connection to Ollama timed out at {}", base_url)]
+                } else {
+                    vec![format!("⚠️ Failed to fetch Ollama models: {}", e)]
+                }
+            }
         }
     }
 

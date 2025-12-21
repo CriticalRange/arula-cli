@@ -7,4 +7,7 @@
     <string name="message_input_hint">Type your message...</string>
     <string name="send">Send</string>
     <string name="typing">Arula is typing...</string>
+    <string name="menu">Menu</string>
+    <string name="close">Close</string>
+    <string name="back">Back</string>
 </resources>

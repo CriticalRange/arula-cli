@@ -269,17 +269,24 @@ impl Session {
         // Add content to the buffer
         self.ai_buffer.push_str(&content);
 
-        // Trim leading whitespace from start of buffer and check length
-        let trimmed = self.ai_buffer.trim_start().to_string();
-
-        // Only create a message when we have substantial content (prevents "I" before tools)
+        // Only flush buffer when we have substantial content (prevents "I" before tools)
         // 15 chars is enough to have a meaningful start like "I'll read the"
-        if trimmed.len() >= 15 {
+        if self.ai_buffer.len() >= 15 {
             self.finalize_thinking_messages();
             
-            // Always create a new AI message instead of appending to existing one
-            // This ensures each response gets its own bubble
-            self.messages.push(MessageEntry::ai(trimmed, timestamp));
+            // Check if we should append to the last AI message or create a new one
+            // We append if the last message is an AI message (streaming continuation)
+            if let Some(last) = self.messages.last_mut() {
+                if last.is_ai() {
+                    // Append buffer content to existing AI message
+                    last.content.push_str(&self.ai_buffer);
+                    self.ai_buffer.clear();
+                    return;
+                }
+            }
+            
+            // Create a new AI message (first chunk after user message or tool)
+            self.messages.push(MessageEntry::ai(self.ai_buffer.clone(), timestamp));
             self.ai_buffer.clear();
         }
     }
@@ -290,9 +297,8 @@ impl Session {
         self.finalize_thinking_messages();
         
         // For non-streaming responses, always create a new message bubble
-        let trimmed = content.trim();
-        if !trimmed.is_empty() {
-            self.messages.push(MessageEntry::ai(trimmed.to_string(), timestamp));
+        if !content.is_empty() {
+            self.messages.push(MessageEntry::ai(content, timestamp));
         }
         
         // Clear any buffered content
@@ -302,12 +308,20 @@ impl Session {
     /// Flushes any pending AI buffer content as a message.
     /// Called when stream ends to commit any remaining content.
     pub fn flush_ai_buffer(&mut self, timestamp: String) {
-        let trimmed = self.ai_buffer.trim();
-        if !trimmed.is_empty() {
-            // Always create a new AI message instead of appending to existing one
-            // This ensures the final buffered content gets its own bubble
+        if !self.ai_buffer.is_empty() {
+            // Check if we should append to the last AI message or create a new one
+            if let Some(last) = self.messages.last_mut() {
+                if last.is_ai() {
+                    // Append to existing AI message
+                    last.content.push_str(&self.ai_buffer);
+                    self.ai_buffer.clear();
+                    return;
+                }
+            }
+            
+            // Create a new AI message if there's no existing one to append to
             self.messages
-                .push(MessageEntry::ai(trimmed.to_string(), timestamp));
+                .push(MessageEntry::ai(self.ai_buffer.clone(), timestamp));
         }
         self.ai_buffer.clear();
     }

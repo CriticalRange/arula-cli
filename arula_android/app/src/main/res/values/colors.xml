@@ -1,14 +1,50 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Arula Neon Theme Colors - Matching Desktop Version -->
+    
+    <!-- Core Background Colors based on Desktop palette.rs -->
+    <color name="neon_background">#FF0A080E</color>  <!-- Color::from_rgb8(10, 8, 14) -->
+    <color name="neon_surface">#FF120E18</color>      <!-- Color::from_rgb8(18, 14, 24) -->
+    <color name="neon_surface_raised">#FF1A1422</color> <!-- Color::from_rgb8(26, 20, 34) -->
+    <color name="neon_border">#FF322846</color>        <!-- Color::from_rgb8(50, 40, 70) -->
+    
+    <!-- Text Colors -->
+    <color name="neon_text">#FFF0EBFF</color>          <!-- Color::from_rgb8(240, 235, 255) -->
+    <color name="neon_muted">#FF968CB4</color>         <!-- Color::from_rgb8(150, 140, 180) -->
+    
+    <!-- Accent Colors -->
+    <color name="neon_accent">#FFB432FF</color>        <!-- Color::from_rgb8(180, 50, 255) - Vibrant Purple -->
+    <color name="neon_accent_soft">#FF8C28C8</color>   <!-- Color::from_rgb8(140, 40, 200) - Soft Purple -->
+    <color name="neon_glow">#FFC864FF</color>          <!-- Color::from_rgb8(200, 100, 255) - Bright Glow -->
+    
+    <!-- Status Colors -->
+    <color name="neon_success">#FF64FF8C</color>       <!-- Color::from_rgb8(100, 255, 140) -->
+    <color name="neon_danger">#FFFF6464</color>        <!-- Color::from_rgb8(255, 100, 100) -->
+    
+    <!-- Message Bubble Colors -->
+    <color name="user_bubble">#FF2A1838</color>        <!-- Slightly lighter than surface_raised -->
+    <color name="ai_bubble">#FF1E1428</color>          <!-- Between surface and surface_raised -->
+    <color name="tool_bubble">#FF241830</color>        <!-- Subtle tool indicator -->
+    <color name="error_bubble">#FF301820</color>       <!-- Error with red tint -->
+    
+    <!-- Legacy colors for compatibility -->
     <color name="purple_200">#FFBB86FC</color>
-    <color name="purple_500">#FF6200EE</color>
-    <color name="purple_700">#FF3700B3</color>
+    <color name="purple_500">#FFB432FF</color>
+    <color name="purple_700">#FF8C28C8</color>
     <color name="teal_200">#FF03DAC5</color>
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
-    <color name="user_message">#FFE3F2FD</color>
-    <color name="ai_message">#FFFAFAFA</color>
-    <color name="tool_message">#FFFFF3E0</color>
-    <color name="error_message">#FFFFEBEE</color>
+    
+    <!-- Alias colors for old names -->
+    <color name="user_message">@color/user_bubble</color>
+    <color name="ai_message">@color/ai_bubble</color>
+    <color name="tool_message">@color/tool_bubble</color>
+    <color name="error_message">@color/error_bubble</color>
+    
+    <!-- Additional aliases for compatibility -->
+    <color name="neon_gradient_start">@color/neon_accent</color>
+    <color name="neon_gradient_end">@color/neon_accent_soft</color>
+    <color name="neon_tool_bubble">@color/tool_bubble</color>
+    <color name="neon_user_bubble">@color/user_bubble</color>
 </resources>

@@ -5,72 +5,82 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 import androidx.annotation.NonNull;
-import androidx.recyclerview.widget.DiffUtil;
-import androidx.recyclerview.widget.ListAdapter;
 import androidx.recyclerview.widget.RecyclerView;
 import com.arula.terminal.databinding.ItemMessageNeonBinding;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
 /**
- * Adapter for displaying chat messages
+ * Adapter for displaying chat messages.
+ * Uses standard RecyclerView.Adapter for full control over mutable message
+ * updates.
  */
-public class MessageAdapter extends ListAdapter<Message, MessageAdapter.MessageViewHolder> {
-    private static final DiffUtil.ItemCallback<Message> DIFF_CALLBACK = new DiffUtil.ItemCallback<Message>() {
-        @Override
-        public boolean areItemsTheSame(@NonNull Message oldItem, @NonNull Message newItem) {
-            return oldItem.getId() == newItem.getId();
-        }
-
-        @Override
-        public boolean areContentsTheSame(@NonNull Message oldItem, @NonNull Message newItem) {
-            return oldItem.equals(newItem);
-        }
-    };
+public class MessageAdapter extends RecyclerView.Adapter<MessageAdapter.MessageViewHolder> {
 
     private final Map<String, Integer> toolMessagePositions = new HashMap<>();
     private final SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm", Locale.getDefault());
     private final List<Message> messageList = new ArrayList<>();
 
     public MessageAdapter() {
-        super(DIFF_CALLBACK);
     }
 
     @NonNull
     @Override
     public MessageViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         LayoutInflater inflater = LayoutInflater.from(parent.getContext());
-        // Use the new neon layout
         ItemMessageNeonBinding binding = ItemMessageNeonBinding.inflate(inflater, parent, false);
         return new MessageViewHolder(binding);
     }
 
     @Override
     public void onBindViewHolder(@NonNull MessageViewHolder holder, int position) {
-        Message message = getItem(position);
+        Message message = messageList.get(position);
         holder.bind(message);
+    }
+
+    @Override
+    public int getItemCount() {
+        return messageList.size();
+    }
+
+    public Message getItem(int position) {
+        if (position >= 0 && position < messageList.size()) {
+            return messageList.get(position);
+        }
+        return null;
     }
 
     public void setMessages(List<Message> messages) {
         messageList.clear();
         messageList.addAll(messages);
-        submitList(new ArrayList<>(messageList));
+        notifyDataSetChanged();
     }
 
     public void addMessage(Message message) {
         messageList.add(message);
-        submitList(new ArrayList<>(messageList));
+        notifyItemInserted(messageList.size() - 1);
     }
 
     public void clearMessages() {
+        int size = messageList.size();
         messageList.clear();
-        submitList(new ArrayList<>(messageList));
+        notifyItemRangeRemoved(0, size);
+    }
+
+    /**
+     * Updates the last message in the list and forces the adapter to rebind.
+     */
+    public void updateLastMessage() {
+        if (!messageList.isEmpty()) {
+            int lastPos = messageList.size() - 1;
+            notifyItemChanged(lastPos);
+        }
     }
 
     public void appendToLastMessage(String chunk) {
-        int lastPosition = getItemCount() - 1;
-        if (lastPosition >= 0) {
-            Message lastMessage = getItem(lastPosition);
+        if (!messageList.isEmpty()) {
+            int lastPosition = messageList.size() - 1;
+            Message lastMessage = messageList.get(lastPosition);
             if (lastMessage.getType() == Message.Type.ASSISTANT) {
                 lastMessage.appendText(chunk);
                 notifyItemChanged(lastPosition);
@@ -78,10 +88,18 @@ public class MessageAdapter extends ListAdapter<Message, MessageAdapter.MessageV
         }
     }
 
+    public void removeLastMessage() {
+        if (!messageList.isEmpty()) {
+            int lastPos = messageList.size() - 1;
+            messageList.remove(lastPos);
+            notifyItemRemoved(lastPos);
+        }
+    }
+
     public void updateToolMessage(String toolId, String result) {
         Integer position = toolMessagePositions.get(toolId);
-        if (position != null && position < getItemCount()) {
-            Message message = getItem(position);
+        if (position != null && position < messageList.size()) {
+            Message message = messageList.get(position);
             message.appendText("\n" + result);
             notifyItemChanged(position);
         }
@@ -105,61 +123,61 @@ public class MessageAdapter extends ListAdapter<Message, MessageAdapter.MessageV
             switch (message.getType()) {
                 case USER:
                     binding.messageCard.setCardBackgroundColor(
-                        ctx.getResources().getColor(R.color.neon_accent, null));
+                            ctx.getResources().getColor(R.color.neon_accent, null));
                     binding.senderText.setText("You");
                     binding.senderText.setTextColor(
-                        ctx.getResources().getColor(R.color.neon_text, null));
+                            ctx.getResources().getColor(R.color.neon_text, null));
                     binding.senderIndicator.setBackgroundColor(
-                        ctx.getResources().getColor(R.color.neon_success, null));
+                            ctx.getResources().getColor(R.color.neon_success, null));
                     // Apply gradient background
                     binding.messageCard.setBackgroundResource(R.drawable.bg_user_message);
                     break;
 
                 case ASSISTANT:
                     binding.messageCard.setCardBackgroundColor(
-                        ctx.getResources().getColor(R.color.neon_surface_raised, null));
+                            ctx.getResources().getColor(R.color.neon_surface_raised, null));
                     binding.senderText.setText("Arula");
                     binding.senderText.setTextColor(
-                        ctx.getResources().getColor(R.color.neon_text, null));
+                            ctx.getResources().getColor(R.color.neon_text, null));
                     binding.senderIndicator.setBackgroundColor(
-                        ctx.getResources().getColor(R.color.neon_accent, null));
+                            ctx.getResources().getColor(R.color.neon_accent, null));
                     // Apply surface background
                     binding.messageCard.setBackgroundResource(R.drawable.bg_assistant_message);
                     break;
 
                 case TOOL:
                     binding.messageCard.setCardBackgroundColor(
-                        ctx.getResources().getColor(R.color.neon_tool_bubble, null));
+                            ctx.getResources().getColor(R.color.neon_tool_bubble, null));
                     binding.senderText.setText("Tool");
                     binding.senderText.setTextColor(
-                        ctx.getResources().getColor(R.color.neon_text, null));
+                            ctx.getResources().getColor(R.color.neon_text, null));
                     binding.senderIndicator.setBackgroundColor(
-                        ctx.getResources().getColor(R.color.neon_success, null));
+                            ctx.getResources().getColor(R.color.neon_success, null));
                     // Apply tool background
                     binding.messageCard.setBackgroundResource(R.drawable.bg_tool_message);
                     break;
 
                 case ERROR:
                     binding.messageCard.setCardBackgroundColor(
-                        ctx.getResources().getColor(R.color.neon_danger, null));
+                            ctx.getResources().getColor(R.color.neon_danger, null));
                     binding.senderText.setText("Error");
                     binding.senderText.setTextColor(
-                        ctx.getResources().getColor(R.color.neon_text, null));
+                            ctx.getResources().getColor(R.color.neon_text, null));
                     binding.senderIndicator.setBackgroundColor(
-                        ctx.getResources().getColor(R.color.neon_danger, null));
+                            ctx.getResources().getColor(R.color.neon_danger, null));
                     break;
             }
 
             // Set neon styling for text
             binding.messageText.setTextColor(
-                ctx.getResources().getColor(R.color.neon_text, null));
+                    ctx.getResources().getColor(R.color.neon_text, null));
             binding.timestampText.setTextColor(
-                ctx.getResources().getColor(R.color.neon_muted, null));
+                    ctx.getResources().getColor(R.color.neon_muted, null));
 
             // Set timestamp
             if (message.getTimestamp() > 0) {
                 String time = new SimpleDateFormat("HH:mm", Locale.getDefault())
-                    .format(new Date(message.getTimestamp()));
+                        .format(new Date(message.getTimestamp()));
                 binding.timestampText.setText(time);
             } else {
                 binding.timestampText.setText("");

@@ -12,35 +12,17 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- Main Content Container -->
-    <androidx.coordinatorlayout.widget.CoordinatorLayout
+    <!-- Main Content Container (No Toolbar) -->
+    <FrameLayout
         android:id="@+id/coordinator"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
-        <com.google.android.material.appbar.AppBarLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@color/neon_surface"
-            android:elevation="0dp"
-            app:elevation="0dp">
-
-            <androidx.appcompat.widget.Toolbar
-                android:id="@+id/toolbar"
-                android:layout_width="match_parent"
-                android:layout_height="?attr/actionBarSize"
-                android:background="@color/neon_surface"
-                app:titleTextColor="@color/neon_text"
-                app:popupTheme="@style/ThemeOverlay.MaterialComponents.Dark"
-                style="@style/Widget.ArulaTerminal.NeonToolbar" />
-
-        </com.google.android.material.appbar.AppBarLayout>
-
+        <!-- Messages List -->
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/messageList"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:layout_marginTop="?attr/actionBarSize"
             android:layout_marginBottom="80dp"
             android:padding="12dp"
             android:clipToPadding="false"
@@ -67,6 +49,8 @@
                 android:layout_marginEnd="8dp" />
 
             <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
                 android:text="@string/typing"
                 android:textColor="@color/neon_accent"
                 android:textStyle="italic"
@@ -74,6 +58,7 @@
 
         </LinearLayout>
 
+        <!-- Input Bar at Bottom -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -83,17 +68,21 @@
             android:background="@color/neon_surface"
             android:elevation="8dp">
 
+            <!-- Menu Button (Hamburger) -->
             <ImageButton
                 android:id="@+id/menuButton"
-                android:layout_width="56dp"
-                android:layout_height="56dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:src="@drawable/ic_menu"
                 android:background="@drawable/bg_neon_button"
                 android:contentDescription="@string/menu"
                 android:tint="@color/neon_text"
                 android:layout_marginEnd="12dp"
+                android:scaleType="centerInside"
+                android:padding="12dp"
                 android:elevation="4dp" />
 
+            <!-- Message Input Field -->
             <EditText
                 android:id="@+id/messageInput"
                 android:layout_width="0dp"
@@ -109,22 +98,25 @@
                 android:layout_marginEnd="12dp"
                 android:importantForAutofill="no" />
 
+            <!-- Send Button -->
             <ImageButton
                 android:id="@+id/sendButton"
-                android:layout_width="56dp"
-                android:layout_height="56dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:src="@drawable/ic_send"
                 android:background="@drawable/bg_neon_button"
                 android:contentDescription="@string/send"
                 android:enabled="false"
                 android:tint="@color/neon_text"
+                android:scaleType="centerInside"
+                android:padding="12dp"
                 android:elevation="4dp" />
 
         </LinearLayout>
 
-    </androidx.coordinatorlayout.widget.CoordinatorLayout>
+    </FrameLayout>
 
-    <!-- Sliding Menu -->
+    <!-- Sliding Menu (Overlay) -->
     <com.arula.terminal.ui.menu.SlidingMenuView
         android:id="@+id/slidingMenu"
         android:layout_width="match_parent"

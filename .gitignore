@@ -20,6 +20,7 @@ wheels/
 .installed.cfg
 *.egg
 .claude-flow/
+arula_android/.gradle/
 # Virtual environments
 .env
 .venv

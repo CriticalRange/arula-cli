@@ -11,7 +11,7 @@ use crate::api::api::{
     AIProvider, ApiClient, ApiResponse, ChatMessage, ToolCall, ToolCallFunction, Usage,
 };
 use crate::api::xml_toolcall::extract_tool_call_from_xml;
-use crate::tools::builtin::execute_bash_streaming;
+// Bash streaming is accessed via full path: crate::tools::builtin::bash::execute_bash_streaming_channel
 use crate::utils::error_utils::{stream_error, ErrorContext};
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
@@ -19,7 +19,7 @@ use reqwest::Response;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+// std::sync no longer needed - using channels for callback
 
 // ============================================================================
 //  Types
@@ -956,25 +956,26 @@ where
                         let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
                         let timeout = args.get("timeout_seconds").and_then(|v| v.as_u64());
 
-                        // Use Arc<Mutex> to share callback across async boundary
+                        // Use the channel-based streaming API
                         let call_id = call.id.clone();
-                        let callback_ref = Arc::new(Mutex::new(&mut callback));
+                        let (mut rx, handle) = crate::tools::builtin::bash::execute_bash_streaming_channel(
+                            command.to_string(),
+                            timeout,
+                        );
 
-                        // Execute with streaming
-                        let streaming_result = {
-                            let callback_clone = callback_ref.clone();
-                            let call_id_clone = call_id.clone();
-                            execute_bash_streaming(command, timeout, move |line, is_stderr| {
-                                if let Ok(mut cb) = callback_clone.lock() {
-                                    (*cb)(StreamEvent::BashOutputLine {
-                                        tool_call_id: call_id_clone.clone(),
-                                        line,
-                                        is_stderr,
-                                    });
-                                }
-                            })
+                        // Process streaming output as it arrives
+                        while let Some((line, is_stderr)) = rx.recv().await {
+                            callback(StreamEvent::BashOutputLine {
+                                tool_call_id: call_id.clone(),
+                                line,
+                                is_stderr,
+                            });
+                        }
+
+                        // Wait for bash execution to complete
+                        let streaming_result = handle
                             .await
-                        };
+                            .map_err(|e| anyhow!("Task join error: {}", e))?;
 
                         match streaming_result {
                             Ok(bash_result) => {

@@ -225,17 +225,25 @@ impl App {
         self.cached_tool_registry.as_ref().unwrap()
     }
 
-    /// Build comprehensive system prompt from ARULA.md files
+    /// Build comprehensive system prompt with layered content
+    /// Priority: Base ARULA_SYSTEM_PROMPT.md -> Dev Mode Warning -> Tool Docs -> Manifests -> Context Files -> MCP
     fn build_system_prompt(&self) -> String {
         let mut prompt_parts = Vec::new();
 
-        // Base ARULA personality
-        prompt_parts.push("You are ARULA, an Autonomous AI Interface assistant. You help users with coding, shell commands, and general software development tasks. Be concise, helpful, and provide practical solutions.".to_string());
+        // 1. Base ARULA system prompt (comprehensive or fallback)
+        if let Some(base_prompt) = Self::read_base_system_prompt() {
+            prompt_parts.push(base_prompt);
+        } else {
+            // Fallback to minimal base prompt if ARULA_SYSTEM_PROMPT.md not found
+            prompt_parts.push("# ARULA - Autonomous AI Interface\n\nYou are ARULA, an advanced AI coding assistant. You help users with coding, shell commands, and software development tasks. Be concise, helpful, and provide practical solutions.\n\n## Core Principles\n- Be concise and direct\n- Use tools for actions, don't output code as text\n- Read before editing - understand existing code first\n- Follow existing conventions and patterns\n- Verify your work - run tests/lint when available".to_string());
+        }
 
-        // Add development mode warning if running from cargo
+        // 2. Add development mode warning if running from cargo
         if Self::is_running_from_cargo() {
             prompt_parts.push(r#"
-## Development Mode Warning
+====
+
+## DEVELOPMENT MODE WARNING
 
 ⚠️ IMPORTANT: You are running in development mode (via `cargo run`).
 
@@ -247,46 +255,40 @@ If the user asks you to rebuild or make code changes:
 1. Make the code changes to the files as requested
 2. Tell the user: "Changes complete. Please exit ARULA and run `cargo build && cargo run` to rebuild and test."
 3. DO NOT attempt to run cargo build/run commands yourself
-
-The user will manually rebuild after exiting the application.
 "#.to_string());
         }
 
-        // Add tool calling instructions
+        // 3. Add tool documentation (enhances the base prompt with specific tool details)
         prompt_parts.push(r#"
-## Tool Usage
+====
 
-You have access to tools for file operations, shell commands, and more. Use them when the user's request requires it.
+## AVAILABLE TOOLS
 
-### Available Tools:
-- `execute_bash`: Run shell commands (git, npm, cargo, ls, cat, etc.)
-- `read_file`: Read file contents  
-- `write_file`: Create or overwrite files
-- `edit_file`: Make targeted edits to existing files
-- `list_directory`: List files and directories
-- `search_files`: Search for patterns in files
+You have access to these tools for file operations and shell commands:
 
-### When to use tools:
-- User asks to run a command → call execute_bash
-- User asks to read/view a file → call read_file
-- User asks to list/show files → call list_directory
-- User asks to edit/modify a file → call read_file, then edit_file
-- User asks to analyze code → call read_file to read it first
+| Tool | Purpose |
+|------|---------|
+| `execute_bash` | Run shell commands (git, npm, cargo, ls, etc.) |
+| `read_file` | Read file contents (supports line ranges) |
+| `write_file` | Create or overwrite files |
+| `edit_file` | Make targeted edits to existing files |
+| `list_directory` | List files and directories |
+| `search_files` | Search for patterns in files |
 
-### Important:
-- Only use tools when the user's request requires an action
-- Don't use tools just to demonstrate capabilities
-- For simple questions or conversation, just respond normally
-- When you do need a tool, call it directly without asking permission
+### Tool Mapping
+- User asks to run a command → `execute_bash`
+- User asks to read/view a file → `read_file`
+- User asks to list/show files → `list_directory`
+- User asks to edit a file → `read_file` first, then `edit_file`
+- User asks to create a file → `write_file`
 
-### Tool Call Format (CRITICAL):
+### CRITICAL FORMAT WARNING
 - DO NOT output tool calls as text like `<function=tool_name>` or `</function>`
-- Tools are called through the API's function calling mechanism, not as text output
+- Tools are called through the API's function calling mechanism, not as text
 - If you find yourself typing `<function=` you are doing it WRONG
-- Just describe what you want to do and the system will make the tool call for you
 "#.to_string());
 
-        // Add built-in tools information
+        // 4. Add built-in tools information (detailed tool schemas)
         prompt_parts.push(self.build_builtin_tools_info());
 
         // Read PROJECT.manifest from current directory (highest priority)
@@ -399,6 +401,39 @@ You have access to tools for file operations, shell commands, and more. Use them
         } else {
             None
         }
+    }
+
+    /// Read the comprehensive system prompt from ARULA_SYSTEM_PROMPT.md
+    /// This is the primary system prompt that defines ARULA's behavior
+    fn read_base_system_prompt() -> Option<String> {
+        // Check multiple locations for the system prompt
+        let possible_paths = [
+            // Current directory (for development)
+            std::path::PathBuf::from("ARULA_SYSTEM_PROMPT.md"),
+            // Executable directory
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.join("ARULA_SYSTEM_PROMPT.md")))
+                .unwrap_or_default(),
+            // Home directory config
+            dirs::home_dir()
+                .map(|p| p.join(".arula").join("ARULA_SYSTEM_PROMPT.md"))
+                .unwrap_or_default(),
+        ];
+
+        for path in &possible_paths {
+            if path.exists() {
+                if let Ok(content) = fs::read_to_string(path) {
+                    debug_print(&format!(
+                        "DEBUG: Loaded base system prompt from {}",
+                        path.display()
+                    ));
+                    return Some(content);
+                }
+            }
+        }
+        debug_print("DEBUG: No ARULA_SYSTEM_PROMPT.md found, using default base prompt");
+        None
     }
 
     /// Read ARULA.md from current directory
@@ -1503,6 +1538,15 @@ You have access to tools for file operations, shell commands, and more. Use them
         use reqwest::Client;
         use std::time::Duration;
 
+        // Normalize the URL: remove trailing paths and slashes to get base URL
+        // This prevents malformed URLs like http://localhost:11434/api/chat/api/tags
+        let base_url = api_url
+            .trim_end_matches('/')
+            .trim_end_matches("/api/chat")
+            .trim_end_matches("/api/tags")
+            .trim_end_matches("/api/generate")
+            .trim_end_matches("/api");
+
         let client = match Client::builder()
             .timeout(Duration::from_secs(10))
             .user_agent("arula-cli/1.0")
@@ -1514,7 +1558,7 @@ You have access to tools for file operations, shell commands, and more. Use them
             }
         };
 
-        let request = client.get(format!("{}/api/tags", api_url));
+        let request = client.get(format!("{}/api/tags", base_url));
 
         match request.send().await {
             Ok(response) => {
@@ -1538,11 +1582,24 @@ You have access to tools for file operations, shell commands, and more. Use them
                         }
                     }
                 } else {
-                    vec![format!("⚠️ Ollama API error: Status {}", status)]
+                    // Provide more helpful error messages based on status code
+                    match status.as_u16() {
+                        401 => vec![format!("⚠️ Ollama authentication failed. Check if Ollama requires auth or if the endpoint URL is correct.")],
+                        404 => vec![format!("⚠️ Ollama endpoint not found. Make sure Ollama is running at: {}", base_url)],
+                        _ => vec![format!("⚠️ Ollama API error: Status {}", status)],
+                    }
                 }
             }
             Err(e) => {
-                vec![format!("⚠️ Failed to fetch Ollama models: {}", e)]
+                // Provide more specific error messages
+                let error_str = e.to_string();
+                if error_str.contains("Connection refused") || error_str.contains("connect") {
+                    vec![format!("⚠️ Cannot connect to Ollama. Is it running at {}?", base_url)]
+                } else if error_str.contains("timeout") {
+                    vec![format!("⚠️ Connection to Ollama timed out at {}", base_url)]
+                } else {
+                    vec![format!("⚠️ Failed to fetch Ollama models: {}", e)]
+                }
             }
         }
     }

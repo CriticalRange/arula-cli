@@ -9,7 +9,7 @@ import android.graphics.Path;
 import android.graphics.RectF;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
-import android.view.View;
+import android.widget.FrameLayout;
 import androidx.annotation.Nullable;
 
 import com.arula.terminal.R;
@@ -18,7 +18,7 @@ import com.arula.terminal.R;
  * Interactive card with 3D tilt effect
  * Replicates the desktop version's tilt card interaction
  */
-public class TiltCardView extends View {
+public class TiltCardView extends FrameLayout {
     private Paint cardPaint;
     private Paint shadowPaint;
     private Paint highlightPaint;
@@ -43,8 +43,8 @@ public class TiltCardView extends View {
     private float touchY = 0f;
 
     private ValueAnimator tiltAnimator;
-    private SpringAnimation springX;
-    private SpringAnimation springY;
+    private com.arula.terminal.ui.animation.SpringAnimation springX;
+    private com.arula.terminal.ui.animation.SpringAnimation springY;
 
     public TiltCardView(Context context) {
         super(context);
@@ -85,12 +85,15 @@ public class TiltCardView extends View {
         cardPath = new Path();
         cardBounds = new RectF();
 
-        // Initialize spring animations
-        springX = new com.arula.terminal.ui.animation.SpringAnimation(300f, 0.9f);
-        springY = new com.arula.terminal.ui.animation.SpringAnimation(300f, 0.9f);
+        // Initialize spring animations (matching desktop defaults)
+        springX = new com.arula.terminal.ui.animation.SpringAnimation();
+        springY = new com.arula.terminal.ui.animation.SpringAnimation();
 
         // Enable touch events
         setClickable(true);
+
+        // Required for custom drawing with children
+        setWillNotDraw(false);
     }
 
     @Override
@@ -186,9 +189,7 @@ public class TiltCardView extends View {
     }
 
     @Override
-    protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas);
-
+    protected void dispatchDraw(Canvas canvas) {
         // Draw shadow
         drawShadow(canvas);
 
@@ -196,7 +197,7 @@ public class TiltCardView extends View {
         canvas.save();
         applyTiltTransform(canvas);
 
-        // Draw card
+        // Draw card background
         cardPaint.setColor(cardColor);
         canvas.drawPath(cardPath, cardPaint);
 
@@ -211,6 +212,9 @@ public class TiltCardView extends View {
             highlightPaint.setAlpha(100);
             canvas.drawPath(cardPath, highlightPaint);
         }
+
+        // Draw children on top of the card
+        super.dispatchDraw(canvas);
 
         canvas.restore();
     }
