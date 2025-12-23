@@ -103,12 +103,17 @@ impl AgentClient {
         self.config.get_streaming_enabled()
     }
 
-    /// Send a message and get a streaming response
+    /// Send a message and get a response (streaming or non-streaming based on options)
     pub async fn query(
         &self,
         message: &str,
         conversation_history: Option<Vec<ChatMessage>>,
     ) -> Result<Pin<Box<dyn Stream<Item = ContentBlock> + Send>>> {
+        // Check if streaming is disabled in options
+        if !self.options.streaming {
+            return self.query_non_streaming(message, conversation_history).await;
+        }
+        
         // Delegate to the unified streaming method
         self.query_streaming(message, conversation_history).await
     }

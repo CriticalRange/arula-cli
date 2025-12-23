@@ -40,7 +40,7 @@ impl ConversationMetadata {
                         updated_at = dt;
                     }
                     
-                    // Use first user message as title (truncated)
+                    // Use first user message as title (truncated) if no title was generated
                     if title == "New Conversation" && matches!(event, UiEvent::UserMessage { content: _, .. }) {
                         if let UiEvent::UserMessage { content: user_content, .. } = event {
                             title = if user_content.len() > 50 {
@@ -50,6 +50,10 @@ impl ConversationMetadata {
                             };
                         }
                     }
+                }
+                UiEvent::ConversationTitle(generated_title) => {
+                    // Use the AI-generated title
+                    title = generated_title.clone();
                 }
                 _ => {}
             }

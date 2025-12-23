@@ -59,6 +59,7 @@ struct AppState {
     input_cursor: usize,
     is_waiting: bool,
     thinking_content: String,
+    thinking_expanded: bool,
     stream_collector: StreamCollector,
     active_tools: Vec<ToolExecution>,
     current_response: String,
@@ -86,6 +87,7 @@ impl AppState {
             input_cursor: 0,
             is_waiting: false,
             thinking_content: String::new(),
+            thinking_expanded: false,
             stream_collector: StreamCollector::new(),
             active_tools: Vec::new(),
             current_response: String::new(),
@@ -304,9 +306,9 @@ impl AppState {
                 spans.push(Span::styled(label, Style::default().fg(RColor::Yellow)));
             } else if !self.thinking_content.is_empty() {
                 let preview = TuiApp::thinking_preview(&self.thinking_content, 32)
-                    .unwrap_or_else(|| "Thinking...".to_string());
+                    .unwrap_or_else(|| "Thought...".to_string());
                 spans.push(Span::styled(
-                    format!("{spinner} Thinking "),
+                    format!("{spinner} Thought "),
                     Style::default().fg(RColor::Magenta),
                 ));
                 spans.push(Span::styled(preview, Style::default().fg(RColor::DarkGray)));
@@ -360,7 +362,14 @@ impl AppState {
     fn status_height(&self) -> u16 {
         let mut height = 0;
         if self.is_waiting && !self.thinking_content.is_empty() {
-            height += 1;
+            if self.thinking_expanded {
+                // Expanded mode: title line + up to 5 content lines + bottom border
+                let content_lines = self.thinking_content.lines().count().min(5);
+                height += 1 + content_lines as u16 + 1;
+            } else {
+                // Collapsed mode: just 1 line
+                height += 1;
+            }
         }
         if self.is_waiting && !self.active_tools.is_empty() {
             height += 1;
@@ -417,19 +426,61 @@ impl AppState {
 
         if self.is_waiting && !self.thinking_content.is_empty() {
             let spinner = ["◐", "◓", "◑", "◒"][self.frame % 4];
-            let preview = TuiApp::thinking_preview(&self.thinking_content, 48)
-                .unwrap_or_else(|| "Thinking...".to_string());
-            let mut spans = Vec::new();
-            spans.push(Span::styled("┌", border));
-            spans.push(Span::styled(
-                format!(" {spinner} Thinking "),
-                Style::default()
-                    .fg(RColor::Magenta)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            spans.push(Span::styled("┐ ", border));
-            spans.push(Span::styled(preview, Style::default().fg(RColor::Gray)));
-            lines.push(Line::from(spans));
+
+            if self.thinking_expanded {
+                // Expanded mode - show full content
+                let mut spans = Vec::new();
+                spans.push(Span::styled("┌", border));
+                spans.push(Span::styled(
+                    format!(" {spinner} Thought "),
+                    Style::default()
+                        .fg(RColor::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled("┐", border));
+                lines.push(Line::from(spans));
+
+                // Show full thought content (up to 5 lines)
+                for line in self.thinking_content.lines().take(5) {
+                    lines.push(Line::from(vec![
+                        Span::styled("│ ", border),
+                        Span::styled(line, Style::default().fg(RColor::Gray)),
+                    ]));
+                }
+
+                // Close the box
+                let content_lines = self.thinking_content.lines().count().min(5);
+                let bottom_spans = vec![
+                    Span::styled("└", border),
+                    Span::styled("──────────────────────────────────────────────────────────", border),
+                    Span::styled("┘", border),
+                ];
+                lines.push(Line::from(bottom_spans));
+            } else {
+                // Collapsed mode - show preview with "..." if truncated
+                let preview = TuiApp::thinking_preview(&self.thinking_content, 48)
+                    .unwrap_or_else(|| "Thought...".to_string());
+
+                let mut spans = Vec::new();
+                spans.push(Span::styled("┌", border));
+                spans.push(Span::styled(
+                    format!(" {spinner} Thought "),
+                    Style::default()
+                        .fg(RColor::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled("┐ ", border));
+
+                // Add "..." if content is longer than preview
+                let full_preview = if self.thinking_content.len() > 48 {
+                    format!("{}...", preview.trim_end().chars().take(45).collect::<String>())
+                } else {
+                    preview
+                };
+
+                spans.push(Span::styled(full_preview, Style::default().fg(RColor::Gray)));
+                lines.push(Line::from(spans));
+            }
         }
 
         lines
@@ -850,6 +901,13 @@ impl TuiApp {
                                 self.handle_menu_result(result)?;
                                 redraw = true;
                             }
+                            KeyCode::Char('t') => {
+                                // Toggle thinking bubble expansion
+                                if !self.state.thinking_content.is_empty() {
+                                    self.state.thinking_expanded = !self.state.thinking_expanded;
+                                    redraw = true;
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -936,13 +994,17 @@ impl TuiApp {
                 }
                 AiResponse::AgentThinkingStart => {
                     self.state.thinking_content.clear();
+                    self.state.thinking_expanded = false;
                     changed = true;
                 }
                 AiResponse::AgentThinkingContent(content) => {
                     self.state.thinking_content.push_str(&content);
                     changed = true;
                 }
-                AiResponse::AgentThinkingEnd => {}
+                AiResponse::AgentThinkingEnd => {
+                    // Reset expansion state when thinking ends
+                    self.state.thinking_expanded = false;
+                }
                 AiResponse::AgentToolCall {
                     id,
                     name,

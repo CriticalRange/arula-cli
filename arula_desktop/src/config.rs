@@ -1,4 +1,5 @@
 use arula_core::utils::config::{AiConfig, Config, ZaiEndpoint};
+use crate::theme::ThemeMode;
 
 /// Form state for the settings configuration panel.
 #[derive(Debug, Clone)]
@@ -21,6 +22,10 @@ pub struct ConfigForm {
     pub endpoint_name: String,
     /// Available z.ai endpoint options
     pub endpoint_options: Vec<String>,
+    /// Selected theme mode (Light, Dark, Black)
+    pub theme_mode: ThemeMode,
+    /// Available theme mode options
+    pub theme_options: Vec<String>,
 }
 
 impl ConfigForm {
@@ -82,6 +87,8 @@ impl ConfigForm {
             status: None,
             endpoint_name,
             endpoint_options,
+            theme_mode: ThemeMode::default(),
+            theme_options: ThemeMode::all().iter().map(|s| s.to_string()).collect(),
         }
     }
 

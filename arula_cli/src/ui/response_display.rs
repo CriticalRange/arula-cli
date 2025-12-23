@@ -1,7 +1,7 @@
 use crate::ui::tui::InlineRenderer;
 use crate::ui::widgets::{
     status::{ToolStatus, ToolStatusWidget},
-    thinking::ThinkingWidget,
+    thinking::{AnimationState, ThinkingWidget},
 };
 use anyhow::Result;
 use arula_core::api::agent::ToolResult;
@@ -18,6 +18,9 @@ pub struct ResponseDisplay {
     is_thinking: bool,
     thinking_content: String,
     thinking_frame: usize,
+    thinking_expanded: bool,
+    thinking_animation_state: AnimationState,
+    thinking_animation_start: Option<Instant>,
 
     current_tools: Vec<ToolState>,
 
@@ -44,6 +47,9 @@ impl ResponseDisplay {
             is_thinking: false,
             thinking_content: String::new(),
             thinking_frame: 0,
+            thinking_expanded: false,
+            thinking_animation_state: AnimationState::Idle,
+            thinking_animation_start: None,
             current_tools: Vec::new(),
             last_update: Instant::now(),
         })
@@ -52,6 +58,21 @@ impl ResponseDisplay {
     /// Clear the TUI area (useful before printing final output or exiting)
     pub fn clear(&mut self) -> Result<()> {
         self.renderer.clear()
+    }
+
+    /// Toggle thinking bubble expansion
+    pub fn toggle_thinking_expansion(&mut self) {
+        if self.thinking_expanded {
+            // Start fade out
+            self.thinking_animation_state = AnimationState::FadingOut { progress: 0 };
+            self.thinking_animation_start = Some(Instant::now());
+            self.thinking_expanded = false;
+        } else {
+            // Start fade in
+            self.thinking_expanded = true;
+            self.thinking_animation_state = AnimationState::FadingIn { progress: 0 };
+            self.thinking_animation_start = Some(Instant::now());
+        }
     }
 
     /// Update the display based on an AI response event
@@ -69,13 +90,15 @@ impl ResponseDisplay {
                 if !self.is_thinking {
                     self.is_thinking = true;
                     self.thinking_content.clear();
+                    self.thinking_expanded = false;
+                    self.thinking_animation_state = AnimationState::Idle;
                 }
             }
             AiResponse::AgentThinkingContent(text) => {
                 self.thinking_content.push_str(text);
             }
             AiResponse::AgentThinkingEnd => {
-                // thinking finished
+                // thinking finished - keep collapsed state
             }
 
             AiResponse::AgentToolCall {
@@ -172,6 +195,36 @@ impl ResponseDisplay {
             self.last_update = Instant::now();
         }
 
+        // Update fade animation
+        if let Some(start) = self.thinking_animation_start {
+            const FADE_DURATION_MS: u64 = 300; // 300ms fade duration
+            let elapsed = start.elapsed().as_millis() as u64;
+
+            match self.thinking_animation_state {
+                AnimationState::FadingIn { ref mut progress } => {
+                    if elapsed >= FADE_DURATION_MS {
+                        *progress = 255;
+                        self.thinking_animation_state = AnimationState::FullyVisible;
+                        self.thinking_animation_start = None;
+                    } else {
+                        *progress = ((elapsed as f64 / FADE_DURATION_MS as f64) * 255.0) as u8;
+                    }
+                }
+                AnimationState::FadingOut { ref mut progress } => {
+                    if elapsed >= FADE_DURATION_MS {
+                        *progress = 255;
+                        self.thinking_animation_state = AnimationState::Idle;
+                        self.thinking_animation_start = None;
+                    } else {
+                        *progress = ((elapsed as f64 / FADE_DURATION_MS as f64) * 255.0) as u8;
+                    }
+                }
+                _ => {
+                    self.thinking_animation_start = None;
+                }
+            }
+        }
+
         // Calculate functionality needed
         let show_thinking = self.is_thinking && !self.thinking_content.is_empty();
         let show_tools = !self.current_tools.is_empty();
@@ -187,10 +240,14 @@ impl ResponseDisplay {
         // Let's dynamic size.
 
         let thinking_height = if show_thinking {
-            // Minimal height 3 (top, content, bottom)
-            // Clamping content to max 5 lines
-            let lines = self.thinking_content.lines().count().min(5).max(1);
-            (lines + 2) as u16
+            // When collapsed, minimal height (3 lines: top, content, bottom)
+            // When expanded, show full content
+            if self.thinking_expanded {
+                let lines = self.thinking_content.lines().count().min(5).max(1);
+                (lines + 2) as u16
+            } else {
+                3 // Always 3 lines when collapsed
+            }
         } else {
             0
         };
@@ -208,6 +265,8 @@ impl ResponseDisplay {
         let thinking_content = &self.thinking_content;
         let thinking_frame = self.thinking_frame;
         let is_thinking = self.is_thinking;
+        let thinking_expanded = self.thinking_expanded;
+        let thinking_animation_state = self.thinking_animation_state;
         let tools = &self.current_tools;
 
         self.renderer.terminal.draw(|f| {
@@ -220,7 +279,9 @@ impl ResponseDisplay {
                 .split(f.area());
 
             if show_thinking {
-                let widget = ThinkingWidget::new(thinking_content, thinking_frame, is_thinking);
+                let widget = ThinkingWidget::new(thinking_content, thinking_frame, is_thinking)
+                    .with_expanded(thinking_expanded)
+                    .with_animation(thinking_animation_state);
                 f.render_widget(widget, chunks[0]);
             }
 

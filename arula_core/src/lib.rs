@@ -8,7 +8,6 @@ pub mod conversation_manager;
 pub mod init;
 pub mod prelude;
 pub mod profiling;
-pub mod rust_2024_examples;
 pub mod session_manager;
 pub mod tools;
 pub mod utils;
@@ -86,6 +85,17 @@ impl<B: Backend> SessionRunner<B> {
         Self { backend }
     }
 
+    pub fn backend(&self) -> &B {
+        &self.backend
+    }
+
+    pub fn backend_clone(&self) -> B
+    where
+        B: Clone,
+    {
+        self.backend.clone()
+    }
+
     pub fn stream_session(
         &self,
         prompt: String,
@@ -125,6 +135,39 @@ impl AgentBackend {
         );
 
         Ok(Self { client })
+    }
+
+    /// Create a new client with system prompt (for non-session calls like conversation starters)
+    /// This version uses an empty tool registry to avoid sending tools in the request.
+    pub fn create_client_with_prompt(&self, config: &utils::config::Config, system_prompt: String) -> anyhow::Result<api::agent_client::AgentClient> {
+        // For conversation starters, we need non-streaming mode because:
+        // 1. Z.AI's Anthropic endpoint returns Anthropic-format streams (not OpenAI format)
+        // 2. The current parser only handles OpenAI format, causing text blocks to be lost
+        // 3. Short JSON responses don't need streaming overhead
+        let agent_options = api::agent::AgentOptionsBuilder::new()
+            .system_prompt(&system_prompt)
+            .model(&config.get_model())
+            .temperature(0.7) // Temperature for conversation starter generation (higher = more variety)
+            .auto_execute_tools(false) // No tool execution for starters
+            .streaming(false) // Disable streaming to avoid Anthropic format parsing issues
+            .build();
+
+        // Use empty tool registry to avoid sending tools in API request
+        let tool_registry = api::agent::ToolRegistry::new();
+        let client = api::agent_client::AgentClient::new_with_registry(
+            config.active_provider.clone(),
+            config.get_api_url(),
+            config.get_api_key(),
+            config.get_model(),
+            agent_options,
+            config,
+            tool_registry,
+        );
+        Ok(client)
+    }
+
+    pub fn client(&self) -> &api::agent_client::AgentClient {
+        &self.client
     }
 }
 

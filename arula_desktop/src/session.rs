@@ -131,6 +131,8 @@ pub struct Session {
     pub is_streaming: bool,
     /// Buffer for AI content - prevents incomplete messages before tool calls
     ai_buffer: String,
+    /// Title for the conversation
+    pub title: String,
 }
 
 impl Session {
@@ -141,6 +143,7 @@ impl Session {
             messages: Vec::new(),
             is_streaming: false,
             ai_buffer: String::new(),
+            title: "New Chat".to_string(),
         }
     }
 
@@ -151,6 +154,7 @@ impl Session {
             messages: Vec::new(),
             is_streaming: false,
             ai_buffer: String::new(),
+            title: "New Chat".to_string(),
         };
 
         for event in events {
@@ -204,6 +208,13 @@ impl Session {
     /// Converts session messages to UiEvents for saving conversations.
     pub fn to_ui_events(&self) -> Vec<arula_core::session_manager::UiEvent> {
         let mut events = Vec::new();
+        
+        // Add the title event first if it's not the default
+        if self.title != "New Chat" && self.title != "New Conversation" {
+            events.push(arula_core::session_manager::UiEvent::ConversationTitle(
+                self.title.clone()
+            ));
+        }
         
         for msg in &self.messages {
             match msg.role.as_str() {
@@ -414,6 +425,16 @@ impl Session {
     /// Sets the streaming state.
     pub fn set_streaming(&mut self, streaming: bool) {
         self.is_streaming = streaming;
+    }
+
+    /// Sets the conversation title.
+    pub fn set_title(&mut self, title: String) {
+        self.title = title;
+    }
+
+    /// Gets the conversation title.
+    pub fn get_title(&self) -> &str {
+        &self.title
     }
 
     /// Gets the current streaming state.

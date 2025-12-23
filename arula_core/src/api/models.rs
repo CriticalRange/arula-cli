@@ -486,18 +486,65 @@ impl ModelFetcher for OpenRouterFetcher {
     }
 }
 
-/// Z.AI model fetcher (returns known models since no public endpoint)
+/// Z.AI model fetcher using the Anthropic-compatible API endpoint
 pub struct ZaiFetcher;
 
 #[async_trait]
 impl ModelFetcher for ZaiFetcher {
-    async fn fetch_models(&self, _api_key: &str, _api_url: Option<&str>) -> Vec<String> {
-        // Z.AI doesn't have a public models endpoint
-        vec![
-            "GLM-4.6".to_string(),
-            "GLM-4.5".to_string(),
-            "GLM-4.5-AIR".to_string(),
-        ]
+    async fn fetch_models(&self, api_key: &str, _api_url: Option<&str>) -> Vec<String> {
+        use reqwest::Client;
+        use std::time::Duration;
+        
+        let models_url = "https://api.z.ai/api/anthropic/v1/models";
+        
+        let client = match Client::builder()
+            .timeout(Duration::from_secs(10))
+            .user_agent("arula/1.0")
+            .build()
+        {
+            Ok(client) => client,
+            Err(e) => {
+                return vec![format!("⚠️ Failed to create HTTP client: {}", e)];
+            }
+        };
+        
+        let request = client
+            .get(models_url)
+            .header("x-api-key", api_key);
+        
+        match request.send().await {
+            Ok(response) => {
+                let status = response.status();
+                if status.is_success() {
+                    match response.json::<serde_json::Value>().await {
+                        Ok(json) => {
+                            // Parse response format: { "data": [{ "id": "...", "display_name": "..." }] }
+                            if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+                                let mut models = Vec::new();
+                                for model in data {
+                                    if let Some(id) = model.get("id").and_then(|i| i.as_str()) {
+                                        models.push(id.to_string());
+                                    }
+                                }
+                                if models.is_empty() {
+                                    vec!["⚠️ No models found".to_string()]
+                                } else {
+                                    models
+                                }
+                            } else {
+                                vec!["⚠️ Invalid response format".to_string()]
+                            }
+                        }
+                        Err(e) => vec![format!("⚠️ Failed to parse models response: {}", e)]
+                    }
+                } else if status == 401 {
+                    vec!["⚠️ Invalid API key".to_string()]
+                } else {
+                    vec![format!("⚠️ API error: {}", status)]
+                }
+            }
+            Err(e) => vec![format!("⚠️ Network error: {}", e)]
+        }
     }
 
     fn provider_name(&self) -> &'static str {
@@ -505,7 +552,7 @@ impl ModelFetcher for ZaiFetcher {
     }
 
     fn default_ttl_minutes(&self) -> u64 {
-        60 * 24 // 24 hours - static list
+        60 // 1 hour - dynamic list
     }
 }
 

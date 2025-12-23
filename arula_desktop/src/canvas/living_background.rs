@@ -42,15 +42,10 @@ impl<'a, Message> canvas::Program<Message> for LivingBackground<'a, Message> {
             let rotation = self.state.sway_angle;
             let travel = self.state.travel;
 
-            // Interpolate background color between Palette Background (Purple) and Neutral Gray
-            let active_bg = self.palette.background;
-            let disabled_bg = Color::from_rgb(0.1, 0.1, 0.1); // Dark Gray
-
-            // self.opacity = 1.0 (Fully Active/Purple) -> 0.0 (Disabled/Gray)
-            let r = active_bg.r * self.opacity + disabled_bg.r * (1.0 - self.opacity);
-            let g = active_bg.g * self.opacity + disabled_bg.g * (1.0 - self.opacity);
-            let b = active_bg.b * self.opacity + disabled_bg.b * (1.0 - self.opacity);
-            let bg_color = Color::from_rgba(r, g, b, 1.0);
+            // Interpolate background color based on opacity
+            // When opacity is 1.0: show full theme background
+            // When opacity is 0.0: show solid theme background (no particles/grid)
+            let bg_color = self.palette.background;
 
             // Fill background
             frame.fill_rectangle(

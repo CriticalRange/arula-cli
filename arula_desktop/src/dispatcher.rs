@@ -102,6 +102,13 @@ impl Dispatcher {
     pub fn get_cached_zai_models(&self) -> Option<Vec<String>> {
         self.manager.get_cached_zai_models()
     }
+
+    // ==================== Conversation Starters ====================
+
+    /// Generate contextual conversation starter suggestions
+    pub fn generate_conversation_starters(&self) {
+        self.manager.generate_conversation_starters();
+    }
 }
 
 /// Wrapper to make the receiver hashable for run_with

@@ -919,6 +919,7 @@ impl ApiClient {
 
                     let mut text_content = String::new();
                     let mut tool_calls: Vec<ToolCall> = Vec::new();
+                    let mut thinking_content: Option<String> = None;
 
                     if let Some(blocks) = content_array {
                         for block in blocks {
@@ -929,6 +930,16 @@ impl ApiClient {
                                 "text" => {
                                     if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
                                         text_content.push_str(text);
+                                    }
+                                }
+                                "thinking" => {
+                                    // GLM 4.7 and Claude use "thinking" content blocks
+                                    // The thinking text is in the "thinking" field
+                                    if let Some(thinking) = block.get("thinking").and_then(|t| t.as_str()) {
+                                        thinking_content = Some(thinking.to_string());
+                                        if std::env::var("ARULA_DEBUG").unwrap_or_default() == "1" {
+                                            eprintln!("🧠 DEBUG: Found thinking block in Anthropic-format response");
+                                        }
                                     }
                                 }
                                 "tool_use" => {
@@ -971,7 +982,7 @@ impl ApiClient {
                         },
                         model: Some(self.model.clone()),
                         created: None,
-                        reasoning_content: None,
+                        reasoning_content: thinking_content,
                     })
                 } else {
                     // Parse OpenAI-compatible format (for Coding Plan endpoint)

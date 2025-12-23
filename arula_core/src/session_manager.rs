@@ -47,24 +47,12 @@ fn read_base_system_prompt() -> Option<String> {
     None
 }
 
-/// Read ARULA.md from ~/.arula/ directory (user customizations)
-fn read_global_arula_md() -> Option<String> {
-    let home_dir = dirs::home_dir()?;
-    let global_arula_path = home_dir.join(".arula").join("ARULA.md");
+/// Read PROJECT.manifest from current directory (project-specific context)
+fn read_project_manifest() -> Option<String> {
+    let manifest_path = std::path::Path::new("PROJECT.manifest");
 
-    if global_arula_path.exists() {
-        std::fs::read_to_string(&global_arula_path).ok()
-    } else {
-        None
-    }
-}
-
-/// Read ARULA.md from current directory (project-specific context)
-fn read_local_arula_md() -> Option<String> {
-    let local_arula_path = std::path::Path::new("ARULA.md");
-
-    if local_arula_path.exists() {
-        std::fs::read_to_string(local_arula_path).ok()
+    if manifest_path.exists() {
+        std::fs::read_to_string(manifest_path).ok()
     } else {
         None
     }
@@ -106,8 +94,8 @@ You are ARULA, an advanced AI coding assistant designed for software engineering
 "#;
 
 /// Build system prompt with layered content
-/// Priority: Base System Prompt -> Global ARULA.md -> Local ARULA.md
-fn build_system_prompt_with_arula() -> String {
+/// Priority: Base System Prompt -> PROJECT.manifest
+fn build_system_prompt_with_manifest() -> String {
     let mut prompt_parts = Vec::new();
 
     // 1. Base system prompt (comprehensive or default)
@@ -117,19 +105,11 @@ fn build_system_prompt_with_arula() -> String {
         prompt_parts.push(DEFAULT_BASE_PROMPT.to_string());
     }
 
-    // 2. Add global ARULA.md from ~/.arula/ (user preferences)
-    if let Some(global_arula) = read_global_arula_md() {
+    // 2. Add PROJECT.manifest from current directory (project context)
+    if let Some(manifest) = read_project_manifest() {
         prompt_parts.push(format!(
-            "\n====\n\n## USER PREFERENCES\n\nThe following preferences are set globally by the user:\n\n{}",
-            global_arula
-        ));
-    }
-
-    // 3. Add local ARULA.md from current directory (project context)
-    if let Some(local_arula) = read_local_arula_md() {
-        prompt_parts.push(format!(
-            "\n====\n\n## PROJECT CONTEXT\n\nThe following context is specific to this project:\n\n{}", 
-            local_arula
+            "\n====\n\n## PROJECT CONTEXT\n\nThe following PROJECT.manifest defines this project:\n\n{}", 
+            manifest
         ));
     }
 
@@ -158,6 +138,10 @@ pub enum UiEvent {
     BashOutputLine(Uuid, String, String, bool), // session_id, tool_call_id, line, is_stderr
     StreamFinished(Uuid),
     StreamErrored(Uuid, String),
+    /// Conversation starters generated
+    ConversationStarters(Vec<String>),
+    /// Generated title for the conversation
+    ConversationTitle(String),
 }
 
 /// Manages AI streaming sessions and communication with UI layers.
@@ -178,7 +162,7 @@ pub struct SessionManager {
 impl SessionManager {
     /// Creates a new session manager with the given configuration.
     pub fn new(config: &Config) -> anyhow::Result<Self> {
-        let backend = AgentBackend::new(config, build_system_prompt_with_arula())?;
+        let backend = AgentBackend::new(config, build_system_prompt_with_manifest())?;
         let runtime = Runtime::new()?;
         let (events, _) = broadcast::channel(128);
         let runner = SessionRunner::new(backend);
@@ -192,9 +176,14 @@ impl SessionManager {
         })
     }
 
+    /// Get a clone of the backend (for use in async contexts like conversation starters)
+    pub fn backend_clone(&self) -> AgentBackend {
+        self.runner.backend_clone()
+    }
+
     /// Updates the backend with new configuration.
     pub fn update_backend(&mut self, config: &Config) -> anyhow::Result<()> {
-        let backend = AgentBackend::new(config, build_system_prompt_with_arula())?;
+        let backend = AgentBackend::new(config, build_system_prompt_with_manifest())?;
         self.runner = SessionRunner::new(backend);
         self.config = config.clone();
         Ok(())
@@ -242,6 +231,39 @@ impl SessionManager {
             }
         } else {
             arguments.to_string()
+        }
+    }
+
+    /// Helper function to format error messages with context
+    fn format_error_with_context(err: &str, result: &serde_json::Value) -> String {
+        // Clean up common error patterns
+        let cleaned = err
+            .trim()
+            .replace("error: ", "")
+            .replace("Error: ", "")
+            .replace("ERROR: ", "");
+
+        // Truncate if too long
+        let truncated = if cleaned.len() > 100 {
+            format!("{}...", &cleaned[..100])
+        } else {
+            cleaned.to_string()
+        };
+
+        // Try to extract tool name for context
+        if let Some(tool) = result.get("tool").and_then(|t| t.as_str()) {
+            format!("{}: {}", Self::capitalize_first(tool), truncated)
+        } else {
+            format!("Error: {}", truncated)
+        }
+    }
+
+    /// Helper function to capitalize first letter
+    fn capitalize_first(s: &str) -> String {
+        let mut chars = s.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         }
     }
 
@@ -484,17 +506,50 @@ impl SessionManager {
             return first_line(s, 80);
         }
 
-        // Handle error case
+        // Handle error case - provide helpful, explanatory messages
         if !success {
+            // Check for error field first (from ToolResult)
+            if let Some(err) = data.get("error").and_then(|e| e.as_str()) {
+                return Self::format_error_with_context(err, &result);
+            }
+            
+            // Check for wrapped Err format
             if let Some(err) = result.get("Err") {
                 if let Some(err_str) = err.as_str() {
-                    return first_line(err_str, 80);
+                    return Self::format_error_with_context(err_str, &result);
                 }
                 if let Ok(json_str) = serde_json::to_string(err) {
-                    return first_line(&json_str, 80);
+                    return Self::format_error_with_context(&json_str, &result);
                 }
             }
-            return "Error".to_string();
+            
+            // Check for stderr with non-zero exit code (bash commands)
+            if let Some(exit_code) = data.get("exit_code").and_then(|c| c.as_i64()) {
+                if exit_code != 0 {
+                    if let Some(stderr) = data.get("stderr").and_then(|s| s.as_str()) {
+                        let trimmed = stderr.trim();
+                        if !trimmed.is_empty() {
+                            return format!("Command failed (exit {}): {}", exit_code, first_line(trimmed, 80));
+                        }
+                    }
+                    return format!("Command failed with exit code {}", exit_code);
+                }
+            }
+            
+            // Generic error with tool name context
+            if let Some(tool_name) = data.get("tool").and_then(|t| t.as_str()) {
+                return format!("{}: Failed - {}", Self::capitalize_first(tool_name), 
+                    data.get("message").and_then(|m| m.as_str()).unwrap_or("Unknown error"));
+            }
+            
+            return "Error: Operation failed".to_string();
+        }
+
+        // Check for edit_file result - show raw diff like git
+        if let Some(diff) = data.get("diff").and_then(|d| d.as_str()) {
+            if !diff.is_empty() {
+                return diff.to_string();
+            }
         }
 
         // Fallback: try to show something useful
@@ -503,6 +558,70 @@ impl SessionManager {
         }
 
         "Done".to_string()
+    }
+
+    /// Generate a conversation title from the first user message
+    fn generate_conversation_title(tx: broadcast::Sender<UiEvent>, prompt: String) {
+        // Use a simple heuristic-based title generation
+        // This is faster than using AI and works well for most cases
+        
+        // Skip empty or very short messages
+        if prompt.trim().len() < 3 {
+            let _ = tx.send(UiEvent::ConversationTitle("New Chat".to_string()));
+            return;
+        }
+
+        // Common greetings that don't make good titles
+        const GREETINGS: &[&str] = &[
+            "hi", "hello", "hey", "yo", "sup", "good morning", "good afternoon",
+            "how are you", "how's it going",
+        ];
+        let prompt_lower = prompt.trim().to_lowercase();
+        if GREETINGS.iter().any(|g| prompt_lower.starts_with(g) || prompt_lower.contains(g)) {
+            let _ = tx.send(UiEvent::ConversationTitle("New Chat".to_string()));
+            return;
+        }
+
+        // Split into words and take first few meaningful words
+        let words: Vec<&str> = prompt
+            .split_whitespace()
+            .filter(|w| w.len() > 1) // Skip single-letter words
+            .take(6) // Take first 6 words max
+            .collect();
+
+        if words.is_empty() {
+            let _ = tx.send(UiEvent::ConversationTitle("New Chat".to_string()));
+            return;
+        }
+
+        // Build title
+        let mut title = words.join(" ");
+        
+        // Remove trailing punctuation
+        title = title
+            .trim_end_matches(['.', ',', ';', ':', '!', '?'])
+            .to_string();
+
+        // Ensure reasonable length
+        if title.len() > 50 {
+            if let Some(space_pos) = title.rfind(' ') {
+                title.truncate(space_pos);
+            } else {
+                title.truncate(47);
+                title.push_str("...");
+            }
+        }
+
+        // Capitalize first letter
+        if !title.is_empty() {
+            let mut chars: Vec<char> = title.chars().collect();
+            if let Some(first) = chars.get_mut(0) {
+                *first = first.to_uppercase().next().unwrap_or(*first);
+            }
+            title = chars.into_iter().collect();
+        }
+
+        let _ = tx.send(UiEvent::ConversationTitle(title));
     }
 
     /// Starts a streaming session for the given prompt with conversation history.
@@ -515,6 +634,9 @@ impl SessionManager {
     ) -> anyhow::Result<()> {
         let tx = self.events.clone();
         let runner = self.runner.clone();
+
+        // Check if this is a new conversation (no history) for title generation
+        let is_new_conversation = history.as_ref().map_or(true, |h| h.is_empty());
 
         // Create a cancellation token for this session
         let cancel_token = CancellationToken::new();
@@ -529,6 +651,11 @@ impl SessionManager {
 
         self.runtime.spawn(async move {
             let _ = tx.send(UiEvent::StreamStarted(session_id));
+
+            // If this is a new conversation, generate a title from the first user message
+            if is_new_conversation {
+                Self::generate_conversation_title(tx.clone(), prompt.clone());
+            }
 
             match runner.stream_session(prompt, history, session_config) {
                 Ok(mut stream) => {
@@ -701,9 +828,12 @@ impl SessionManager {
     /// Fetch Z.AI models asynchronously and cache them.
     pub fn fetch_zai_models(&self) {
         let cache = self.model_cache.clone();
+        let config = self.config.clone();
+        
         self.runtime.spawn(async move {
             let fetcher = ZaiFetcher;
-            let models = fetcher.fetch_models("", None).await;
+            let api_key = config.get_api_key();
+            let models = fetcher.fetch_models(&api_key, None).await;
             cache.cache("zai", models);
         });
     }
@@ -711,5 +841,176 @@ impl SessionManager {
     /// Get cached Z.AI models.
     pub fn get_cached_zai_models(&self) -> Option<Vec<String>> {
         self.model_cache.get_cached("zai")
+    }
+
+    // ==================== Conversation Starters ====================
+
+    /// Generate 3 contextual conversation starter suggestions based on project context.
+    /// This makes a lightweight API call that doesn't get added to conversation history.
+    pub fn generate_conversation_starters(&self) {
+        let backend = self.backend_clone();
+        let config = self.config.clone();
+        let events = self.events.clone();
+        
+        self.runtime.spawn(async move {
+            let starters = fetch_starters_internal(backend, &config).await;
+            let _ = events.send(UiEvent::ConversationStarters(starters));
+        });
+    }
+}
+
+/// Internal async function to fetch conversation starters from AI.
+async fn fetch_starters_internal(
+    backend: AgentBackend,
+    config: &Config,
+) -> Vec<String> {
+    // Build system prompt with PROJECT.manifest context
+    let system_prompt = build_system_prompt_with_manifest();
+    
+    let prompt = r#"Based on the PROJECT.manifest context, suggest exactly 3 short, actionable conversation starters 
+that would be useful for a developer working on this project. Each starter should:
+- Be 5-10 words maximum
+- Start with a verb (e.g., "Add", "Fix", "Refactor", "Test")
+- Be specific and actionable
+- Relate to common development tasks for this codebase
+
+Return ONLY a JSON array of 3 strings, nothing else. Example format:
+["Add user authentication", "Fix memory leak in parser", "Add unit tests for API"]"#;
+
+    let client = match backend.create_client_with_prompt(config, system_prompt) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to create client for conversation starters: {e}");
+            return vec![
+                "Review recent changes".to_string(),
+                "Run tests and fix issues".to_string(),
+                "Add new feature".to_string(),
+            ];
+        }
+    };
+
+    // Make a single, non-streaming request to get starters
+    match client.query(prompt, None).await {
+        Ok(mut stream) => {
+            let mut response = String::new();
+            while let Some(block) = stream.next().await {
+                match block {
+                    crate::api::agent::ContentBlock::Text { text } => {
+                        response.push_str(&text);
+                    }
+                    crate::api::agent::ContentBlock::Reasoning { reasoning: _ } => {
+                        eprintln!("DEBUG: Ignoring reasoning block in starters");
+                    }
+                    _ => {
+                        eprintln!("DEBUG: Unexpected block type in starters");
+                    }
+                }
+            }
+            
+            eprintln!("DEBUG: Raw starters response: {response}");
+            eprintln!("DEBUG: Response length: {}", response.len());
+            
+            // Try to parse as JSON array directly
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response) {
+                eprintln!("DEBUG: Parsed as JSON");
+                if let Some(arr) = json.as_array() {
+                    let starters: Vec<String> = arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty() && s.len() < 100)
+                        .take(3)
+                        .collect();
+                    
+                    if !starters.is_empty() {
+                        eprintln!("DEBUG: Parsed starters: {:?}", starters);
+                        return starters;
+                    }
+                }
+            }
+            
+            // Try extracting from markdown code blocks
+            let cleaned = response
+                .replace("```json", "")
+                .replace("```", "")
+                .trim()
+                .to_string();
+            
+            eprintln!("DEBUG: Cleaned response: {cleaned}");
+            
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&cleaned) {
+                eprintln!("DEBUG: Parsed cleaned as JSON");
+                if let Some(arr) = json.as_array() {
+                    let starters: Vec<String> = arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty() && s.len() < 100)
+                        .take(3)
+                        .collect();
+                    
+                    if !starters.is_empty() {
+                        eprintln!("DEBUG: Parsed starters from cleaned JSON: {:?}", starters);
+                        return starters;
+                    }
+                }
+            }
+            
+            // Fallback: extract lines that look like suggestions
+            let extracted: Vec<String> = response
+                .lines()
+                .filter_map(|l| {
+                    let line = l.trim();
+                    // Skip empty lines and markdown markers
+                    if line.is_empty() 
+                        || line.starts_with('{') 
+                        || line.starts_with('[')
+                        || line.starts_with("```")
+                        || line.to_lowercase().starts_with("here")
+                        || line.to_lowercase().starts_with("sure")
+                        || line.to_lowercase().starts_with("certainly")
+                    {
+                        return None;
+                    }
+                    
+                    // Remove common list markers and quotes
+                    let cleaned = line
+                        .trim_start_matches(|c| c == '-' || c == '*' || c == '+' || c == '.' || c == ')')
+                        .trim_start_matches(|c: char| c.is_numeric())
+                        .trim_start_matches(|c| c == '.' || c == ')' || c == ']')
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .trim_matches(',')
+                        .trim()
+                        .to_string();
+                    
+                    if cleaned.len() > 5 && cleaned.len() < 100 {
+                        Some(cleaned)
+                    } else {
+                        None
+                    }
+                })
+                .take(3)
+                .collect();
+            
+            if !extracted.is_empty() {
+                eprintln!("DEBUG: Extracted starters from lines: {:?}", extracted);
+                extracted
+            } else {
+                eprintln!("DEBUG: No starters found, using defaults");
+                vec![
+                    "Review recent changes".to_string(),
+                    "Run tests and fix issues".to_string(),
+                    "Add new feature".to_string(),
+                ]
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to fetch conversation starters: {e}");
+            vec![
+                "Review recent changes".to_string(),
+                "Run tests and fix issues".to_string(),
+                "Add new feature".to_string(),
+            ]
+        }
     }
 }

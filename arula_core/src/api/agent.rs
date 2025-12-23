@@ -322,6 +322,7 @@ pub struct AgentOptionsBuilder {
     auto_execute_tools: bool,
     max_tool_iterations: u32,
     debug: bool,
+    streaming: bool,
 }
 
 impl Default for AgentOptionsBuilder {
@@ -340,6 +341,7 @@ impl AgentOptionsBuilder {
             auto_execute_tools: true,
             max_tool_iterations: 50,
             debug: false,
+            streaming: true,
         }
     }
 
@@ -378,6 +380,11 @@ impl AgentOptionsBuilder {
         self
     }
 
+    pub fn streaming(mut self, streaming: bool) -> Self {
+        self.streaming = streaming;
+        self
+    }
+
     pub fn build(self) -> AgentOptions {
         AgentOptions {
             system_prompt: self
@@ -389,6 +396,7 @@ impl AgentOptionsBuilder {
             auto_execute_tools: self.auto_execute_tools,
             max_tool_iterations: self.max_tool_iterations,
             debug: self.debug,
+            streaming: self.streaming,
         }
     }
 }
@@ -403,6 +411,7 @@ pub struct AgentOptions {
     pub auto_execute_tools: bool,
     pub max_tool_iterations: u32,
     pub debug: bool,
+    pub streaming: bool,
 }
 
 impl Default for AgentOptions {

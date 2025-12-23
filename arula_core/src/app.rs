@@ -291,25 +291,12 @@ You have access to these tools for file operations and shell commands:
         // 4. Add built-in tools information (detailed tool schemas)
         prompt_parts.push(self.build_builtin_tools_info());
 
-        // Read PROJECT.manifest from current directory (highest priority)
+        // Read PROJECT.manifest from current directory (project context)
         if let Some(manifest) = Self::read_project_manifest() {
             prompt_parts.push(format!(
                 "\n## Project Manifest (Primary Context)\n{}",
                 manifest
             ));
-        }
-
-        // Read global ARULA.md from ~/.arula/
-        if let Some(global_arula) = Self::read_global_arula_md() {
-            prompt_parts.push(format!(
-                "\n## Global Project Instructions\n{}",
-                global_arula
-            ));
-        }
-
-        // Read local ARULA.md from current directory
-        if let Some(local_arula) = Self::read_local_arula_md() {
-            prompt_parts.push(format!("\n## Current Project Context\n{}", local_arula));
         }
 
         // Add MCP tool information
@@ -379,30 +366,6 @@ You have access to these tools for file operations and shell commands:
         false
     }
 
-    /// Read ARULA.md from ~/.arula/ directory
-    fn read_global_arula_md() -> Option<String> {
-        let home_dir = dirs::home_dir()?;
-        let global_arula_path = home_dir.join(".arula").join("ARULA.md");
-
-        if global_arula_path.exists() {
-            match fs::read_to_string(&global_arula_path) {
-                Ok(content) => {
-                    debug_print(&format!(
-                        "DEBUG: Loaded global ARULA.md from {}",
-                        global_arula_path.display()
-                    ));
-                    Some(content)
-                }
-                Err(e) => {
-                    debug_print(&format!("DEBUG: Failed to read global ARULA.md: {}", e));
-                    None
-                }
-            }
-        } else {
-            None
-        }
-    }
-
     /// Read the comprehensive system prompt from ARULA_SYSTEM_PROMPT.md
     /// This is the primary system prompt that defines ARULA's behavior
     fn read_base_system_prompt() -> Option<String> {
@@ -434,26 +397,6 @@ You have access to these tools for file operations and shell commands:
         }
         debug_print("DEBUG: No ARULA_SYSTEM_PROMPT.md found, using default base prompt");
         None
-    }
-
-    /// Read ARULA.md from current directory
-    fn read_local_arula_md() -> Option<String> {
-        let local_arula_path = Path::new("ARULA.md");
-
-        if local_arula_path.exists() {
-            match fs::read_to_string(local_arula_path) {
-                Ok(content) => {
-                    debug_print("DEBUG: Loaded local ARULA.md from current directory");
-                    Some(content)
-                }
-                Err(e) => {
-                    debug_print(&format!("DEBUG: Failed to read local ARULA.md: {}", e));
-                    None
-                }
-            }
-        } else {
-            None
-        }
     }
 
     /// Read PROJECT.manifest from current directory
@@ -1523,14 +1466,62 @@ You have access to these tools for file operations and shell commands:
         }
     }
 
-    /// Async function to fetch Z.AI models
-    async fn fetch_zai_models_async(_api_key: &str) -> Vec<String> {
-        // Z.AI doesn't have a public models endpoint, so return known models
-        vec![
-            "GLM-4.6".to_string(),
-            "GLM-4.5".to_string(),
-            "GLM-4.5-AIR".to_string(),
-        ]
+    /// Async function to fetch Z.AI models from the API
+    async fn fetch_zai_models_async(api_key: &str) -> Vec<String> {
+        use reqwest::Client;
+        use std::time::Duration;
+        
+        // Build the models endpoint URL for Z.AI Anthropic-compatible API
+        let models_url = "https://api.z.ai/api/anthropic/v1/models";
+        
+        let client = match Client::builder()
+            .timeout(Duration::from_secs(10))
+            .user_agent("arula-cli/1.0")
+            .build()
+        {
+            Ok(client) => client,
+            Err(e) => {
+                return vec![format!("⚠️ Failed to create HTTP client: {}", e)];
+            }
+        };
+        
+        let request = client
+            .get(models_url)
+            .header("x-api-key", api_key);
+        
+        match request.send().await {
+            Ok(response) => {
+                let status = response.status();
+                if status.is_success() {
+                    match response.json::<serde_json::Value>().await {
+                        Ok(json) => {
+                            // Parse response format: { "data": [{ "id": "...", "display_name": "..." }] }
+                            if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+                                let mut models = Vec::new();
+                                for model in data {
+                                    if let Some(id) = model.get("id").and_then(|i| i.as_str()) {
+                                        models.push(id.to_string());
+                                    }
+                                }
+                                if models.is_empty() {
+                                    vec!["⚠️ No models found".to_string()]
+                                } else {
+                                    models
+                                }
+                            } else {
+                                vec!["⚠️ Invalid response format".to_string()]
+                            }
+                        }
+                        Err(e) => vec![format!("⚠️ Failed to parse models response: {}", e)]
+                    }
+                } else if status == 401 {
+                    vec!["⚠️ Invalid API key".to_string()]
+                } else {
+                    vec![format!("⚠️ API error: {}", status)]
+                }
+            }
+            Err(e) => vec![format!("⚠️ Network error: {}", e)]
+        }
     }
 
     /// Async function to fetch Ollama models

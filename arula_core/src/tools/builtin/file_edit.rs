@@ -44,6 +44,10 @@ pub struct FileEditResult {
     pub message: String,
     /// Number of lines changed
     pub lines_changed: Option<usize>,
+    /// Number of lines added
+    pub lines_added: Option<usize>,
+    /// Number of lines removed
+    pub lines_removed: Option<usize>,
     /// Path to backup file if created
     pub backup_path: Option<String>,
     /// Diff showing changes
@@ -122,32 +126,32 @@ impl Tool for FileEditTool {
         let edit_type = params.edit_type.as_deref().unwrap_or("replace");
 
         // Read current content
-        let content = fs::read_to_string(path)
+        let old_content = fs::read_to_string(path)
             .map_err(|e| format!("Failed to read file '{}': {}", path, e))?;
 
         let new_content = match edit_type {
             "replace" => {
                 if let (Some(old), Some(new)) = (&params.old_text, &params.new_text) {
-                    if !content.contains(old) {
+                    if !old_content.contains(old) {
                         return Err(format!("Text '{}' not found in file", old));
                     }
-                    content.replace(old, new)
+                    old_content.replace(old, new)
                 } else {
                     return Err("replace operation requires old_text and new_text".to_string());
                 }
             }
             "append" => {
                 let add = params.content.as_deref().unwrap_or("");
-                format!("{}{}", content, add)
+                format!("{}{}", old_content, add)
             }
             "prepend" => {
                 let add = params.content.as_deref().unwrap_or("");
-                format!("{}{}", add, content)
+                format!("{}{}", add, old_content)
             }
             "insert" => {
                 let line_num = params.line.unwrap_or(1);
                 let insert_content = params.content.as_deref().unwrap_or("");
-                let mut lines: Vec<&str> = content.lines().collect();
+                let mut lines: Vec<&str> = old_content.lines().collect();
                 let insert_idx = (line_num.saturating_sub(1)).min(lines.len());
                 lines.insert(insert_idx, insert_content);
                 lines.join("\n")
@@ -155,7 +159,7 @@ impl Tool for FileEditTool {
             "delete" => {
                 let start = params.start_line.unwrap_or(1).saturating_sub(1);
                 let end = params.end_line.unwrap_or(start + 1);
-                let lines: Vec<&str> = content.lines().collect();
+                let lines: Vec<&str> = old_content.lines().collect();
                 let mut result: Vec<&str> = Vec::new();
                 for (i, line) in lines.iter().enumerate() {
                     if i < start || i >= end {
@@ -167,6 +171,66 @@ impl Tool for FileEditTool {
             _ => return Err(format!("Unknown operation type: {}", edit_type)),
         };
 
+        // Generate diff using the diff crate with 3 lines of context
+        let diff_result = diff::lines(&old_content, &new_content);
+        let mut lines_added = 0;
+        let mut lines_removed = 0;
+        
+        // Convert diff result to a list with line numbers
+        let diff_items: Vec<(usize, diff::Result<&str>)> = diff_result.into_iter().enumerate().collect();
+        
+        // Find indices of changed lines (Left or Right) plus 3 lines of context before/after
+        let mut changed_indices: Vec<usize> = Vec::new();
+        for (idx, diff_item) in &diff_items {
+            match diff_item {
+                diff::Result::Left(_) | diff::Result::Right(_) => {
+                    // Add 3 lines before and after each change
+                    for ctx_offset in -3i32..=3 {
+                        let ctx_idx = *idx as isize + ctx_offset as isize;
+                        if ctx_idx >= 0 && (ctx_idx as usize) < diff_items.len() {
+                            changed_indices.push(ctx_idx as usize);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        // Remove duplicates and sort
+        changed_indices.sort();
+        changed_indices.dedup();
+        
+        // Build diff string with only changed lines + context
+        let mut diff_lines = Vec::new();
+        
+        for (idx, diff_item) in &diff_items {
+            let should_include = changed_indices.contains(idx);
+            
+            if !should_include {
+                continue;
+            }
+            
+            match diff_item {
+                diff::Result::Left(l) => {
+                    lines_removed += 1;
+                    diff_lines.push(format!("-{}", l));
+                }
+                diff::Result::Right(r) => {
+                    lines_added += 1;
+                    diff_lines.push(format!("+{}", r));
+                }
+                diff::Result::Both(l, _) => {
+                    diff_lines.push(format!(" {}", l));
+                }
+            }
+        }
+        
+        let diff_string = if !diff_lines.is_empty() {
+            Some(diff_lines.join("\n"))
+        } else {
+            None
+        };
+
         // Write new content
         fs::write(path, &new_content)
             .map_err(|e| format!("Failed to write file '{}': {}", path, e))?;
@@ -175,8 +239,10 @@ impl Tool for FileEditTool {
             success: true,
             message: format!("Successfully edited '{}'", path),
             lines_changed: Some(new_content.lines().count()),
+            lines_added: if lines_added > 0 { Some(lines_added) } else { None },
+            lines_removed: if lines_removed > 0 { Some(lines_removed) } else { None },
             backup_path: None,
-            diff: None,
+            diff: diff_string,
         })
     }
 }
