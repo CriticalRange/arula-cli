@@ -108,6 +108,10 @@ pub fn insert_history_lines(
     viewport_height: u16,
     lines: Vec<Line<'_>>,
 ) -> std::io::Result<()> {
+    if lines.is_empty() {
+        return Ok(());
+    }
+
     let writer = terminal.backend_mut();
 
     // The viewport is at the bottom of the screen with the given height.
@@ -116,6 +120,12 @@ pub fn insert_history_lines(
 
     // Ensure there's at least some space for history (at least 1 line above viewport)
     let area_top = area_top.max(1);
+
+    // Verify we have space for scrollback (screen must be taller than viewport)
+    if screen_height <= viewport_height {
+        // No space for scrollback, skip insertion
+        return Ok(());
+    }
 
     // Use synchronized update to prevent flicker
     queue!(writer, crossterm::terminal::BeginSynchronizedUpdate)?;
@@ -197,9 +207,14 @@ pub fn insert_history_lines(
         }
     }
 
-    // Reset scroll region and restore cursor
+    // Reset scroll region FIRST, then restore cursor
     queue!(writer, ResetScrollRegion)?;
-    queue!(writer, MoveTo(cursor_pos.0, cursor_pos.1))?;
+
+    // Restore cursor to a safe position within the viewport area
+    // The viewport occupies lines from area_top to screen_height-1 (0-based)
+    let safe_cursor_y = cursor_pos.1.max(area_top).min(screen_height.saturating_sub(1));
+    let safe_cursor_x = cursor_pos.0.min(screen_width.saturating_sub(1));
+    queue!(writer, MoveTo(safe_cursor_x, safe_cursor_y))?;
     queue!(writer, crossterm::terminal::EndSynchronizedUpdate)?;
     writer.flush()?;
     Ok(())

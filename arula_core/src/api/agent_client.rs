@@ -211,6 +211,17 @@ impl AgentClient {
                             is_stderr,
                         });
                     }
+                    StreamEvent::AskQuestion {
+                        tool_call_id,
+                        question,
+                        options,
+                    } => {
+                        let _ = tx_for_callback.send(ContentBlock::AskQuestion {
+                            tool_call_id,
+                            question,
+                            options,
+                        });
+                    }
                     _ => {}
                 }
             };

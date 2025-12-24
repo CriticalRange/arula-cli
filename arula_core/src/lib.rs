@@ -51,6 +51,11 @@ pub enum StreamEvent {
         line: String,
         is_stderr: bool,
     },
+    AskQuestion {
+        tool_call_id: String,
+        question: String,
+        options: Option<Vec<String>>,
+    },
     Finished,
     Error(String),
 }
@@ -200,6 +205,7 @@ impl Backend for AgentBackend {
                             ContentBlock::ToolCall { id, name, arguments } => StreamEvent::ToolCall { id, name, arguments },
                             ContentBlock::ToolResult { tool_call_id, result } => StreamEvent::ToolResult { tool_call_id, result },
                             ContentBlock::BashOutputLine { tool_call_id, line, is_stderr } => StreamEvent::BashOutputLine { tool_call_id, line, is_stderr },
+                            ContentBlock::AskQuestion { tool_call_id, question, options } => StreamEvent::AskQuestion { tool_call_id, question, options },
                             ContentBlock::Error { error } => StreamEvent::Error(error),
                         };
                         yield ev;

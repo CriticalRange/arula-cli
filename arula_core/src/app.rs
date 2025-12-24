@@ -729,6 +729,10 @@ You have access to these tools for file operations and shell commands:
                                                 // Ignore streaming bash output in this context (CLI/Legacy)
                                                 // Desktop uses SessionManager which handles this event
                                             }
+                                            Some(ContentBlock::AskQuestion { .. }) => {
+                                                // Ask question is handled by SessionManager in desktop
+                                                // CLI doesn't show interactive question UI
+                                            }
                                             None => {
                                                 // Stream ended
                                                 break;

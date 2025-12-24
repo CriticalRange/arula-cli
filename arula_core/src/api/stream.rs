@@ -111,6 +111,12 @@ pub enum StreamEvent {
         line: String,
         is_stderr: bool,
     },
+    /// Ask question tool needs user input - pause execution
+    AskQuestion {
+        tool_call_id: String,
+        question: String,
+        options: Option<Vec<String>>,
+    },
     /// Stream finished
     Finish {
         reason: String,
@@ -998,6 +1004,61 @@ where
                                 (Some(tool_result), format!("Error: {}", e))
                             }
                         }
+                    } else if call.function.name == "ask_question" {
+                        // Special handling for ask_question - pause execution and wait for user
+                        let question = args.get("question")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        
+                        let options = args.get("options")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect::<Vec<String>>()
+                            });
+                        
+                        // Emit AskQuestion event
+                        eprintln!("🔔 stream.rs: Emitting AskQuestion event - question='{}', options={:?}", question, options);
+                        callback(StreamEvent::AskQuestion {
+                            tool_call_id: call.id.clone(),
+                            question: question.clone(),
+                            options: options.clone(),
+                        });
+                        
+                        // Execute the tool to get the result (for logging)
+                        let result = tool_registry.execute_tool(&call.function.name, args).await;
+                        
+                        // Emit tool result
+                        if let Some(res) = &result {
+                            callback(StreamEvent::ToolResult {
+                                tool_call_id: call.id.clone(),
+                                result: res.clone(),
+                            });
+                        }
+                        
+                        // Add to history and STOP the loop - user needs to respond
+                        current_messages.push(ChatMessage {
+                            role: "tool".to_string(),
+                            content: Some(format!("Asked user: {}", question)),
+                            tool_calls: None,
+                            tool_call_id: Some(call.id.clone()),
+                            tool_name: Some(call.function.name.clone()),
+                        });
+                        
+                        // Return success with the question - the session manager will handle pausing
+                        callback(StreamEvent::Finish {
+                            reason: "ask_question".to_string(),
+                            usage: None,
+                        });
+                        
+                        return Ok(ApiResponse {
+                            response: format!("I have a question for you: {}", question),
+                            success: true,
+                            error: None,
+                            ..Default::default()
+                        });
                     } else {
                         // Non-bash tools use standard execution
                         let result = tool_registry.execute_tool(&call.function.name, args).await;

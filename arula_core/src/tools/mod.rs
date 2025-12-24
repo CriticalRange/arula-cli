@@ -19,3 +19,6 @@ pub mod visioneer;
 
 // Builtin tools available via:
 // builtin::{BashTool, FileReadTool, WriteFileTool, FileEditTool, etc.}
+
+// Re-export QUESTION_HANDLER for easy access
+pub use builtin::QUESTION_HANDLER;

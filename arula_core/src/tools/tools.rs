@@ -22,9 +22,9 @@ pub use crate::tools::builtin::{
     BashParams, BashResult, BashTool, DirectoryEntry, FileEditParams, FileEditResult, FileEditTool,
     FileReadParams, FileReadResult, FileReadTool, FindFilesParams, FindFilesResult, FindFilesTool,
     FoundFile, ListDirParams, ListDirResult, ListDirectoryTool, QuestionParams, QuestionResult,
-    QuestionTool, SearchMatch, SearchParams, SearchResult, SearchTool, WebSearchParams,
-    WebSearchResult, WebSearchResultItem, WebSearchTool, WriteFileParams, WriteFileResult,
-    WriteFileTool,
+    QuestionTool, QUESTION_HANDLER, QuestionHandler, SearchMatch, SearchParams, SearchResult, 
+    SearchTool, WebSearchParams, WebSearchResult, WebSearchResultItem, WebSearchTool, 
+    WriteFileParams, WriteFileResult, WriteFileTool,
 };
 
 // Re-export analyze_context tool

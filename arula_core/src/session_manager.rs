@@ -136,6 +136,13 @@ pub enum UiEvent {
     ToolCallResult(Uuid, String, bool, String),  // session_id, name, success, summary
     /// Bash output line streamed during command execution
     BashOutputLine(Uuid, String, String, bool), // session_id, tool_call_id, line, is_stderr
+    /// Ask question - AI needs user input
+    AskQuestion {
+        session_id: Uuid,
+        tool_call_id: String,
+        question: String,
+        options: Option<Vec<String>>,
+    },
     StreamFinished(Uuid),
     StreamErrored(Uuid, String),
     /// Conversation starters generated
@@ -214,6 +221,7 @@ impl SessionManager {
             "web_search" => "Web".to_string(),
             "mcp_call" => "MCP".to_string(),
             "visioneer" => "Vision".to_string(),
+            "ask_question" => "Question".to_string(),
             _ => name.to_string(),
         }
     }
@@ -716,6 +724,14 @@ impl SessionManager {
                                             line,
                                             is_stderr,
                                         ));
+                                    }
+                                    Some(StreamEvent::AskQuestion { tool_call_id, question, options }) => {
+                                        let _ = tx.send(UiEvent::AskQuestion {
+                                            session_id,
+                                            tool_call_id,
+                                            question,
+                                            options,
+                                        });
                                     }
                                     Some(StreamEvent::Finished) => {
                                         let _ = tx.send(UiEvent::Token(session_id, String::new(), true));

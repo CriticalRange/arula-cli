@@ -691,13 +691,37 @@ impl TuiApp {
 
     fn rebuild_terminal(&mut self, viewport_height: u16) -> Result<()> {
         // Get current terminal size
-        let (_, screen_h) = terminal::size()?;
+        let (screen_w, screen_h) = terminal::size()?;
 
         // Ensure viewport_height doesn't exceed screen height
         let viewport_height = viewport_height.min(screen_h);
 
         // Save current cursor state
         let (cursor_x, cursor_y) = crossterm::cursor::position().unwrap_or((0, 0));
+
+        // Flush any pending history BEFORE rebuilding to prevent scrollback loss
+        if !self.state.pending_history.is_empty() {
+            // Force a terminal sync before rebuild
+            let lines: Vec<_> = self
+                .state
+                .pending_history
+                .iter()
+                .map(|h| h.to_line().to_owned())
+                .collect();
+
+            // Use the current terminal state for insertion
+            if let Err(e) = insert_history_lines(
+                &mut self.terminal,
+                self.state.screen_width,
+                self.state.screen_height,
+                self.viewport_height,
+                lines,
+            ) {
+                // Log but continue - better to lose scrollback than crash
+                eprintln!("Warning: Failed to flush history before rebuild: {}", e);
+            }
+            self.state.pending_history.clear();
+        }
 
         // Clear any pending input display
         execute!(
@@ -716,6 +740,7 @@ impl TuiApp {
 
         // Restore cursor position (ensure it's within screen bounds)
         let cursor_y = cursor_y.min(screen_h - 1);
+        let cursor_x = cursor_x.min(screen_w.saturating_sub(1));
         execute!(
             io::stdout(),
             MoveTo(cursor_x, cursor_y),
@@ -881,13 +906,24 @@ impl TuiApp {
                     .map(|h| h.to_line().to_owned())
                     .collect();
 
-                insert_history_lines(
-                    &mut self.terminal,
-                    self.state.screen_width,
-                    self.state.screen_height,
-                    self.viewport_height,
-                    lines,
-                )?;
+                // Only insert if we have space for scrollback
+                let area_top = self
+                    .state
+                    .screen_height
+                    .saturating_sub(self.viewport_height)
+                    .max(1);
+
+                if self.state.screen_height > self.viewport_height && area_top > 0 {
+                    if let Err(e) = insert_history_lines(
+                        &mut self.terminal,
+                        self.state.screen_width,
+                        self.state.screen_height,
+                        self.viewport_height,
+                        lines,
+                    ) {
+                        eprintln!("Warning: Failed to insert history: {}", e);
+                    }
+                }
                 self.state.pending_history.clear();
                 redraw = true;
             }
@@ -1041,6 +1077,28 @@ impl TuiApp {
                         }
                         self.state.screen_width = w;
                         self.state.screen_height = h;
+
+                        // Flush pending history BEFORE resize to preserve scrollback
+                        if !self.state.pending_history.is_empty() {
+                            let lines: Vec<_> = self
+                                .state
+                                .pending_history
+                                .iter()
+                                .map(|h| h.to_line().to_owned())
+                                .collect();
+
+                            if let Err(e) = insert_history_lines(
+                                &mut self.terminal,
+                                self.state.screen_width,
+                                self.state.screen_height,
+                                self.viewport_height,
+                                lines,
+                            ) {
+                                eprintln!("Warning: Failed to flush history on resize: {}", e);
+                            }
+                            self.state.pending_history.clear();
+                        }
+
                         // Rebuild inline viewport to the current needs after resize.
                         let needed_height = self.required_viewport_height();
                         if needed_height != self.viewport_height {

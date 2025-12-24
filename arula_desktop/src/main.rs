@@ -3,6 +3,7 @@ use arula_core::utils::config::Config;
 // Test edit - verifying edit tool functionality
 use arula_core::SessionConfig;
 use arula_core::{ConversationManager, ConversationMetadata};
+use arula_core::tools::QUESTION_HANDLER;
 use arula_desktop::animation::Spring;
 use arula_desktop::canvas::{
     LiquidMenuBackground, LivingBackground, LoadingSpinner, SpinnerState, SpinnerType,
@@ -106,6 +107,36 @@ struct App {
     manifest_is_ai_enhanced: bool,
     /// Conversation starter suggestions (max 3)
     conversation_starters: Vec<String>,
+    /// Pending question batches from ask_question tool that need user answers
+    pending_question_batches: Vec<PendingQuestionBatch>,
+    /// Animation spring for input bar height expansion when questions are shown
+    input_bar_height_spring: Spring,
+    /// Custom answer drafts per question: (batch_idx, question_idx) -> draft text
+    question_answer_drafts: std::collections::HashMap<(usize, usize), String>,
+}
+
+/// A pending question batch from the AI's ask_question tool
+#[derive(Debug, Clone)]
+struct PendingQuestionBatch {
+    /// Batch ID for sending answers back
+    batch_id: String,
+    /// All questions in this batch
+    questions: Vec<PendingQuestionItem>,
+}
+
+/// A single question within a batch
+#[derive(Debug, Clone)]
+struct PendingQuestionItem {
+    /// Question ID (e.g., "q1", "q2")
+    id: String,
+    /// The question text
+    question: String,
+    /// Optional answer choices
+    options: Option<Vec<String>>,
+    /// User's answer (None if not yet answered)
+    answer: Option<String>,
+    /// Whether answer was custom or selected
+    answer_type: Option<String>,
 }
 
 /// Application messages.
@@ -198,6 +229,14 @@ enum Message {
     ThemeSubmenuChanged(String),
     /// Click on a conversation starter to use it
     StarterClicked(String),
+    /// Answer a pending question with a specific option (batch_idx, question_idx, answer)
+    AnswerQuestion(usize, usize, String),
+    /// Custom answer draft changed for a specific question (batch_idx, question_idx, text)
+    QuestionAnswerDraftChanged(usize, usize, String),
+    /// Submit custom answer for a question (batch_idx, question_idx)
+    SubmitQuestionAnswer(usize, usize),
+    /// Submit all pending question answers and continue
+    SubmitAllQuestionAnswers,
 }
 
 /// Input field ID for focus management
@@ -311,6 +350,9 @@ impl App {
                 is_ai_enhanced(&cwd.join("PROJECT.manifest"))
             },
             conversation_starters: Vec::new(),
+            pending_question_batches: Vec::new(),
+            input_bar_height_spring: Spring::default(),
+            question_answer_drafts: std::collections::HashMap::new(),
         })
     }
 
@@ -373,6 +415,9 @@ impl App {
             detected_project: None,
             manifest_is_ai_enhanced: false,
             conversation_starters: Vec::new(),
+            pending_question_batches: Vec::new(),
+            input_bar_height_spring: Spring::default(),
+            question_answer_drafts: std::collections::HashMap::new(),
         }
     }
 
@@ -534,6 +579,38 @@ impl App {
                 for spring in self.tool_animations.values_mut() {
                     spring.update();
                 }
+                
+                // Update input bar height spring for question UI
+                self.input_bar_height_spring.update();
+                
+                // Poll for new question batches from QUESTION_HANDLER
+                let pending_batches = QUESTION_HANDLER.get_pending_questions();
+                let existing_batch_ids: std::collections::HashSet<_> = self.pending_question_batches.iter()
+                    .map(|b| b.batch_id.clone())
+                    .collect();
+                
+                for (batch_id, questions) in pending_batches {
+                    if !existing_batch_ids.contains(&batch_id) {
+                        eprintln!("🔔 New question batch detected: {} questions", questions.len());
+                        let items: Vec<PendingQuestionItem> = questions.into_iter().map(|q| {
+                            eprintln!("   - [{}] '{}' options: {:?}", q.id, q.question, q.options);
+                            PendingQuestionItem {
+                                id: q.id,
+                                question: q.question,
+                                options: q.options,
+                                answer: None,
+                                answer_type: None,
+                            }
+                        }).collect();
+                        
+                        self.pending_question_batches.push(PendingQuestionBatch {
+                            batch_id,
+                            questions: items,
+                        });
+                        // Animate input bar expansion
+                        self.input_bar_height_spring.set_target(1.0);
+                    }
+                }
             }
             Message::ConfigProviderChanged(provider) => {
                 // Use switch_provider to automatically set defaults (API URL, model)
@@ -638,6 +715,70 @@ impl App {
                 self.draft = starter;
                 // Trigger send prompt
                 return Task::done(Message::SendPrompt);
+            }
+            Message::AnswerQuestion(batch_idx, question_idx, answer) => {
+                // Set answer for specific question in batch
+                if let Some(batch) = self.pending_question_batches.get_mut(batch_idx) {
+                    if let Some(q) = batch.questions.get_mut(question_idx) {
+                        q.answer = Some(answer);
+                        q.answer_type = Some("selected".to_string());
+                    }
+                }
+                // Check if all questions in all batches are answered
+                let all_answered = self.pending_question_batches.iter()
+                    .all(|b| b.questions.iter().all(|q| q.answer.is_some()));
+                if all_answered && !self.pending_question_batches.is_empty() {
+                    return Task::done(Message::SubmitAllQuestionAnswers);
+                }
+            }
+            Message::QuestionAnswerDraftChanged(batch_idx, question_idx, s) => {
+                self.question_answer_drafts.insert((batch_idx, question_idx), s);
+            }
+            Message::SubmitQuestionAnswer(batch_idx, question_idx) => {
+                // Submit custom answer for a specific question (pressing Enter in text field)
+                let key = (batch_idx, question_idx);
+                if let Some(draft) = self.question_answer_drafts.get(&key).cloned() {
+                    if !draft.is_empty() {
+                        if let Some(batch) = self.pending_question_batches.get_mut(batch_idx) {
+                            if let Some(q) = batch.questions.get_mut(question_idx) {
+                                q.answer = Some(draft);
+                                q.answer_type = Some("custom".to_string());
+                            }
+                        }
+                        // Keep the draft so the text stays visible
+                        // Don't auto-submit - let user click "Submit All" button
+                    }
+                }
+            }
+            Message::SubmitAllQuestionAnswers => {
+                // Import Answer type
+                use arula_core::tools::builtin::Answer;
+                
+                // Send answers through QUESTION_HANDLER for each batch
+                for batch in &self.pending_question_batches {
+                    let answers: Vec<Answer> = batch.questions.iter()
+                        .filter_map(|q| {
+                            q.answer.as_ref().map(|a| Answer {
+                                id: q.id.clone(),
+                                answer: a.clone(),
+                                answer_type: q.answer_type.clone().unwrap_or_else(|| "custom".to_string()),
+                            })
+                        })
+                        .collect();
+                    
+                    if !answers.is_empty() {
+                        if let Err(e) = QUESTION_HANDLER.answer(&batch.batch_id, answers.clone()) {
+                            eprintln!("❌ Failed to send answers for batch {}: {}", batch.batch_id, e);
+                        } else {
+                            eprintln!("✅ Sent {} answers for batch {}", answers.len(), batch.batch_id);
+                        }
+                    }
+                }
+                
+                // Clear pending batches, drafts, and animate input bar back
+                self.pending_question_batches.clear();
+                self.question_answer_drafts.clear();
+                self.input_bar_height_spring.set_target(0.0);
             }
             // Single match arm handles all tilt cards via index
             Message::CardHovered(idx, hovered) => {
@@ -985,6 +1126,7 @@ impl App {
             "web_search" => "⭕",
             "mcp_call" => "◊",
             "visioneer" => "○",
+            "ask_question" => "❓",
             _ => "□",
         }
     }
@@ -1155,6 +1297,7 @@ impl App {
                     "web_search" => "Web",
                     "mcp_call" => "MCP",
                     "visioneer" => "Vision",
+                    "ask_question" => "Question",
                     _ => &name,
                 };
 
@@ -1215,6 +1358,11 @@ impl App {
                     .entry(tool_call_id)
                     .or_insert_with(Vec::new)
                     .push((line, is_stderr));
+            }
+            UiEvent::AskQuestion { session_id: _, tool_call_id: _, question, options } => {
+                // Questions are now handled via polling from QUESTION_HANDLER
+                // This event is kept for backward compatibility but no action needed
+                eprintln!("🔔 AskQuestion event received (handled via polling): '{}' options={:?}", question, options);
             }
         }
         Task::none()
@@ -3021,6 +3169,7 @@ impl App {
             WebSearch,
             Mcp,
             Vision,
+            AskQuestion,
             Other,
         }
         // Detect tool type from content
@@ -3072,6 +3221,11 @@ impl App {
             || content.contains("visioneer")
         {
             ToolType::Vision
+        } else if content.starts_with("❓ Question")
+            || content.starts_with("◆ Question")
+            || content.contains("ask_question")
+        {
+            ToolType::AskQuestion
         } else {
             ToolType::Other
         };
@@ -3081,6 +3235,7 @@ impl App {
         let is_read = tool_type == ToolType::ReadFile;
         let is_search = tool_type == ToolType::Search || tool_type == ToolType::WebSearch;
         let _is_list = tool_type == ToolType::ListDirectory;
+        let is_question = tool_type == ToolType::AskQuestion;
 
         // Check if operation completed (has ✓ or ✗)
         let has_checkmark = content.contains('✓');
@@ -3210,6 +3365,23 @@ impl App {
                     neutral_terminal_bg,
                     bootstrap::eye_fill(),
                     "Viewed",
+                ),
+                ToolType::AskQuestion => (
+                    Color {
+                        r: 0.65,
+                        g: 0.5,
+                        b: 0.7,
+                        a: fade_opacity * 0.9,
+                    }, // Warm purple/violet for questions
+                    Color {
+                        r: 0.12,
+                        g: 0.10,
+                        b: 0.14,
+                        a: fade_opacity * 0.95,
+                    }, // Slightly purple-tinted header
+                    neutral_terminal_bg,
+                    bootstrap::question_circle_fill(),
+                    "Question",
                 ),
                 ToolType::Other => (
                     Color {
@@ -3415,6 +3587,70 @@ impl App {
             }
         } else {
             (None, None, None)
+        };
+
+        // Extract question text and options for AskQuestion tool
+        let (question_text, question_options) = if is_question {
+            // Parse question from content - format: "❓ Question • question: \"...\", options: [...]"
+            let q_text = content
+                .find("question:")
+                .and_then(|idx| {
+                    let after_question = &content[idx + 9..];
+                    // Find the quoted question text
+                    if let Some(start_quote) = after_question.find('"') {
+                        let after_start = &after_question[start_quote + 1..];
+                        if let Some(end_quote) = after_start.find('"') {
+                            return Some(after_start[..end_quote].to_string());
+                        }
+                    }
+                    // Try without quotes (just take until comma or end)
+                    let trimmed = after_question.trim().trim_start_matches('"');
+                    if let Some(comma_pos) = trimmed.find(',') {
+                        Some(trimmed[..comma_pos].trim_end_matches('"').to_string())
+                    } else {
+                        Some(trimmed.split('✓').next()
+                            .unwrap_or(trimmed)
+                            .split('✗').next()
+                            .unwrap_or(trimmed)
+                            .trim_end_matches('"')
+                            .trim()
+                            .to_string())
+                    }
+                });
+
+            // Parse options array if present
+            let opts = content
+                .find("options:")
+                .and_then(|idx| {
+                    let after_options = &content[idx + 8..];
+                    // Find array brackets
+                    if let Some(start_bracket) = after_options.find('[') {
+                        let after_start = &after_options[start_bracket + 1..];
+                        if let Some(end_bracket) = after_start.find(']') {
+                            let options_str = &after_start[..end_bracket];
+                            // Parse comma-separated quoted strings
+                            let parsed: Vec<String> = options_str
+                                .split(',')
+                                .filter_map(|s| {
+                                    let trimmed = s.trim().trim_matches('"').trim_matches('\'');
+                                    if trimmed.is_empty() {
+                                        None
+                                    } else {
+                                        Some(trimmed.to_string())
+                                    }
+                                })
+                                .collect();
+                            if !parsed.is_empty() {
+                                return Some(parsed);
+                            }
+                        }
+                    }
+                    None
+                });
+
+            (q_text, opts)
+        } else {
+            (None, None)
         };
 
         // Status icon using Bootstrap icons
@@ -3896,6 +4132,80 @@ impl App {
                             color: Some(running_color),
                         }),
                 );
+            } else if is_question {
+                // Question tool - show the question prominently
+                let question_color = Color {
+                    r: 0.95,
+                    g: 0.92,
+                    b: 1.0,
+                    a: content_opacity,
+                }; // Light purple/white for question text
+                
+                if let Some(ref q_text) = question_text {
+                    terminal_column = terminal_column.push(
+                        text(q_text.clone())
+                            .size(14)
+                            .style(move |_| iced::widget::text::Style {
+                                color: Some(question_color),
+                            }),
+                    );
+                    terminal_column = terminal_column.push(Space::new().height(Length::Fixed(8.0)));
+                }
+                
+                // Show options as buttons if available
+                if let Some(ref options) = question_options {
+                    let option_btn_color = Color {
+                        r: 0.65,
+                        g: 0.5,
+                        b: 0.7,
+                        a: content_opacity * 0.8,
+                    };
+                    
+                    let mut options_row = row![].spacing(8);
+                    for option in options.iter() {
+                        let option_text = option.clone();
+                        options_row = options_row.push(
+                            button(
+                                text(option_text.clone())
+                                    .size(12)
+                            )
+                            .on_press(Message::StarterClicked(option_text))
+                            .padding([6, 12])
+                            .style(move |_theme, _status| button::Style {
+                                background: Some(Background::Color(Color {
+                                    a: 0.3,
+                                    ..option_btn_color
+                                })),
+                                border: Border {
+                                    radius: 6.0.into(),
+                                    width: 1.0,
+                                    color: option_btn_color,
+                                },
+                                text_color: Color::WHITE,
+                                ..Default::default()
+                            })
+                        );
+                    }
+                    terminal_column = terminal_column.push(options_row);
+                }
+                
+                // Show status if not completed yet
+                if !has_checkmark && !has_error {
+                    terminal_column = terminal_column.push(Space::new().height(Length::Fixed(8.0)));
+                    let waiting_color = Color {
+                        r: 0.7,
+                        g: 0.6,
+                        b: 0.8,
+                        a: content_opacity * 0.7,
+                    };
+                    terminal_column = terminal_column.push(
+                        text("Waiting for your answer...")
+                            .size(11)
+                            .style(move |_| iced::widget::text::Style {
+                                color: Some(waiting_color),
+                            }),
+                    );
+                }
             }
 
             // Wrap in container with tool-themed background
@@ -4491,10 +4801,241 @@ impl App {
         .align_y(iced::Alignment::Center);
 
         // ─────────────────────────────────────────────────────────────────
-        // MAIN INPUT BAR: Glassmorphism container (always visible)
+        // MAIN INPUT BAR: With question UI crossfade
         // ─────────────────────────────────────────────────────────────────
 
-        let input_bar_content = row![
+        // Get animation progress (0.0 = normal input, 1.0 = question mode)
+        let question_progress = self.input_bar_height_spring.position as f32;
+        let _normal_opacity = 1.0 - question_progress;
+        let question_opacity = question_progress;
+        
+        // Calculate dynamic height for question mode - reasonable expansion
+        let base_height = 60.0;
+        let question_height = if self.pending_question_batches.is_empty() {
+            base_height
+        } else {
+            // Moderate height - 200px base + 35px per question and option, max 400px
+            let total_items: usize = self.pending_question_batches.iter()
+                .flat_map(|b| b.questions.iter())
+                .map(|q| 1 + q.options.as_ref().map(|o| o.len()).unwrap_or(0))
+                .sum();
+            (200.0 + total_items as f32 * 35.0).min(400.0)
+        };
+        let current_height = base_height + (question_height - base_height) * question_progress;
+
+        // Build question UI content
+        let question_content: Element<'_, Message> = if !self.pending_question_batches.is_empty() && question_opacity > 0.01 {
+            let mut all_question_cards: Vec<Element<'_, Message>> = Vec::new();
+            
+            for (batch_idx, batch) in self.pending_question_batches.iter().enumerate() {
+                for (question_idx, q) in batch.questions.iter().enumerate() {
+                    // Question text - prominent
+                    let question_text = text(&q.question)
+                        .size(16)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(Color { a: question_opacity, ..pal.text })
+                        });
+                    
+                    // Build option buttons - VERTICAL layout
+                    let mut option_elements: Vec<Element<'_, Message>> = Vec::new();
+                    
+                    if let Some(ref options) = q.options {
+                        for opt in options {
+                            let opt_clone = opt.clone();
+                            let is_selected = q.answer.as_ref() == Some(opt);
+                            let b_idx = batch_idx;
+                            let q_idx = question_idx;
+                            let option_btn = button(
+                                container(
+                                    text(opt)
+                                        .size(14)
+                                        .style(move |_| iced::widget::text::Style {
+                                            color: Some(Color { 
+                                                a: question_opacity,
+                                                ..if is_selected { pal.background } else { pal.text }
+                                            })
+                                        })
+                                )
+                                .width(Length::Fill)
+                                .padding([10, 14])
+                            )
+                            .width(Length::Fill)
+                            .on_press(Message::AnswerQuestion(b_idx, q_idx, opt_clone))
+                            .style(move |_theme, status| {
+                                let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                                iced::widget::button::Style {
+                                    background: Some(Background::Color(Color {
+                                        a: question_opacity * if is_selected { 0.9 } else if is_hovered { 0.25 } else { 0.12 },
+                                        ..if is_selected { pal.accent } else { pal.surface_raised }
+                                    })),
+                                    border: Border {
+                                        color: Color { a: question_opacity * if is_selected { 0.6 } else { 0.2 }, ..pal.accent },
+                                        width: 1.0,
+                                        radius: 8.0.into(),
+                                    },
+                                    text_color: if is_selected { pal.background } else { pal.text },
+                                    ..Default::default()
+                                }
+                            });
+                            option_elements.push(option_btn.into());
+                        }
+                    }
+                    
+                    // Custom answer text input - shows answer if set, otherwise draft
+                    let b_idx = batch_idx;
+                    let q_idx = question_idx;
+                    let draft_key = (batch_idx, question_idx);
+                    // Show answered value if exists and was custom, otherwise show draft
+                    let display_text = if q.answer_type.as_deref() == Some("custom") {
+                        q.answer.clone().unwrap_or_default()
+                    } else {
+                        self.question_answer_drafts.get(&draft_key).cloned().unwrap_or_default()
+                    };
+                    let is_answered = q.answer.is_some();
+                    let custom_input = text_input(
+                        if is_answered { "✓ Answered" } else { "Or type your answer..." }, 
+                        &display_text
+                    )
+                        .on_input(move |s| Message::QuestionAnswerDraftChanged(b_idx, q_idx, s))
+                        .on_submit(Message::SubmitQuestionAnswer(b_idx, q_idx))
+                        .padding([10, 14])
+                        .width(Length::Fill)
+                        .style(move |_theme, status| {
+                            let is_focused = matches!(status, iced::widget::text_input::Status::Focused { .. });
+                            iced::widget::text_input::Style {
+                                background: Background::Color(Color {
+                                    a: question_opacity * if is_answered { 0.15 } else { 0.1 },
+                                    ..if is_answered { pal.accent } else { pal.surface_raised }
+                                }),
+                                border: Border {
+                                    color: Color { 
+                                        a: question_opacity * if is_answered { 0.4 } else if is_focused { 0.5 } else { 0.2 }, 
+                                        ..pal.accent 
+                                    },
+                                    width: 1.0,
+                                    radius: 8.0.into(),
+                                },
+                                icon: pal.muted,
+                                placeholder: Color { a: question_opacity * 0.4, ..if is_answered { pal.accent } else { pal.muted } },
+                                value: Color { a: question_opacity, ..pal.text },
+                                selection: Color { a: 0.3, ..pal.accent },
+                            }
+                        });
+                    
+                    // Build the question card
+                    let mut card_contents: Vec<Element<'_, Message>> = Vec::new();
+                    
+                    // Question header with number and checkmark if answered
+                    let q_num = if is_answered {
+                        format!("✓ {}.", question_idx + 1)
+                    } else {
+                        format!("{}.", question_idx + 1)
+                    };
+                    card_contents.push(
+                        row![
+                            text(q_num).size(14).style(move |_| iced::widget::text::Style {
+                                color: Some(Color { a: question_opacity * 0.6, ..if is_answered { pal.accent } else { pal.muted } })
+                            }),
+                            Space::new().width(Length::Fixed(8.0)),
+                            question_text,
+                        ].align_y(iced::Alignment::Center).into()
+                    );
+                    
+                    card_contents.push(Space::new().height(Length::Fixed(12.0)).into());
+                    
+                    // Options (if any)
+                    if !option_elements.is_empty() {
+                        card_contents.push(
+                            column(option_elements)
+                                .spacing(6)
+                                .width(Length::Fill)
+                                .into()
+                        );
+                        card_contents.push(Space::new().height(Length::Fixed(12.0)).into());
+                    }
+                    
+                    // Custom input
+                    card_contents.push(custom_input.into());
+                    
+                    // Question card container
+                    let question_card = container(
+                        column(card_contents).width(Length::Fill)
+                    )
+                    .padding([16, 20])
+                    .width(Length::Fill)
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(Color {
+                            a: question_opacity * 0.06,
+                            r: 0.5, g: 0.3, b: 0.7, // Purple tint
+                        })),
+                        border: Border {
+                            color: Color { a: question_opacity * 0.2, r: 0.55, g: 0.35, b: 0.75 },
+                            width: 1.0,
+                            radius: 12.0.into(),
+                        },
+                        ..Default::default()
+                    });
+                    
+                    all_question_cards.push(question_card.into());
+                }
+            }
+            
+            // Check if all questions are answered for showing submit button
+            let all_answered = self.pending_question_batches.iter()
+                .all(|b| b.questions.iter().all(|q| q.answer.is_some()));
+            
+            // Add Submit All button at the bottom
+            let submit_all_btn = button(
+                container(
+                    text(if all_answered { "✓ Submit All Answers" } else { "Answer all questions to submit" })
+                        .size(15)
+                        .style(move |_| iced::widget::text::Style {
+                            color: Some(Color { 
+                                a: question_opacity * if all_answered { 1.0 } else { 0.5 }, 
+                                ..pal.background 
+                            })
+                        })
+                )
+                .padding([12, 24])
+                .center_x(Length::Fill)
+            )
+            .width(Length::Fill)
+            .on_press_maybe(if all_answered { Some(Message::SubmitAllQuestionAnswers) } else { None })
+            .style(move |_theme, status| {
+                let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                iced::widget::button::Style {
+                    background: Some(Background::Color(Color {
+                        a: question_opacity * if all_answered { if is_hovered { 1.0 } else { 0.85 } } else { 0.3 },
+                        ..pal.accent
+                    })),
+                    border: Border {
+                        radius: 10.0.into(),
+                        ..Default::default()
+                    },
+                    text_color: pal.background,
+                    ..Default::default()
+                }
+            });
+            
+            column![
+                scrollable(
+                    column(all_question_cards)
+                        .spacing(12)
+                        .width(Length::Fill)
+                        .padding([8, 0])
+                )
+                .height(Length::Fill),
+                Space::new().height(Length::Fixed(12.0)),
+                submit_all_btn,
+            ]
+            .width(Length::Fill)
+            .into()
+        } else {
+            Space::new().width(Length::Shrink).height(Length::Shrink).into()
+        };
+
+        // Normal input bar content - only show when no questions (normal_opacity > 0)
+        let normal_content = row![
             left_buttons,
             Space::new().width(Length::Fixed(8.0)),
             input_field,
@@ -4504,8 +5045,39 @@ impl App {
         .padding([6, 10])
         .align_y(iced::Alignment::Center);
 
-        let input_bar = container(input_bar_content)
+        // Choose which content to show based on question state
+        // Full crossfade: one or the other, not stacked
+        let bar_content: Element<'_, Message> = if question_progress > 0.5 {
+            // Questions active - show only question content
+            container(question_content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_y(Vertical::Center)
+                .padding([12, 16])
+                .into()
+        } else if question_progress > 0.01 {
+            // Transitioning - still show normal but fading
+            container(normal_content)
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(Color::TRANSPARENT)),
+                    ..Default::default()
+                })
+                .into()
+        } else {
+            // No questions - show normal input
+            container(normal_content)
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(Color::TRANSPARENT)),
+                    ..Default::default()
+                })
+                .into()
+        };
+
+        let input_bar = container(bar_content)
             .width(Length::Fill)
+            .height(Length::Fixed(current_height))
             .style(move |_| container::Style {
                 background: Some(Background::Color(Color {
                     a: 0.6,

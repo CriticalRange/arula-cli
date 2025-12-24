@@ -51,7 +51,7 @@ pub use find_files::{FindFilesParams, FindFilesResult, FindFilesTool, FoundFile}
 #[allow(unused_imports)]
 pub use list_dir::{DirectoryEntry, ListDirParams, ListDirResult, ListDirectoryTool};
 #[allow(unused_imports)]
-pub use question::{QuestionParams, QuestionResult, QuestionTool};
+pub use question::{QuestionParams, QuestionResult, QuestionTool, QUESTION_HANDLER, QuestionHandler, Question, Answer};
 #[allow(unused_imports)]
 pub use search::{FileMatch, SearchMatch, SearchParams, SearchResult, SearchTool};
 #[allow(unused_imports)]

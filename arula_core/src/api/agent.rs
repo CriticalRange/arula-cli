@@ -444,6 +444,11 @@ pub enum ContentBlock {
         line: String,
         is_stderr: bool,
     },
+    AskQuestion {
+        tool_call_id: String,
+        question: String,
+        options: Option<Vec<String>>,
+    },
     Error {
         error: String,
     },
